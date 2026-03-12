@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://mapView"]
 
-[ext_resource type="Script" path="res://scripts/MapView.gd" id="1_MapView"]
-[ext_resource type="Script" path="res://scripts/GridOverlay.gd" id="2_GridOverlay"]
+[ext_resource type="Script" path="res://scripts/render/MapView.gd" id="1_MapView"]
+[ext_resource type="Script" path="res://scripts/render/GridOverlay.gd" id="2_GridOverlay"]
 
 [node name="MapView" type="Node2D"]
 script = ExtResource("1_MapView")

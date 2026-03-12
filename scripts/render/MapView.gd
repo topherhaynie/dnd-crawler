@@ -111,7 +111,7 @@ func set_camera_state(pos: Vector2, zoom: float) -> void:
 func _ready() -> void:
 	# Add the indicator overlay as the last child so it renders on top of
 	# MapImage, GridOverlay, and all other siblings.
-	_indicator_overlay = load("res://scripts/IndicatorOverlay.gd").new()
+	_indicator_overlay = load("res://scripts/render/IndicatorOverlay.gd").new()
 	_indicator_overlay.name = "IndicatorOverlay"
 	_indicator_overlay.camera = camera
 	add_child(_indicator_overlay)

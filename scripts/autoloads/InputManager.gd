@@ -20,6 +20,10 @@ var _vectors: Dictionary = {}
 # { device_id (int): player_id (Variant) }
 var gamepad_bindings: Dictionary = {}
 
+
+func _game_state() -> Node:
+	return get_node("/root/GameState")
+
 # ---------------------------------------------------------------------------
 # Frame update — poll all bound gamepads
 # ---------------------------------------------------------------------------
@@ -46,7 +50,7 @@ func _process(_delta: float) -> void:
 ## Returns the current movement vector for player_id.
 ## Returns Vector2.ZERO if the player is locked or has no input source.
 func get_vector(player_id) -> Vector2:
-	if GameState.is_locked(player_id):
+	if _game_state().is_locked(player_id):
 		return Vector2.ZERO
 	return _vectors.get(player_id, Vector2.ZERO)
 

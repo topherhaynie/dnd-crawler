@@ -24,7 +24,6 @@ NetworkManager="*res://scripts/autoloads/NetworkManager.gd"
 
 [display]
 
-window/dpi/allow_hidpi=true
 window/subwindows/embed_subwindows=false
 
 [dotnet]

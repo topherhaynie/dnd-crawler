@@ -134,7 +134,7 @@ func _build_ui() -> void:
 
 	# CalibrationTool lives inside MapView's world-space so its drawn overlay
 	# follows the camera correctly.
-	_cal_tool = load("res://scripts/CalibrationTool.gd").new()
+	_cal_tool = load("res://scripts/tools/CalibrationTool.gd").new()
 	_cal_tool.name = "CalibrationTool"
 	_map_view.add_child(_cal_tool)
 

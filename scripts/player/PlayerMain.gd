@@ -21,7 +21,7 @@ func _ready() -> void:
 	add_child(_player_window)
 
 	# WebSocket client — connect to DM host
-	_client = load("res://scripts/PlayerClient.gd").new()
+	_client = load("res://scripts/network/PlayerClient.gd").new()
 	_client.name = "PlayerClient"
 	_client.state_received.connect(_on_state_received)
 	add_child(_client)

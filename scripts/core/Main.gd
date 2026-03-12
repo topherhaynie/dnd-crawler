@@ -21,6 +21,14 @@ const DMWindowScene: PackedScene = preload("res://scenes/DMWindow.tscn")
 const PlayerMainScene: PackedScene = preload("res://scenes/PlayerMain.tscn")
 
 
+func _game_state() -> Node:
+	return get_node("/root/GameState")
+
+
+func _network_manager() -> Node:
+	return get_node("/root/NetworkManager")
+
+
 func _ready() -> void:
 	if _is_player_mode():
 		_start_player_mode()
@@ -46,16 +54,19 @@ func _is_player_mode() -> bool:
 
 func _start_dm_mode() -> void:
 	get_tree().root.title = "Omni-Crawl — DM"
-	GameState.windows.append(get_tree().root.get_window_id())
+	_game_state().windows.append(get_tree().root.get_window_id())
 	# Resize and position the DM window at ~85% of screen
 	var screen_size := DisplayServer.screen_get_size()
 	var win_size := Vector2i(
 		int(screen_size.x * 0.85),
 		int(screen_size.y * 0.85))
 	DisplayServer.window_set_size(win_size)
-	DisplayServer.window_set_position((screen_size - win_size) / 2)
+	var center_pos := Vector2i(
+		int((screen_size.x - win_size.x) * 0.5),
+		int((screen_size.y - win_size.y) * 0.5))
+	DisplayServer.window_set_position(center_pos)
 	# Start WS server before spawning the Player process so the child can connect.
-	NetworkManager.start_server()
+	_network_manager().start_server()
 	add_child(DMWindowScene.instantiate())
 	print("Main: running as DM host")
 
@@ -72,7 +83,10 @@ func _start_player_mode() -> void:
 		int(screen_size.x * 0.85),
 		int(screen_size.y * 0.85))
 	DisplayServer.window_set_size(win_size)
-	DisplayServer.window_set_position((screen_size - win_size) / 2 + Vector2i(80, 80))
+	var center_pos := Vector2i(
+		int((screen_size.x - win_size.x) * 0.5),
+		int((screen_size.y - win_size.y) * 0.5))
+	DisplayServer.window_set_position(center_pos + Vector2i(80, 80))
 	add_child(PlayerMainScene.instantiate())
 	print("Main: running as Player display client")
 

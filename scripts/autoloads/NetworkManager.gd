@@ -23,6 +23,14 @@ var ws_bindings: Dictionary = {}
 var _display_peers: Array[int] = []
 var _input_peers: Array[int] = []
 
+
+func _game_state() -> Node:
+	return get_node("/root/GameState")
+
+
+func _input_manager() -> Node:
+	return get_node("/root/InputManager")
+
 signal client_connected(peer_id: int)
 signal client_disconnected(peer_id: int)
 signal display_peer_registered(peer_id: int, viewport_size: Vector2)
@@ -108,10 +116,10 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 	var y: float = clampf(float(data["y"]), -1.0, 1.0)
 
 	# Only accept packets from player_ids that exist in profiles
-	if player_id == "" or not GameState.player_locked.has(player_id):
+	if player_id == "" or not _game_state().player_locked.has(player_id):
 		return
 
-	InputManager.set_vector(player_id, Vector2(x, y))
+	_input_manager().set_vector(player_id, Vector2(x, y))
 
 # ---------------------------------------------------------------------------
 # Connection events
