@@ -47,29 +47,17 @@ func _is_player_mode() -> bool:
 func _start_dm_mode() -> void:
 	get_tree().root.title = "Omni-Crawl — DM"
 	GameState.windows.append(get_tree().root.get_window_id())
+	# Resize and position the DM window at ~85% of screen
+	var screen_size := DisplayServer.screen_get_size()
+	var win_size := Vector2i(
+		int(screen_size.x * 0.85),
+		int(screen_size.y * 0.85))
+	DisplayServer.window_set_size(win_size)
+	DisplayServer.window_set_position((screen_size - win_size) / 2)
+	# Start WS server before spawning the Player process so the child can connect.
+	NetworkManager.start_server()
 	add_child(DMWindowScene.instantiate())
 	print("Main: running as DM host")
-	# Defer launch so NetworkManager's _ready() finishes before the child
-	# process tries to connect.
-	call_deferred("_launch_player_process")
-
-
-func _launch_player_process() -> void:
-	var exe := OS.get_executable_path()
-	var args: Array[String] = []
-	# In editor/dev builds the executable is the Godot editor itself, so
-	# we must tell it which project to open.
-	if OS.has_feature("editor"):
-		args.append("--path")
-		args.append(ProjectSettings.globalize_path("res://"))
-	# "--" marks the start of user args so the engine won't try to parse
-	# "--player-window" as an engine flag.
-	args.append_array(["--", "--player-window"])
-	var pid := OS.create_process(exe, args)
-	if pid > 0:
-		print("Main: launched Player window process (pid=%d)" % pid)
-	else:
-		push_error("Main: failed to launch Player window process")
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +66,13 @@ func _launch_player_process() -> void:
 
 func _start_player_mode() -> void:
 	get_tree().root.title = "Omni-Crawl — Players"
+	# Offset from centre so both windows are visible side-by-side on start
+	var screen_size := DisplayServer.screen_get_size()
+	var win_size := Vector2i(
+		int(screen_size.x * 0.85),
+		int(screen_size.y * 0.85))
+	DisplayServer.window_set_size(win_size)
+	DisplayServer.window_set_position((screen_size - win_size) / 2 + Vector2i(80, 80))
 	add_child(PlayerMainScene.instantiate())
 	print("Main: running as Player display client")
 

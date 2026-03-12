@@ -75,8 +75,29 @@ func _on_reconnect_timer() -> void:
 # ---------------------------------------------------------------------------
 
 func _send_handshake() -> void:
-	var packet := JSON.stringify({"type": "display", "role": "player_window"})
+	var vp_size := get_viewport().get_visible_rect().size
+	var packet := JSON.stringify({
+		"type": "display",
+		"role": "player_window",
+		"viewport_width": vp_size.x,
+		"viewport_height": vp_size.y,
+	})
 	_socket.send_text(packet)
+	# Watch for subsequent window resizes and report them to the DM so its
+	# indicator box stays in sync with the actual visible area.
+	if not get_viewport().size_changed.is_connected(_on_viewport_size_changed):
+		get_viewport().size_changed.connect(_on_viewport_size_changed)
+
+
+func _on_viewport_size_changed() -> void:
+	if not _connected:
+		return
+	var vp_size := get_viewport().get_visible_rect().size
+	_socket.send_text(JSON.stringify({
+		"type": "viewport_resize",
+		"viewport_width": vp_size.x,
+		"viewport_height": vp_size.y,
+	}))
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +106,13 @@ func _send_handshake() -> void:
 
 func _drain_packets() -> void:
 	while _socket.get_available_packet_count() > 0:
-		var raw := _socket.get_packet().get_string_from_utf8()
-		_handle_packet(raw)
+		var bytes := _socket.get_packet()
+		# WebSocketMultiplayerPeer sends a binary framing packet to every new
+		# connection as part of Godot's multiplayer handshake. Our protocol is
+		# JSON-only (starts with '{'), so we silently skip anything else.
+		if bytes.is_empty() or bytes[0] != 123: # 123 == ord('{')
+			continue
+		_handle_packet(bytes.get_string_from_utf8())
 
 
 func _handle_packet(raw: String) -> void:
@@ -100,6 +126,15 @@ func _handle_packet(raw: String) -> void:
 		"ping":
 			# DM heartbeat — acknowledge liveness, no render update needed
 			print("PlayerClient: ping from DM")
+		"map_loaded":
+			# Map broadcast from DM — forward to PlayerWindow
+			state_received.emit(data)
+		"map_updated":
+			# Grid/scale change — forward without triggering camera reset
+			state_received.emit(data)
+		"camera_update":
+			# DM moved the player view — apply immediately
+			state_received.emit(data)
 		"state":
 			# Full render-state snapshot (Phase 4 will flesh this out)
 			state_received.emit(data)

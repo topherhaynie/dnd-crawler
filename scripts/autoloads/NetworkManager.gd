@@ -24,13 +24,17 @@ var _display_peers: Array[int] = []
 
 signal client_connected(peer_id: int)
 signal client_disconnected(peer_id: int)
+signal display_peer_registered(peer_id: int, viewport_size: Vector2)
+signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
 
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 
 func _ready() -> void:
-	start_server()
+	# Server is started explicitly by Main._start_dm_mode() so the Player
+	# process (which also loads this autoload) never tries to bind port 9090.
+	pass
 
 func start_server() -> void:
 	_server = WebSocketMultiplayerPeer.new()
@@ -75,10 +79,21 @@ func _handle_packet(raw: String, peer_id: int) -> void:
 
 	# Route display-client handshake before applying input validation
 	if data.get("type", "") == "display":
-		_register_display_peer(peer_id)
+		var vp := Vector2(
+			float(data.get("viewport_width", 1920)),
+			float(data.get("viewport_height", 1080)))
+		_register_display_peer(peer_id, vp)
 		return
 
-	# Ignore input packets from display peers (they only receive, never send input)
+	# Viewport resize report from an already-registered display peer
+	if data.get("type", "") == "viewport_resize" and peer_id in _display_peers:
+		var vp := Vector2(
+			float(data.get("viewport_width", 1920)),
+			float(data.get("viewport_height", 1080)))
+		emit_signal("display_viewport_resized", peer_id, vp)
+		return
+
+	# Ignore all other packets from display peers (they only receive, never send input)
 	if peer_id in _display_peers:
 		return
 
@@ -121,11 +136,13 @@ func bind_peer(peer_id: int, player_id: int) -> void:
 # Display peer management
 # ---------------------------------------------------------------------------
 
-func _register_display_peer(peer_id: int) -> void:
+func _register_display_peer(peer_id: int, viewport_size: Vector2) -> void:
 	if peer_id in _display_peers:
 		return
 	_display_peers.append(peer_id)
 	print("NetworkManager: display peer registered — peer_id %d (total: %d)" % [peer_id, _display_peers.size()])
+	# Signal DMWindow so it can re-push current map + camera to this new peer.
+	emit_signal("display_peer_registered", peer_id, viewport_size)
 	# Send an initial ping so the Player window confirms connectivity
 	var ws_peer := _server.get_peer(peer_id)
 	if ws_peer:
@@ -141,3 +158,13 @@ func broadcast_to_displays(data: Dictionary) -> void:
 		var ws_peer := _server.get_peer(peer_id)
 		if ws_peer:
 			ws_peer.send(payload)
+
+func broadcast_map(map: MapData) -> void:
+	## Full map broadcast — player reloads the image and resets its camera.
+	## Use only for initial file load and late-joining peers.
+	broadcast_to_displays({"msg": "map_loaded", "map": map.to_dict()})
+
+func broadcast_map_update(map: MapData) -> void:
+	## Lightweight update — sends grid/scale changes without triggering a
+	## camera reset on the player side.
+	broadcast_to_displays({"msg": "map_updated", "map": map.to_dict()})

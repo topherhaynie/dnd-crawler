@@ -1,0 +1,20 @@
+[gd_scene load_steps=3 format=3 uid="uid://mapView"]
+
+[ext_resource type="Script" path="res://scripts/MapView.gd" id="1_MapView"]
+[ext_resource type="Script" path="res://scripts/GridOverlay.gd" id="2_GridOverlay"]
+
+[node name="MapView" type="Node2D"]
+script = ExtResource("1_MapView")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+enabled = true
+
+[node name="MapImage" type="TextureRect" parent="."]
+mouse_filter = 2
+
+[node name="GridOverlay" type="Node2D" parent="."]
+script = ExtResource("2_GridOverlay")
+
+[node name="WallLayer" type="Node2D" parent="."]
+
+[node name="TokenLayer" type="Node2D" parent="."]

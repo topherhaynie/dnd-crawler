@@ -3,24 +3,22 @@ extends Node
 # ---------------------------------------------------------------------------
 # PlayerMain — root controller for the Player display process.
 #
-# Responsibilities (Phase 1):
-#   • Instantiate the PlayerWindow viewport
+# Phase 2 responsibilities:
+#   • Instantiate PlayerWindow (hosts MapView)
 #   • Instantiate PlayerClient and start the WS connection to the DM host
-#   • Wire PlayerClient's state_received signal to the viewport renderer
-#
-# Phase 4 will expand the viewport rendering substantially; for now we just
-# confirm that the process launches, the window appears, and the WS handshake
-# succeeds.
+#   • Route state packets → PlayerWindow.on_state()
 # ---------------------------------------------------------------------------
 
 const PlayerWindowScene: PackedScene = preload("res://scenes/PlayerWindow.tscn")
 
 var _client: Node = null
+var _player_window: Node = null
 
 
 func _ready() -> void:
-	# Viewport (the actual display shown on the TV)
-	add_child(PlayerWindowScene.instantiate())
+	_player_window = PlayerWindowScene.instantiate()
+	_player_window.name = "PlayerWindow"
+	add_child(_player_window)
 
 	# WebSocket client — connect to DM host
 	_client = load("res://scripts/PlayerClient.gd").new()
@@ -36,6 +34,7 @@ func _ready() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_state_received(data: Dictionary) -> void:
-	# Placeholder: Phase 4 will route data to the map/token/FoW renderers.
 	var msg_type: String = data.get("msg", "unknown")
+	if _player_window and _player_window.has_method("on_state"):
+		_player_window.on_state(data)
 	print("PlayerMain: received state packet (msg=%s)" % msg_type)

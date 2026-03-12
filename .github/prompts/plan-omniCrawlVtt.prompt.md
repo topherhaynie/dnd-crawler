@@ -37,7 +37,8 @@ WS handshake logged on both sides; `GameState.windows` populated on DM side — 
 
 ---
 
-## Phase 2: Map System — Import, Grid/Hex & Calibration
+## Phase 2: Map System — Import, Grid/Hex & Calibration ✅
+**Status:** Complete — see [docs/phase-2-implementation.md](../../docs/phase-2-implementation.md)  
 **Goal:** DM can load a map image, pick an overlay type, and calibrate scale.
 
 1. Map import: FileDialog → support PNG, JPG/JPEG, WEBP, BMP, TGA (Godot 4 native formats)
@@ -47,7 +48,7 @@ WS handshake logged on both sides; `GameState.windows` populated on DM side — 
 5. Map metadata JSON: `{ "path", "grid_type", "cell_px", "hex_size", "offset" }` → `data/maps/<name>.json`
 6. DM can paint `LightOccluder2D` wall polygons in editor; stored in map JSON
 
-**Verification:** Load PNG, WEBP, and BMP maps; switch between square and hex overlay; calibrate each; grid aligns to tiles; persists on reload
+**Verification:** Load PNG, WEBP, and BMP maps; switch between square and hex overlay; calibrate each; grid aligns to tiles; persists on reload — **all criteria met ✅**
 
 ---
 
