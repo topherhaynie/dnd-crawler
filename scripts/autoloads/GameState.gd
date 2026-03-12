@@ -5,9 +5,10 @@ extends Node
 # All other systems read/write through this singleton.
 # ---------------------------------------------------------------------------
 
-signal player_lock_changed(player_id: int, is_locked: bool)
+signal player_lock_changed(player_id, is_locked: bool)
 signal dm_mode_changed(mode: DMMode)
 signal notification_added(notification: Dictionary)
+signal profiles_changed
 
 enum DMMode {PLAY, EDITOR}
 
@@ -19,7 +20,7 @@ var windows: Array = []
 var dm_mode: DMMode = DMMode.PLAY
 
 # --- Player state ---------------------------------------------------------
-# Keyed by player profile id (int index, 0-based)
+# Keyed by player profile id (UUID string)
 var player_locked: Dictionary = {} # { player_id: bool }
 var player_positions: Dictionary = {} # { player_id: Vector2 }
 
@@ -37,11 +38,11 @@ var _next_notification_id: int = 0
 # Player lock helpers
 # ---------------------------------------------------------------------------
 
-func lock_player(player_id: int) -> void:
+func lock_player(player_id) -> void:
 	player_locked[player_id] = true
 	emit_signal("player_lock_changed", player_id, true)
 
-func unlock_player(player_id: int) -> void:
+func unlock_player(player_id) -> void:
 	player_locked[player_id] = false
 	emit_signal("player_lock_changed", player_id, false)
 
@@ -53,10 +54,10 @@ func unlock_all_players() -> void:
 	for pid in player_locked.keys():
 		unlock_player(pid)
 
-func is_locked(player_id: int) -> bool:
+func is_locked(player_id) -> bool:
 	return player_locked.get(player_id, false)
 
-func register_player(player_id: int) -> void:
+func register_player(player_id) -> void:
 	if not player_id in player_locked:
 		player_locked[player_id] = false
 		player_positions[player_id] = Vector2.ZERO
@@ -74,7 +75,7 @@ func set_dm_mode(mode: DMMode) -> void:
 # Notification queue helpers
 # ---------------------------------------------------------------------------
 
-func push_notification(type: String, player_id: int, label: String, notes: String = "", object_ref: Variant = null) -> int:
+func push_notification(type: String, player_id, label: String, notes: String = "", object_ref: Variant = null) -> int:
 	var entry := {
 		"id": _next_notification_id,
 		"type": type,
@@ -93,7 +94,7 @@ func dismiss_notification(notification_id: int, unfreeze_player: bool = true) ->
 		if notification_queue[i]["id"] == notification_id:
 			var entry = notification_queue[i]
 			notification_queue.remove_at(i)
-			if unfreeze_player and entry["player_id"] >= 0:
+			if unfreeze_player and entry.get("player_id", null) != null:
 				unlock_player(entry["player_id"])
 			break
 
@@ -101,22 +102,60 @@ func dismiss_notification(notification_id: int, unfreeze_player: bool = true) ->
 # Profile persistence (player profiles stored here at runtime)
 # ---------------------------------------------------------------------------
 
-var profiles: Array = [] # Array of PlayerProfile resources (populated in Phase 3)
+var profiles: Array = [] # Array of PlayerProfile resources
+
+
+func _ready() -> void:
+	load_profiles()
 
 func save_profiles() -> void:
 	var data := []
 	for profile in profiles:
-		data.append(profile.to_dict())
+		if profile is PlayerProfile:
+			(profile as PlayerProfile).ensure_id()
+			data.append((profile as PlayerProfile).to_dict())
+		elif profile is Dictionary:
+			data.append(profile)
 	_write_json("user://data/profiles.json", data)
+	emit_signal("profiles_changed")
 
 func load_profiles() -> void:
 	var raw = _read_json("user://data/profiles.json")
-	if raw == null:
-		return
 	profiles.clear()
-	# PlayerProfile class wired in Phase 3; stub load for now
-	for dict in raw:
-		profiles.append(dict)
+	if raw == null:
+		emit_signal("profiles_changed")
+		return
+	if not raw is Array:
+		push_error("GameState: profiles.json is not an array")
+		emit_signal("profiles_changed")
+		return
+	for entry in raw:
+		if entry is Dictionary:
+			var profile := PlayerProfile.from_dict(entry)
+			profiles.append(profile)
+	_rebuild_player_state_from_profiles()
+	emit_signal("profiles_changed")
+
+
+func get_profile_by_id(profile_id: String) -> PlayerProfile:
+	for profile in profiles:
+		if profile is PlayerProfile and (profile as PlayerProfile).id == profile_id:
+			return profile
+	return null
+
+
+func _rebuild_player_state_from_profiles() -> void:
+	var next_locked: Dictionary = {}
+	var next_positions: Dictionary = {}
+	for profile in profiles:
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		p.ensure_id()
+		next_locked[p.id] = player_locked.get(p.id, false)
+		next_positions[p.id] = player_positions.get(p.id, Vector2.ZERO)
+	player_locked = next_locked
+	player_positions = next_positions
 
 # ---------------------------------------------------------------------------
 # JSON helpers (internal)

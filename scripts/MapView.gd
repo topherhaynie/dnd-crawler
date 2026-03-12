@@ -68,7 +68,7 @@ func load_map(map: MapData) -> void:
 
 	if map.image_path != "":
 		var img := Image.load_from_file(map.image_path)
-		if img:
+		if img and not img.is_empty():
 			map_image.texture = ImageTexture.create_from_image(img)
 		else:
 			push_error("MapView: could not load image at '%s'" % map.image_path)

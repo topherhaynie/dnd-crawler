@@ -15,12 +15,13 @@ const MAX_PENDING_CONNECTIONS: int = 8
 
 var _server: WebSocketMultiplayerPeer = null
 
-# Maps WebSocket peer_id → player_id (set during Phase 5 handshake)
-# { peer_id (int): player_id (int) }
+# Maps WebSocket peer_id → player_id (set via DM profile bindings)
+# { peer_id (int): player_id (Variant) }
 var ws_bindings: Dictionary = {}
 
 # Peer IDs of connected Player display processes (sent render state, not input)
 var _display_peers: Array[int] = []
+var _input_peers: Array[int] = []
 
 signal client_connected(peer_id: int)
 signal client_disconnected(peer_id: int)
@@ -72,7 +73,8 @@ func _drain_packets() -> void:
 		var raw := _server.get_packet().get_string_from_utf8()
 		_handle_packet(raw, peer_id)
 
-func _handle_packet(raw: String, peer_id: int) -> void:
+func _handle_packet(raw: String, _peer_id: int) -> void:
+	var peer_id: int = _peer_id
 	var data = JSON.parse_string(raw)
 	if data == null or not data is Dictionary:
 		return # Silently discard malformed packets
@@ -98,15 +100,15 @@ func _handle_packet(raw: String, peer_id: int) -> void:
 		return
 
 	# Validate required movement fields
-	if not ("player_id" in data and "x" in data and "y" in data):
+	if not ("x" in data and "y" in data):
 		return
 
-	var player_id: int = int(data["player_id"])
+	var player_id = ws_bindings.get(peer_id, data.get("player_id", ""))
 	var x: float = clampf(float(data["x"]), -1.0, 1.0)
 	var y: float = clampf(float(data["y"]), -1.0, 1.0)
 
 	# Only accept packets from player_ids that exist in profiles
-	if not GameState.player_locked.has(player_id):
+	if player_id == "" or not GameState.player_locked.has(player_id):
 		return
 
 	InputManager.set_vector(player_id, Vector2(x, y))
@@ -117,20 +119,31 @@ func _handle_packet(raw: String, peer_id: int) -> void:
 
 func _on_peer_connected(peer_id: int) -> void:
 	print("NetworkManager: client connected — peer_id %d" % peer_id)
+	if not peer_id in _input_peers:
+		_input_peers.append(peer_id)
 	emit_signal("client_connected", peer_id)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("NetworkManager: client disconnected — peer_id %d" % peer_id)
 	ws_bindings.erase(peer_id)
 	_display_peers.erase(peer_id)
+	_input_peers.erase(peer_id)
 	emit_signal("client_disconnected", peer_id)
 
 # ---------------------------------------------------------------------------
 # Bind a WebSocket peer to a player profile id (called from DM UI in Phase 5)
 # ---------------------------------------------------------------------------
 
-func bind_peer(peer_id: int, player_id: int) -> void:
+func bind_peer(peer_id: int, player_id) -> void:
 	ws_bindings[peer_id] = player_id
+
+
+func clear_all_peer_bindings() -> void:
+	ws_bindings.clear()
+
+
+func get_connected_input_peers() -> Array[int]:
+	return _input_peers.duplicate()
 
 # ---------------------------------------------------------------------------
 # Display peer management
@@ -140,6 +153,7 @@ func _register_display_peer(peer_id: int, viewport_size: Vector2) -> void:
 	if peer_id in _display_peers:
 		return
 	_display_peers.append(peer_id)
+	_input_peers.erase(peer_id)
 	print("NetworkManager: display peer registered — peer_id %d (total: %d)" % [peer_id, _display_peers.size()])
 	# Signal DMWindow so it can re-push current map + camera to this new peer.
 	emit_signal("display_peer_registered", peer_id, viewport_size)

@@ -52,11 +52,32 @@ var _active_map_bundle_path: String = "" ## absolute path to the current .map bu
 
 var _status_label: Label = null
 var _grid_option: OptionButton = null
+var _ui_root: VBoxContainer = null
 
 var _toolbar: Control = null ## HBoxContainer — shown/hidden by View menu
 var _select_btn: Button = null
 var _pan_btn: Button = null
 var _view_menu: PopupMenu = null ## kept for checkmark management
+
+# ── Phase 3: player profiles ------------------------------------------------
+var _profiles_dialog: AcceptDialog = null
+var _profiles_list: ItemList = null
+var _profile_name_edit: LineEdit = null
+var _profile_speed_spin: SpinBox = null
+var _profile_vision_option: OptionButton = null
+var _profile_darkvision_spin: SpinBox = null
+var _profile_perception_spin: SpinBox = null
+var _profile_input_type_option: OptionButton = null
+var _profile_input_id_edit: LineEdit = null
+var _profile_gamepad_option: OptionButton = null
+var _profile_ws_option: OptionButton = null
+var _profile_extras_edit: TextEdit = null
+var _profile_passive_label: Label = null
+var _profile_id_label: Label = null
+var _profile_selected_index: int = -1
+var _profiles_import_dialog: FileDialog = null
+var _profiles_export_dialog: FileDialog = null
+var _profiles_root: Control = null
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -80,7 +101,15 @@ func _ready() -> void:
 	_build_ui()
 	NetworkManager.display_peer_registered.connect(_on_display_peer_registered)
 	NetworkManager.display_viewport_resized.connect(_on_display_viewport_resized)
+	GameState.profiles_changed.connect(_on_profiles_changed)
+	_apply_profile_bindings()
+	_apply_ui_scale()
 	print("DMWindow: ready (Phase 2 complete — map CRUD, calibration offset)")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_SIZE_CHANGED:
+		_apply_ui_scale()
 
 
 func _process(delta: float) -> void:
@@ -116,15 +145,15 @@ func _build_ui() -> void:
 	add_child(ui_layer)
 
 	# Root VBox pinned to the full top edge
-	var root_vbox := VBoxContainer.new()
-	root_vbox.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	root_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ui_layer.add_child(root_vbox)
+	_ui_root = VBoxContainer.new()
+	_ui_root.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_ui_root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui_layer.add_child(_ui_root)
 
 	# ── Menu bar ─────────────────────────────────────────────────────────────
 	var menu_bar := MenuBar.new()
 	menu_bar.prefer_global_menu = true ## merge into native OS menu bar
-	root_vbox.add_child(menu_bar)
+	_ui_root.add_child(menu_bar)
 
 	# File menu
 	var file_menu := PopupMenu.new()
@@ -145,6 +174,8 @@ func _build_ui() -> void:
 	edit_menu.add_item("Calibrate Grid…", 10)
 	edit_menu.add_item("Set Scale Manually…", 11)
 	edit_menu.add_item("Set Grid Offset…", 12)
+	edit_menu.add_separator()
+	edit_menu.add_item("Player Profiles…", 13)
 	edit_menu.id_pressed.connect(_on_edit_menu_id)
 	menu_bar.add_child(edit_menu)
 
@@ -169,8 +200,8 @@ func _build_ui() -> void:
 	# ── Toolbar ──────────────────────────────────────────────────────────────
 	_toolbar = PanelContainer.new()
 	_toolbar.name = "Toolbar"
-	_toolbar.custom_minimum_size = Vector2(0, 44)
-	root_vbox.add_child(_toolbar)
+	_toolbar.custom_minimum_size = Vector2(0, roundi(44.0 * _ui_scale()))
+	_ui_root.add_child(_toolbar)
 
 	var toolbar_hbox := HBoxContainer.new()
 	toolbar_hbox.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -397,15 +428,15 @@ func _build_ui() -> void:
 	_manual_scale_dialog.confirmed.connect(_on_manual_scale_confirmed)
 	add_child(_manual_scale_dialog)
 
-	# ── Open Map dialog ──────────────────────────────────────────────────────
-	# ── Open Map dialog — user selects a .map bundle path ─────────────────────
+	# ── Open Map dialog — select a .map bundle (directory package) ──────────────
 	_open_map_dialog = FileDialog.new()
 	_open_map_dialog.use_native_dialog = true
 	_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_open_map_dialog.title = "Open Map"
-	_open_map_dialog.add_filter("*.map ; OmniCrawl Map")
+	_open_map_dialog.title = "Open Map Bundle"
+	_open_map_dialog.add_filter("*.map ; OmniCrawl Map Bundle")
 	_open_map_dialog.file_selected.connect(_on_map_bundle_selected)
+	_open_map_dialog.dir_selected.connect(_on_map_bundle_selected)
 	add_child(_open_map_dialog)
 
 	# ── Save As dialog — native Save panel; filename stem becomes the map name ─
@@ -462,6 +493,9 @@ func _build_ui() -> void:
 	_offset_dialog.confirmed.connect(_on_offset_confirmed)
 	add_child(_offset_dialog)
 
+	# Phase 3 profile management UI
+	_build_profiles_dialog()
+
 	# Player viewport indicator — DM drags the green box on the main map
 	# to reposition what players see. Hidden until a map is loaded.
 	_map_view.set_viewport_indicator(Rect2())
@@ -474,10 +508,9 @@ func _build_ui() -> void:
 
 func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 	## A new Player display process just completed its handshake.
-	## Update the assumed player window size from the real viewport dimensions,
-	## then re-broadcast the current map and camera so the late-joining player
-	## isn't stuck on a blank screen.
-	_player_window_size = viewport_size
+	## Keep the existing world-space viewport footprint stable by adjusting zoom
+	## when the real player window size differs from our current assumption.
+	_update_player_window_size_preserve_world(viewport_size)
 	var map: MapData = _map_view.get_map() if _map_view else null
 	if map == null:
 		return
@@ -487,9 +520,11 @@ func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 
 
 func _on_display_viewport_resized(_peer_id: int, viewport_size: Vector2) -> void:
-	## Player window was resized — update the indicator box immediately.
-	_player_window_size = viewport_size
+	## Keep world-space view size stable on player fullscreen/resize by adjusting
+	## camera zoom rather than letting the viewport rect jump in world units.
+	_update_player_window_size_preserve_world(viewport_size)
 	_update_viewport_indicator()
+	_broadcast_player_viewport()
 
 
 func _on_viewport_indicator_moved(new_center: Vector2) -> void:
@@ -522,6 +557,20 @@ func _update_viewport_indicator() -> void:
 		return
 	var world_size := _player_window_size / _player_cam_zoom
 	_map_view.set_viewport_indicator(Rect2(_player_cam_pos - world_size * 0.5, world_size))
+
+
+func _update_player_window_size_preserve_world(new_size: Vector2) -> void:
+	if new_size.x <= 0.0 or new_size.y <= 0.0:
+		return
+	var safe_zoom := maxf(_player_cam_zoom, 0.001)
+	var prev_world_size := _player_window_size / safe_zoom
+	_player_window_size = new_size
+	if prev_world_size.x <= 0.0 or prev_world_size.y <= 0.0:
+		return
+	var zoom_x := _player_window_size.x / prev_world_size.x
+	var zoom_y := _player_window_size.y / prev_world_size.y
+	# One zoom value controls both axes; average keeps the same overall footprint.
+	_player_cam_zoom = clampf((zoom_x + zoom_y) * 0.5, 0.1, 8.0)
 
 
 func _broadcast_player_viewport() -> void:
@@ -590,6 +639,7 @@ func _on_edit_menu_id(id: int) -> void:
 		10: _on_calibrate_pressed()
 		11: _on_manual_scale_pressed()
 		12: _on_set_offset_pressed()
+		13: _open_profiles_editor()
 
 
 func _on_view_menu_id(id: int) -> void:
@@ -730,6 +780,489 @@ func _on_offset_confirmed() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: Player profile editor
+# ---------------------------------------------------------------------------
+
+func _build_profiles_dialog() -> void:
+	_profiles_dialog = AcceptDialog.new()
+	_profiles_dialog.title = "Player Profiles"
+	_profiles_dialog.ok_button_text = "Close"
+	## min_size intentionally omitted — popup_centered_ratio handles sizing
+	add_child(_profiles_dialog)
+
+	var root := HSplitContainer.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_profiles_dialog.add_child(root)
+	_profiles_root = root
+
+	var left_panel := VBoxContainer.new()
+	left_panel.custom_minimum_size = Vector2(260, 0)
+	root.add_child(left_panel)
+
+	var left_title := Label.new()
+	left_title.text = "Profiles"
+	left_panel.add_child(left_title)
+
+	_profiles_list = ItemList.new()
+	_profiles_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_profiles_list.item_selected.connect(_on_profile_selected)
+	left_panel.add_child(_profiles_list)
+
+	var list_btn_row := HBoxContainer.new()
+	left_panel.add_child(list_btn_row)
+
+	var add_btn := Button.new()
+	add_btn.text = "Add"
+	add_btn.pressed.connect(_on_profile_add_pressed)
+	list_btn_row.add_child(add_btn)
+
+	var del_btn := Button.new()
+	del_btn.text = "Delete"
+	del_btn.pressed.connect(_on_profile_delete_pressed)
+	list_btn_row.add_child(del_btn)
+
+	var right_scroll := ScrollContainer.new()
+	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(right_scroll)
+
+	var right_panel := VBoxContainer.new()
+	right_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_panel.add_theme_constant_override("separation", 10)
+	right_scroll.add_child(right_panel)
+
+	_profile_id_label = Label.new()
+	_profile_id_label.text = "ID: —"
+	right_panel.add_child(_profile_id_label)
+
+	var form := GridContainer.new()
+	form.columns = 2
+	form.add_theme_constant_override("h_separation", 14)
+	form.add_theme_constant_override("v_separation", 8)
+	right_panel.add_child(form)
+
+	var name_lbl := Label.new(); name_lbl.text = "Name:"; form.add_child(name_lbl)
+	_profile_name_edit = LineEdit.new()
+	form.add_child(_profile_name_edit)
+
+	var speed_lbl := Label.new(); speed_lbl.text = "Base Speed (ft):"; form.add_child(speed_lbl)
+	_profile_speed_spin = SpinBox.new()
+	_profile_speed_spin.min_value = 5
+	_profile_speed_spin.max_value = 120
+	_profile_speed_spin.step = 5
+	_profile_speed_spin.value = 30
+	form.add_child(_profile_speed_spin)
+
+	var vision_lbl := Label.new(); vision_lbl.text = "Vision Type:"; form.add_child(vision_lbl)
+	_profile_vision_option = OptionButton.new()
+	_profile_vision_option.add_item("Normal", PlayerProfile.VisionType.NORMAL)
+	_profile_vision_option.add_item("Darkvision", PlayerProfile.VisionType.DARKVISION)
+	_profile_vision_option.item_selected.connect(_on_profile_vision_selected)
+	form.add_child(_profile_vision_option)
+
+	var dv_lbl := Label.new(); dv_lbl.text = "Darkvision Range (ft):"; form.add_child(dv_lbl)
+	_profile_darkvision_spin = SpinBox.new()
+	_profile_darkvision_spin.min_value = 5
+	_profile_darkvision_spin.max_value = 240
+	_profile_darkvision_spin.step = 5
+	_profile_darkvision_spin.value = 60
+	form.add_child(_profile_darkvision_spin)
+
+	var pm_lbl := Label.new(); pm_lbl.text = "Perception Mod:"; form.add_child(pm_lbl)
+	_profile_perception_spin = SpinBox.new()
+	_profile_perception_spin.min_value = -10
+	_profile_perception_spin.max_value = 20
+	_profile_perception_spin.step = 1
+	_profile_perception_spin.value = 0
+	_profile_perception_spin.value_changed.connect(_on_profile_perception_changed)
+	form.add_child(_profile_perception_spin)
+
+	var pp_lbl := Label.new(); pp_lbl.text = "Passive Perception:"; form.add_child(pp_lbl)
+	_profile_passive_label = Label.new()
+	_profile_passive_label.text = "10"
+	form.add_child(_profile_passive_label)
+
+	var it_lbl := Label.new(); it_lbl.text = "Input Type:"; form.add_child(it_lbl)
+	_profile_input_type_option = OptionButton.new()
+	_profile_input_type_option.add_item("None", PlayerProfile.InputType.NONE)
+	_profile_input_type_option.add_item("Gamepad", PlayerProfile.InputType.GAMEPAD)
+	_profile_input_type_option.add_item("WebSocket", PlayerProfile.InputType.WEBSOCKET)
+	form.add_child(_profile_input_type_option)
+
+	var iid_lbl := Label.new(); iid_lbl.text = "Input ID:"; form.add_child(iid_lbl)
+	_profile_input_id_edit = LineEdit.new()
+	_profile_input_id_edit.placeholder_text = "Gamepad device id or WS peer id"
+	form.add_child(_profile_input_id_edit)
+
+	var bind_sep := HSeparator.new()
+	right_panel.add_child(bind_sep)
+
+	var bind_row := GridContainer.new()
+	bind_row.columns = 3
+	bind_row.add_theme_constant_override("h_separation", 10)
+	bind_row.add_theme_constant_override("v_separation", 6)
+	right_panel.add_child(bind_row)
+
+	var gp_lbl := Label.new(); gp_lbl.text = "Connected gamepads:"; bind_row.add_child(gp_lbl)
+	_profile_gamepad_option = OptionButton.new()
+	bind_row.add_child(_profile_gamepad_option)
+	var gp_btn := Button.new()
+	gp_btn.text = "Use"
+	gp_btn.pressed.connect(_on_bind_use_gamepad_pressed)
+	bind_row.add_child(gp_btn)
+
+	var ws_lbl := Label.new(); ws_lbl.text = "Connected WS peers:"; bind_row.add_child(ws_lbl)
+	_profile_ws_option = OptionButton.new()
+	bind_row.add_child(_profile_ws_option)
+	var ws_btn := Button.new()
+	ws_btn.text = "Use"
+	ws_btn.pressed.connect(_on_bind_use_ws_pressed)
+	bind_row.add_child(ws_btn)
+
+	var extras_lbl := Label.new()
+	extras_lbl.text = "Extras (JSON object):"
+	right_panel.add_child(extras_lbl)
+
+	_profile_extras_edit = TextEdit.new()
+	_profile_extras_edit.custom_minimum_size = Vector2(0, 160)
+	_profile_extras_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_profile_extras_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	right_panel.add_child(_profile_extras_edit)
+
+	var action_row := HBoxContainer.new()
+	right_panel.add_child(action_row)
+
+	var save_btn := Button.new()
+	save_btn.text = "Save Profile"
+	save_btn.pressed.connect(_on_profile_save_pressed)
+	action_row.add_child(save_btn)
+
+	var import_btn := Button.new()
+	import_btn.text = "Import JSON"
+	import_btn.pressed.connect(_on_profile_import_pressed)
+	action_row.add_child(import_btn)
+
+	var export_btn := Button.new()
+	export_btn.text = "Export JSON"
+	export_btn.pressed.connect(_on_profile_export_pressed)
+	action_row.add_child(export_btn)
+
+	var refresh_btn := Button.new()
+	refresh_btn.text = "Refresh Inputs"
+	refresh_btn.pressed.connect(_refresh_available_inputs)
+	action_row.add_child(refresh_btn)
+
+	var fill := Control.new()
+	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row.add_child(fill)
+
+	var hint := Label.new()
+	hint.text = "Tip: Unknown keys in extras are preserved across save/load."
+	action_row.add_child(hint)
+
+	_profiles_import_dialog = FileDialog.new()
+	_profiles_import_dialog.use_native_dialog = true
+	_profiles_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_profiles_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_profiles_import_dialog.title = "Import Player Profiles JSON"
+	_profiles_import_dialog.add_filter("*.json ; JSON")
+	_profiles_import_dialog.file_selected.connect(_on_profiles_import_path_selected)
+	add_child(_profiles_import_dialog)
+
+	_profiles_export_dialog = FileDialog.new()
+	_profiles_export_dialog.use_native_dialog = true
+	_profiles_export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	_profiles_export_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_profiles_export_dialog.title = "Export Player Profiles JSON"
+	_profiles_export_dialog.add_filter("*.json ; JSON")
+	_profiles_export_dialog.file_selected.connect(_on_profiles_export_path_selected)
+	add_child(_profiles_export_dialog)
+
+
+func _open_profiles_editor() -> void:
+	_refresh_available_inputs()
+	_refresh_profiles_list()
+	_apply_ui_scale()
+	_profiles_dialog.popup_centered_ratio(0.9)
+
+
+func _refresh_profiles_list() -> void:
+	if _profiles_list == null:
+		return
+	_profiles_list.clear()
+	for profile in GameState.profiles:
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		_profiles_list.add_item("%s (%s)" % [p.player_name, p.id.left(8)])
+	if GameState.profiles.is_empty():
+		_profile_selected_index = -1
+		_clear_profile_form()
+		return
+	if _profile_selected_index < 0 or _profile_selected_index >= _profiles_list.item_count:
+		_profile_selected_index = 0
+	_profiles_list.select(_profile_selected_index)
+	_load_selected_profile_into_form(_profile_selected_index)
+
+
+func _clear_profile_form() -> void:
+	_profile_id_label.text = "ID: —"
+	_profile_name_edit.text = ""
+	_profile_speed_spin.value = 30
+	_profile_vision_option.select(0)
+	_profile_darkvision_spin.value = 60
+	_profile_perception_spin.value = 0
+	_profile_passive_label.text = "10"
+	_profile_input_type_option.select(0)
+	_profile_input_id_edit.text = ""
+	_profile_extras_edit.text = "{}"
+	_on_profile_vision_selected(0)
+
+
+func _on_profile_selected(index: int) -> void:
+	_profile_selected_index = index
+	_load_selected_profile_into_form(index)
+
+
+func _load_selected_profile_into_form(index: int) -> void:
+	if index < 0 or index >= GameState.profiles.size():
+		_clear_profile_form()
+		return
+	var profile = GameState.profiles[index]
+	if not profile is PlayerProfile:
+		_clear_profile_form()
+		return
+	var p := profile as PlayerProfile
+	_profile_id_label.text = "ID: %s" % p.id
+	_profile_name_edit.text = p.player_name
+	_profile_speed_spin.value = p.base_speed
+	_profile_vision_option.select(_profile_vision_option.get_item_index(p.vision_type))
+	_profile_darkvision_spin.value = p.darkvision_range
+	_profile_perception_spin.value = p.perception_mod
+	_profile_passive_label.text = str(p.get_passive_perception())
+	_profile_input_type_option.select(_profile_input_type_option.get_item_index(p.input_type))
+	_profile_input_id_edit.text = p.input_id
+	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
+	_on_profile_vision_selected(_profile_vision_option.selected)
+
+
+func _on_profile_add_pressed() -> void:
+	var profile := PlayerProfile.new()
+	profile.ensure_id()
+	profile.player_name = "Player %d" % (GameState.profiles.size() + 1)
+	GameState.profiles.append(profile)
+	GameState.save_profiles()
+	GameState.load_profiles()
+	_profile_selected_index = GameState.profiles.size() - 1
+	_refresh_profiles_list()
+	_set_status("Added profile: %s" % profile.player_name)
+
+
+func _on_profile_delete_pressed() -> void:
+	if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
+		return
+	var removed_name := "Profile"
+	if GameState.profiles[_profile_selected_index] is PlayerProfile:
+		removed_name = (GameState.profiles[_profile_selected_index] as PlayerProfile).player_name
+	GameState.profiles.remove_at(_profile_selected_index)
+	GameState.save_profiles()
+	GameState.load_profiles()
+	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, GameState.profiles.size() - 1))
+	_refresh_profiles_list()
+	_set_status("Deleted profile: %s" % removed_name)
+
+
+func _on_profile_save_pressed() -> void:
+	if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
+		# If nothing is selected, create one so Save behaves intuitively.
+		if GameState.profiles.is_empty():
+			_on_profile_add_pressed()
+		else:
+			_profile_selected_index = 0
+			if _profiles_list and _profiles_list.item_count > 0:
+				_profiles_list.select(_profile_selected_index)
+				_load_selected_profile_into_form(_profile_selected_index)
+		if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
+			_set_status("Unable to select a profile to save.")
+			return
+	var profile = GameState.profiles[_profile_selected_index]
+	if not profile is PlayerProfile:
+		_set_status("Invalid profile selected.")
+		return
+	var p := profile as PlayerProfile
+	p.player_name = _profile_name_edit.text.strip_edges()
+	if p.player_name.is_empty():
+		p.player_name = "Unnamed Player"
+	p.base_speed = _profile_speed_spin.value
+	p.vision_type = _profile_vision_option.get_item_id(_profile_vision_option.selected)
+	p.darkvision_range = _profile_darkvision_spin.value
+	p.perception_mod = int(_profile_perception_spin.value)
+	p.input_type = _profile_input_type_option.get_item_id(_profile_input_type_option.selected)
+	p.input_id = _profile_input_id_edit.text.strip_edges()
+
+	var extras_raw := _profile_extras_edit.text.strip_edges()
+	if extras_raw.is_empty():
+		p.extras = {}
+	else:
+		var parsed: Variant = JSON.parse_string(extras_raw)
+		if parsed == null or not parsed is Dictionary:
+			_set_status("Extras must be valid JSON object; profile not saved.")
+			return
+		p.extras = (parsed as Dictionary).duplicate(true)
+
+	p.ensure_id()
+	GameState.save_profiles()
+	GameState.load_profiles()
+	_apply_profile_bindings()
+	_refresh_profiles_list()
+	_set_status("Saved profile: %s (PP %d) to user://data/profiles.json" % [p.player_name, p.get_passive_perception()])
+
+
+func _on_profile_vision_selected(index: int) -> void:
+	if _profile_darkvision_spin == null or _profile_vision_option == null:
+		return
+	var vision_id := _profile_vision_option.get_item_id(index)
+	_profile_darkvision_spin.editable = (vision_id == PlayerProfile.VisionType.DARKVISION)
+
+
+func _on_profile_perception_changed(value: float) -> void:
+	if _profile_passive_label:
+		_profile_passive_label.text = str(10 + int(value))
+
+
+func _refresh_available_inputs() -> void:
+	if _profile_gamepad_option:
+		_profile_gamepad_option.clear()
+		for device_id in Input.get_connected_joypads():
+			_profile_gamepad_option.add_item("%d — %s" % [device_id, Input.get_joy_name(device_id)], device_id)
+		if _profile_gamepad_option.item_count == 0:
+			_profile_gamepad_option.add_item("No gamepads connected", -1)
+
+	if _profile_ws_option:
+		_profile_ws_option.clear()
+		for peer_id in NetworkManager.get_connected_input_peers():
+			_profile_ws_option.add_item("Peer %d" % peer_id, peer_id)
+		if _profile_ws_option.item_count == 0:
+			_profile_ws_option.add_item("No WS peers connected", -1)
+
+
+func _on_bind_use_gamepad_pressed() -> void:
+	if _profile_gamepad_option == null or _profile_gamepad_option.item_count == 0:
+		return
+	var device_id := _profile_gamepad_option.get_item_id(_profile_gamepad_option.selected)
+	if device_id < 0:
+		return
+	_profile_input_type_option.select(_profile_input_type_option.get_item_index(PlayerProfile.InputType.GAMEPAD))
+	_profile_input_id_edit.text = str(device_id)
+
+
+func _on_bind_use_ws_pressed() -> void:
+	if _profile_ws_option == null or _profile_ws_option.item_count == 0:
+		return
+	var peer_id := _profile_ws_option.get_item_id(_profile_ws_option.selected)
+	if peer_id < 0:
+		return
+	_profile_input_type_option.select(_profile_input_type_option.get_item_index(PlayerProfile.InputType.WEBSOCKET))
+	_profile_input_id_edit.text = str(peer_id)
+
+
+func _apply_profile_bindings() -> void:
+	InputManager.clear_all_bindings()
+	NetworkManager.clear_all_peer_bindings()
+	for profile in GameState.profiles:
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		p.ensure_id()
+		GameState.register_player(p.id)
+		match p.input_type:
+			PlayerProfile.InputType.GAMEPAD:
+				if p.input_id.is_valid_int():
+					InputManager.bind_gamepad(int(p.input_id), p.id)
+			PlayerProfile.InputType.WEBSOCKET:
+				if p.input_id.is_valid_int():
+					NetworkManager.bind_peer(int(p.input_id), p.id)
+
+
+func _on_profiles_changed() -> void:
+	_apply_profile_bindings()
+	if _profiles_dialog and _profiles_dialog.visible:
+		_refresh_profiles_list()
+
+
+func _on_profile_import_pressed() -> void:
+	if _profiles_import_dialog == null:
+		return
+	_profiles_import_dialog.current_file = "profiles.json"
+	_profiles_import_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_profile_export_pressed() -> void:
+	if _profiles_export_dialog == null:
+		return
+	_profiles_export_dialog.current_file = "profiles-export.json"
+	_profiles_export_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_profiles_export_path_selected(path: String) -> void:
+	var target_path := path
+	if not target_path.to_lower().ends_with(".json"):
+		target_path += ".json"
+	var parent_dir := target_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent_dir):
+		var mk_err := DirAccess.make_dir_recursive_absolute(parent_dir)
+		if mk_err != OK:
+			_set_status("Export failed: could not create directory.")
+			return
+	var file := FileAccess.open(target_path, FileAccess.WRITE)
+	if file == null:
+		_set_status("Export failed: could not write file.")
+		return
+	file.store_string(JSON.stringify(_profiles_to_array(), "\t"))
+	file.close()
+	_set_status("Exported %d profiles." % GameState.profiles.size())
+
+
+func _on_profiles_import_path_selected(path: String) -> void:
+	if not FileAccess.file_exists(path):
+		_set_status("Import failed: file not found.")
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_set_status("Import failed: could not read file.")
+		return
+	var text := file.get_as_text()
+	file.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if parsed == null or not parsed is Array:
+		_set_status("Import failed: JSON must be an array of profiles.")
+		return
+	var imported_profiles: Array = []
+	for item in parsed:
+		if not item is Dictionary:
+			continue
+		imported_profiles.append(PlayerProfile.from_dict(item as Dictionary))
+	if imported_profiles.is_empty():
+		_set_status("Import skipped: no valid profiles found.")
+		return
+	GameState.profiles = imported_profiles
+	GameState.save_profiles()
+	GameState.load_profiles()
+	_profile_selected_index = 0
+	_refresh_profiles_list()
+	_set_status("Imported %d profiles." % imported_profiles.size())
+
+
+func _profiles_to_array() -> Array:
+	var out: Array = []
+	for profile in GameState.profiles:
+		if profile is PlayerProfile:
+			(profile as PlayerProfile).ensure_id()
+			out.append((profile as PlayerProfile).to_dict())
+	return out
+
+
+# ---------------------------------------------------------------------------
 # File — New Map / Open Map / Save / Save As
 # ---------------------------------------------------------------------------
 
@@ -795,7 +1328,12 @@ func _on_open_map_pressed() -> void:
 
 func _on_map_bundle_selected(path: String) -> void:
 	## Load the map stored inside the selected .map bundle.
-	var bundle_path := _normalise_bundle_path(path)
+	## Accepts direct bundle selection, map.json selection, or a child file inside
+	## a bundle by walking up to the nearest parent ending in ".map".
+	var bundle_path := _resolve_bundle_path(path)
+	if bundle_path.is_empty():
+		_set_status("Failed to load map: selected path is not a valid .map bundle.")
+		return
 	var map := _load_map_from_bundle(bundle_path)
 	if map == null:
 		_set_status("Failed to load map from: %s" % bundle_path.get_file())
@@ -863,6 +1401,9 @@ func _save_map_as_path(bundle_path: String) -> void:
 
 func _apply_map(map: MapData) -> void:
 	_map_view.load_map(map)
+	if _map_view.map_image.texture == null:
+		_set_status("Map image failed to load: %s" % map.image_path)
+		return
 	# Player cam is initialised to the DM's initial view once the camera settles.
 	call_deferred("_init_player_cam_from_dm")
 	_grid_option.disabled = false
@@ -920,6 +1461,39 @@ func _normalise_bundle_path(path: String) -> String:
 	if path.to_lower().ends_with(".map"):
 		return path
 	return path + ".map"
+
+
+func _resolve_bundle_path(path: String) -> String:
+	## Handles all native-dialog return variants:
+	## - direct ".map" directory/package
+	## - "map.json" file inside bundle
+	## - any file/folder nested under a bundle
+	if path.is_empty():
+		return ""
+
+	var raw := path
+	if raw.get_file().to_lower() == "map.json":
+		raw = raw.get_base_dir()
+
+	if raw.to_lower().ends_with(".map"):
+		return raw
+
+	var current := raw if DirAccess.dir_exists_absolute(raw) else raw.get_base_dir()
+	while not current.is_empty():
+		if current.to_lower().ends_with(".map"):
+			return current
+		var parent := current.get_base_dir()
+		if parent == current:
+			break
+		current = parent
+
+	# Fallback: if user selected a plain folder containing map.json, allow it.
+	if DirAccess.dir_exists_absolute(raw):
+		var maybe_json := raw.path_join("map.json")
+		if FileAccess.file_exists(maybe_json):
+			return raw
+
+	return ""
 
 
 func _save_map_data(map: MapData) -> void:
@@ -986,3 +1560,30 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 	dst.store_buffer(data)
 	dst.close()
 	return OK
+
+
+func _apply_ui_scale() -> void:
+	var scale := _ui_scale()
+	if _toolbar:
+		# Slightly shorter than before so the bar hugs its controls better.
+		_toolbar.custom_minimum_size = Vector2(0, roundi(34.0 * scale))
+	if _ui_root:
+		_ui_root.scale = Vector2(scale, scale)
+	if _profiles_dialog:
+		var vp := get_viewport().get_visible_rect().size
+		_profiles_dialog.min_size = Vector2i(roundi(vp.x * 0.72), roundi(vp.y * 0.72))
+		var close_btn := _profiles_dialog.get_ok_button()
+		if close_btn:
+			close_btn.custom_minimum_size = Vector2(roundi(110.0 * scale), roundi(34.0 * scale))
+			close_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	if _profiles_root:
+		_profiles_root.scale = Vector2(scale, scale)
+
+
+func _ui_scale() -> float:
+	## Blend DPI scaling with viewport-relative scaling so fullscreen does not
+	## make UI appear tiny on large displays.
+	var dpi_scale := clampf(DisplayServer.screen_get_dpi() / 96.0, 1.0, 2.0)
+	var vp := get_viewport().get_visible_rect().size
+	var viewport_scale := clampf(minf(vp.x / 1920.0, vp.y / 1080.0), 1.0, 1.6)
+	return maxf(dpi_scale, viewport_scale)
