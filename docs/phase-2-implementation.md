@@ -14,7 +14,7 @@ Phase 2 polishes the user experience by implementing a full-featured DM interfac
 ## Major Features Completed
 
 ### 1. **Native macOS Menu Bar**
-- **File Menu:** Load Map, Save Map, Quit
+- **File Menu:** New Map from Image, Open Map, Save Map, Save Map As, Quit
 - **Edit Menu:** Calibrate Grid, Set Scale Manually
 - **View Menu:** Toggle Toolbar, Grid Overlay, Reset View, Launch Player Window
 - Uses `MenuBar.prefer_global_menu = true` to merge native OS menu bar (not in-window)
@@ -29,8 +29,11 @@ Phase 2 polishes the user experience by implementing a full-featured DM interfac
 
 ### 3. **Map Loading & Persistence**
 - **Native FileDialog** for selecting map images (PNG, JPG, JPEG, WebP, BMP, TGA)
-- **Automatic JSON save/load** in `user://data/maps/`
-- Metadata includes grid type, calibration, scale, and saved camera state
+- **Native system save/open dialogs** for map bundles
+- **Map bundle format:** each map is stored as a `.map` directory bundle containing:
+  - `map.json` — metadata, calibration, offsets, future map objects
+  - `image.<ext>` — imported image copied into the bundle so maps are self-contained
+- Metadata includes grid type, calibration, scale, offsets, and saved camera state
 - Late-joining players auto-receive the active map via `display_peer_registered` signal
 
 ### 4. **Calibration Workflow**
@@ -38,6 +41,7 @@ Phase 2 polishes the user experience by implementing a full-featured DM interfac
   - Click-drag a line on the map to define distance
   - Release → dialog asks "How many feet?"
   - Applies calibration and broadcasts to all players
+  - Calibration dialog now also captures **grid offset X/Y** so the DM can align the grid origin to the underlying artwork
   - **Fixed Behavior:** Grid calibration no longer resets player cameras (see `map_updated` below)
 
 ### 5. **Manual Scale Entry**
@@ -99,6 +103,11 @@ Players send their actual viewport size in the handshake + report resizes. DM us
 
 No guessing or hardcoded defaults — the indicator is always accurate.
 
+### Bundle Format Direction
+- `.map` is now the authoritative **map-definition bundle**. It stores only durable map content: image, grid setup, offsets, wall geometry, and future map objects.
+- Future runtime/session state should live in a separate `.sav` bundle that references a `.map` bundle instead of mutating the map definition directly.
+- Intended `.sav` responsibilities: active player positions, DM/player camera transforms, triggered/revealed object state, fog-of-war data, templates, and other in-session overlays.
+
 ### Debounced Viewport Broadcasts
 DM drags the indicator box and emits `viewport_indicator_moved` signals at high frequency. To avoid flooding the network, broadcasts are debounced at 50ms (20 times per second) — enough for smooth interaction without overhead.
 
@@ -150,6 +159,8 @@ DM drags the indicator box and emits `viewport_indicator_moved` signals at high 
 ---
 
 ## Known Limitations & Future Work
+
+- **Native package UX in dev runtime:** `.map` bundles may appear as directories while running from editor/dev builds. Full macOS/Windows document-type polish (package/file-association behavior) is scheduled for **Phase 10** export integration.
 
 - **Phase 3 (Token Placement):** Player sprite spawning, FoW, and visibility culling (requires extending `PlayerWindow` to manage Token nodes)
 - **Phase 4 (Input Routing):** Mobile controller input and gamepad mapping (network packet routing exists; just needs HID binding on Phase 5)

@@ -36,6 +36,11 @@ var grid_offset: Vector2 = Vector2.ZERO ## Pixel offset so grid aligns to tiles
 # representing one polygon. Populated by the wall-paint editor in Phase 6.
 var wall_polygons: Array = []
 
+# --- Map objects (Phase 6) ------------------------------------------------
+# Array of serialised MapObject dictionaries placed by DM in editor mode.
+# Kept here so save/load round-trips without Phase 6 code loaded.
+var map_objects: Array = []
+
 # --- Viewport state (optional, remembered across sessions) -----------------
 var camera_position: Vector2 = Vector2.ZERO
 var camera_zoom: float = 1.0
@@ -54,6 +59,7 @@ func to_dict() -> Dictionary:
 		"hex_size": hex_size,
 		"grid_offset": {"x": grid_offset.x, "y": grid_offset.y},
 		"wall_polygons": _serialise_polygons(wall_polygons),
+		"map_objects": map_objects.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
 	}
@@ -69,6 +75,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	var go: Dictionary = d.get("grid_offset", {"x": 0.0, "y": 0.0})
 	m.grid_offset = Vector2(float(go.get("x", 0.0)), float(go.get("y", 0.0)))
 	m.wall_polygons = _deserialise_polygons(d.get("wall_polygons", []))
+	m.map_objects = d.get("map_objects", []).duplicate(true)
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
 	m.camera_zoom = float(d.get("camera_zoom", 1.0))

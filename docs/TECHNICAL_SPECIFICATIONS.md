@@ -28,10 +28,14 @@ To support 6+ players across Mac/Windows while bypassing Bluetooth hardware caps
 
 ## 4. Software Stack & Dev Workflow
 * **Version Control:** Git.
-* **Data Persistence:** JSON for Map metadata and Player Profiles.
+* **Data Persistence:**
+    * `.map` bundle directories for map definitions: `map.json` + copied image asset.
+    * `.sav` bundle directories for session/runtime state that reference a `.map` bundle.
+    * JSON remains the internal serialization format inside each bundle.
 * **Agent Integration:** * VS Code "External Editor" mode enabled in Godot.
     * Copilot used for GDScript logic (utilizing its Python-context understanding).
 
 ## 5. Potential Constraints
 * **Mac/Windows Parity:** Use Godot's `OS.get_name()` to handle pathing differences for map imports.
+* **Bundle UX Parity:** `.map`/`.sav` are directory bundles internally; Finder/Explorer presentation and native dialog behavior depend on exported app metadata (macOS `Info.plist` package/document declarations, Windows file associations). Final polish is deferred to Phase 10.
 * **Network Latency:** Local WiFi is required for Phone-based inputs to ensure <20ms latency.

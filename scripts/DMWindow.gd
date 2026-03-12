@@ -21,7 +21,7 @@ extends Node
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
 
-const SAVE_DIR := "user://data/maps/"
+const MAP_DIR := "user://data/maps/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
 # ── UI node references ──────────────────────────────────────────────────────
@@ -33,8 +33,22 @@ var _cal_dialog: ConfirmationDialog = null
 var _manual_scale_dialog: ConfirmationDialog = null
 
 var _feet_spin: SpinBox = null ## calibration: feet input
+var _offset_x_spin: SpinBox = null ## calibration: grid offset X
+var _offset_y_spin: SpinBox = null ## calibration: grid offset Y
 var _scale_px_spin: SpinBox = null ## manual scale: pixels
 var _scale_ft_spin: SpinBox = null ## manual scale: feet
+
+## Standalone offset dialog (Edit > Set Grid Offset)
+var _offset_dialog: ConfirmationDialog = null
+var _solo_offset_x_spin: SpinBox = null
+var _solo_offset_y_spin: SpinBox = null
+
+## New Map / Open Map workflow
+var _open_map_dialog: FileDialog = null
+var _save_as_dialog: FileDialog = null ## native Save panel for naming/renaming maps
+var _pending_image_path: String = "" ## holds image path while native save dialog is open
+var _map_name_mode: String = "new" ## "new" or "save_as"
+var _active_map_bundle_path: String = "" ## absolute path to the current .map bundle directory
 
 var _status_label: Label = null
 var _grid_option: OptionButton = null
@@ -66,7 +80,7 @@ func _ready() -> void:
 	_build_ui()
 	NetworkManager.display_peer_registered.connect(_on_display_peer_registered)
 	NetworkManager.display_viewport_resized.connect(_on_display_viewport_resized)
-	print("DMWindow: ready (Phase 2 – menu bar UI)")
+	print("DMWindow: ready (Phase 2 complete — map CRUD, calibration offset)")
 
 
 func _process(delta: float) -> void:
@@ -115,8 +129,11 @@ func _build_ui() -> void:
 	# File menu
 	var file_menu := PopupMenu.new()
 	file_menu.name = "File"
-	file_menu.add_item("Load Map…", 0)
-	file_menu.add_item("Save Map", 1)
+	file_menu.add_item("New Map from Image…", 0)
+	file_menu.add_item("Open Map…", 1)
+	file_menu.add_separator()
+	file_menu.add_item("Save Map", 2)
+	file_menu.add_item("Save Map As…", 3)
 	file_menu.add_separator()
 	file_menu.add_item("Quit", 9)
 	file_menu.id_pressed.connect(_on_file_menu_id)
@@ -127,6 +144,7 @@ func _build_ui() -> void:
 	edit_menu.name = "Edit"
 	edit_menu.add_item("Calibrate Grid…", 10)
 	edit_menu.add_item("Set Scale Manually…", 11)
+	edit_menu.add_item("Set Grid Offset…", 12)
 	edit_menu.id_pressed.connect(_on_edit_menu_id)
 	menu_bar.add_child(edit_menu)
 
@@ -266,7 +284,7 @@ func _build_ui() -> void:
 	pad_right.custom_minimum_size = Vector2(8, 0)
 	toolbar_hbox.add_child(pad_right)
 
-	# ── FileDialog ───────────────────────────────────────────────────────────
+	# ── FileDialog (image selection for New Map) ─────────────────────────────
 	_file_dialog = FileDialog.new()
 	_file_dialog.use_native_dialog = true
 	_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
@@ -274,7 +292,7 @@ func _build_ui() -> void:
 	_file_dialog.title = "Select Map Image"
 	for ext in SUPPORTED_EXTENSIONS:
 		_file_dialog.add_filter("*.%s" % ext)
-	_file_dialog.file_selected.connect(_on_file_selected)
+	_file_dialog.file_selected.connect(_on_image_selected)
 	add_child(_file_dialog)
 
 	# ── Calibration dialog ───────────────────────────────────────────────────
@@ -285,6 +303,10 @@ func _build_ui() -> void:
 	var cal_vbox := VBoxContainer.new()
 	cal_vbox.add_theme_constant_override("separation", 8)
 
+	var feet_label := Label.new()
+	feet_label.text = "Distance spanned (feet):"
+	cal_vbox.add_child(feet_label)
+
 	_feet_spin = SpinBox.new()
 	_feet_spin.min_value = 5.0
 	_feet_spin.max_value = 500.0
@@ -293,6 +315,42 @@ func _build_ui() -> void:
 	_feet_spin.suffix = " ft"
 	_feet_spin.focus_mode = Control.FOCUS_CLICK
 	cal_vbox.add_child(_feet_spin)
+
+	var offset_sep := HSeparator.new()
+	cal_vbox.add_child(offset_sep)
+
+	var offset_label := Label.new()
+	offset_label.text = "Grid offset (px) — nudge to align grid to tiles:"
+	cal_vbox.add_child(offset_label)
+
+	var offset_grid := GridContainer.new()
+	offset_grid.columns = 2
+	offset_grid.add_theme_constant_override("h_separation", 12)
+	offset_grid.add_theme_constant_override("v_separation", 4)
+
+	var ox_label := Label.new(); ox_label.text = "Offset X:"
+	offset_grid.add_child(ox_label)
+	_offset_x_spin = SpinBox.new()
+	_offset_x_spin.min_value = -4096.0
+	_offset_x_spin.max_value = 4096.0
+	_offset_x_spin.step = 1.0
+	_offset_x_spin.value = 0.0
+	_offset_x_spin.suffix = " px"
+	_offset_x_spin.focus_mode = Control.FOCUS_CLICK
+	offset_grid.add_child(_offset_x_spin)
+
+	var oy_label := Label.new(); oy_label.text = "Offset Y:"
+	offset_grid.add_child(oy_label)
+	_offset_y_spin = SpinBox.new()
+	_offset_y_spin.min_value = -4096.0
+	_offset_y_spin.max_value = 4096.0
+	_offset_y_spin.step = 1.0
+	_offset_y_spin.value = 0.0
+	_offset_y_spin.suffix = " px"
+	_offset_y_spin.focus_mode = Control.FOCUS_CLICK
+	offset_grid.add_child(_offset_y_spin)
+
+	cal_vbox.add_child(offset_grid)
 
 	_cal_dialog.add_child(cal_vbox)
 	_cal_dialog.confirmed.connect(_on_calibration_confirmed)
@@ -338,6 +396,71 @@ func _build_ui() -> void:
 	_manual_scale_dialog.add_child(ms_vbox)
 	_manual_scale_dialog.confirmed.connect(_on_manual_scale_confirmed)
 	add_child(_manual_scale_dialog)
+
+	# ── Open Map dialog ──────────────────────────────────────────────────────
+	# ── Open Map dialog — user selects a .map bundle path ─────────────────────
+	_open_map_dialog = FileDialog.new()
+	_open_map_dialog.use_native_dialog = true
+	_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
+	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_open_map_dialog.title = "Open Map"
+	_open_map_dialog.add_filter("*.map ; OmniCrawl Map")
+	_open_map_dialog.file_selected.connect(_on_map_bundle_selected)
+	add_child(_open_map_dialog)
+
+	# ── Save As dialog — native Save panel; filename stem becomes the map name ─
+	_save_as_dialog = FileDialog.new()
+	_save_as_dialog.use_native_dialog = true
+	_save_as_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	_save_as_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_save_as_dialog.title = "Save Map As"
+	_save_as_dialog.add_filter("*.map ; OmniCrawl Map")
+	_save_as_dialog.file_selected.connect(_on_save_as_path_selected)
+	add_child(_save_as_dialog)
+
+	# ── Standalone Grid Offset dialog (Edit > Set Grid Offset) ───────────────
+	_offset_dialog = ConfirmationDialog.new()
+	_offset_dialog.title = "Set Grid Offset"
+	_offset_dialog.min_size = Vector2i(280, 0)
+
+	var solo_vbox := VBoxContainer.new()
+	solo_vbox.add_theme_constant_override("separation", 8)
+
+	var solo_hint := Label.new()
+	solo_hint.text = "Nudge the grid origin to align it to map tiles:"
+	solo_vbox.add_child(solo_hint)
+
+	var solo_grid := GridContainer.new()
+	solo_grid.columns = 2
+	solo_grid.add_theme_constant_override("h_separation", 12)
+	solo_grid.add_theme_constant_override("v_separation", 4)
+
+	var sox_lbl := Label.new(); sox_lbl.text = "Offset X:"
+	solo_grid.add_child(sox_lbl)
+	_solo_offset_x_spin = SpinBox.new()
+	_solo_offset_x_spin.min_value = -4096.0
+	_solo_offset_x_spin.max_value = 4096.0
+	_solo_offset_x_spin.step = 1.0
+	_solo_offset_x_spin.value = 0.0
+	_solo_offset_x_spin.suffix = " px"
+	_solo_offset_x_spin.focus_mode = Control.FOCUS_CLICK
+	solo_grid.add_child(_solo_offset_x_spin)
+
+	var soy_lbl := Label.new(); soy_lbl.text = "Offset Y:"
+	solo_grid.add_child(soy_lbl)
+	_solo_offset_y_spin = SpinBox.new()
+	_solo_offset_y_spin.min_value = -4096.0
+	_solo_offset_y_spin.max_value = 4096.0
+	_solo_offset_y_spin.step = 1.0
+	_solo_offset_y_spin.value = 0.0
+	_solo_offset_y_spin.suffix = " px"
+	_solo_offset_y_spin.focus_mode = Control.FOCUS_CLICK
+	solo_grid.add_child(_solo_offset_y_spin)
+
+	solo_vbox.add_child(solo_grid)
+	_offset_dialog.add_child(solo_vbox)
+	_offset_dialog.confirmed.connect(_on_offset_confirmed)
+	add_child(_offset_dialog)
 
 	# Player viewport indicator — DM drags the green box on the main map
 	# to reposition what players see. Hidden until a map is loaded.
@@ -455,8 +578,10 @@ func _make_toolbar_btn(label: String, tip: String) -> Button:
 
 func _on_file_menu_id(id: int) -> void:
 	match id:
-		0: _on_load_map_pressed()
-		1: _on_save_map_pressed()
+		0: _on_new_map_pressed()
+		1: _on_open_map_pressed()
+		2: _on_save_map_pressed()
+		3: _on_save_map_as_pressed()
 		9: get_tree().quit()
 
 
@@ -464,6 +589,7 @@ func _on_edit_menu_id(id: int) -> void:
 	match id:
 		10: _on_calibrate_pressed()
 		11: _on_manual_scale_pressed()
+		12: _on_set_offset_pressed()
 
 
 func _on_view_menu_id(id: int) -> void:
@@ -497,29 +623,6 @@ func _on_tool_changed(tool: int) -> void:
 
 
 # ---------------------------------------------------------------------------
-# File handlers
-# ---------------------------------------------------------------------------
-
-func _on_load_map_pressed() -> void:
-	_file_dialog.popup_centered(Vector2i(900, 600))
-
-
-func _on_file_selected(path: String) -> void:
-	_set_status("Loading…")
-	var map: MapData = MapData.new()
-	map.map_name = path.get_file().get_basename()
-	map.image_path = path
-
-	var json_path := _json_path_for(map.map_name)
-	if FileAccess.file_exists(json_path):
-		_load_map_json(map, json_path)
-
-	_apply_map(map)
-	NetworkManager.broadcast_map(map)
-	_set_status("Loaded: %s" % map.map_name)
-
-
-# ---------------------------------------------------------------------------
 # Grid type handler
 # ---------------------------------------------------------------------------
 
@@ -545,6 +648,9 @@ func _on_calibrate_pressed() -> void:
 	# Ensure we're in Select mode during calibration (no accidental drag pan)
 	_map_view.active_tool = 0 # Tool.SELECT
 	_select_btn.button_pressed = true
+	# Pre-fill offset spinboxes from current map data
+	_offset_x_spin.value = map.grid_offset.x
+	_offset_y_spin.value = map.grid_offset.y
 	_cal_tool.activate(map)
 	_set_status("Calibrate: click-drag a line on the map, then release.")
 
@@ -554,11 +660,12 @@ func _on_calibration_confirmed() -> void:
 
 
 func _on_calibration_done(map: MapData) -> void:
-	# CalibrationTool already wrote cell_px / hex_size onto map before emitting.
+	# Apply offset from the dialog spinboxes (user-entered or retained from before).
+	map.grid_offset = Vector2(_offset_x_spin.value, _offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
 	NetworkManager.broadcast_map_update(map)
-	var detail := "cell_px=%.1f" % map.cell_px if map.grid_type == MapData.GridType.SQUARE else "hex_size=%.1f" % map.hex_size
-	_set_status("Calibrated: %s" % detail)
+	var detail := ("cell_px=%.1f" % map.cell_px) if map.grid_type == MapData.GridType.SQUARE else ("hex_size=%.1f" % map.hex_size)
+	_set_status("Calibrated: %s  offset=(%.0f, %.0f)" % [detail, map.grid_offset.x, map.grid_offset.y])
 
 
 # ---------------------------------------------------------------------------
@@ -599,19 +706,155 @@ func _on_manual_scale_confirmed() -> void:
 
 
 # ---------------------------------------------------------------------------
-# Save handler
+# Standalone Grid Offset handler (Edit > Set Grid Offset…)
 # ---------------------------------------------------------------------------
+
+func _on_set_offset_pressed() -> void:
+	var map: MapData = _map_view.get_map() if _map_view else null
+	if map == null:
+		_set_status("Load a map first.")
+		return
+	_solo_offset_x_spin.value = map.grid_offset.x
+	_solo_offset_y_spin.value = map.grid_offset.y
+	_offset_dialog.popup_centered(Vector2i(320, 160))
+
+
+func _on_offset_confirmed() -> void:
+	var map: MapData = _map_view.get_map() if _map_view else null
+	if map == null:
+		return
+	map.grid_offset = Vector2(_solo_offset_x_spin.value, _solo_offset_y_spin.value)
+	_map_view.grid_overlay.apply_map_data(map)
+	NetworkManager.broadcast_map_update(map)
+	_set_status("Grid offset: (%.0f, %.0f)" % [map.grid_offset.x, map.grid_offset.y])
+
+
+# ---------------------------------------------------------------------------
+# File — New Map / Open Map / Save / Save As
+# ---------------------------------------------------------------------------
+
+func _on_new_map_pressed() -> void:
+	## Step 1: DM picks a source image.
+	_file_dialog.title = "Select Map Image to Import"
+	_file_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_image_selected(path: String) -> void:
+	## Step 2: Store the image path, then open the native Save panel so the DM
+	## chooses the .map bundle path.
+	_pending_image_path = path
+	_map_name_mode = "new"
+	_save_as_dialog.current_file = path.get_file().get_basename() + ".map"
+	_save_as_dialog.current_dir = _maps_dir_abs()
+	_save_as_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_save_as_path_selected(path: String) -> void:
+	## Normalise the chosen path to a .map bundle path and proceed.
+	var bundle_path := _normalise_bundle_path(path)
+	var map_name: String = bundle_path.get_file().get_basename().strip_edges()
+	if map_name.is_empty():
+		_set_status("Invalid map name — please try again.")
+		return
+	map_name = map_name.replace("/", "_").replace("\\", "_")
+
+	match _map_name_mode:
+		"new":
+			_create_map_from_image(_pending_image_path, bundle_path)
+		"save_as":
+			_save_map_as_path(bundle_path)
+
+
+func _create_map_from_image(src_path: String, bundle_path: String) -> void:
+	_ensure_bundle_dir(bundle_path)
+	var ext: String = src_path.get_extension().to_lower()
+	var img_dest_abs: String = _image_dest_path_abs(bundle_path, ext)
+
+	var err := _copy_file(src_path, img_dest_abs)
+	if err != OK:
+		push_error("DMWindow: failed to copy image to '%s' (err %d)" % [img_dest_abs, err])
+		_set_status("Error: could not copy image.")
+		return
+
+	var map := MapData.new()
+	map.map_name = bundle_path.get_file().get_basename()
+	map.image_path = img_dest_abs
+	_active_map_bundle_path = bundle_path
+	_save_map_data(map)
+	_apply_map(map)
+	NetworkManager.broadcast_map(map)
+	_set_status("New map: %s" % map.map_name)
+
+
+func _on_open_map_pressed() -> void:
+	## Open a previously saved .map file.
+	_ensure_maps_dir()
+	_open_map_dialog.current_dir = _maps_dir_abs()
+	_open_map_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_map_bundle_selected(path: String) -> void:
+	## Load the map stored inside the selected .map bundle.
+	var bundle_path := _normalise_bundle_path(path)
+	var map := _load_map_from_bundle(bundle_path)
+	if map == null:
+		_set_status("Failed to load map from: %s" % bundle_path.get_file())
+		return
+	_active_map_bundle_path = bundle_path
+	_apply_map(map)
+	NetworkManager.broadcast_map(map)
+	_set_status("Opened: %s" % map.map_name)
+
 
 func _on_save_map_pressed() -> void:
 	var map: MapData = _map_view.get_map() if _map_view else null
 	if map == null:
 		_set_status("Nothing to save.")
 		return
+	if _active_map_bundle_path.is_empty():
+		_on_save_map_as_pressed()
+		return
 	_map_view.save_camera_to_map()
-	var path := _json_path_for(map.map_name)
-	_save_map_json(map, path)
+	_save_map_data(map)
 	NetworkManager.broadcast_map_update(map)
-	_set_status("Saved: %s" % path)
+	_set_status("Saved: %s" % map.map_name)
+
+
+func _on_save_map_as_pressed() -> void:
+	var map: MapData = _map_view.get_map() if _map_view else null
+	if map == null:
+		_set_status("Nothing to save.")
+		return
+	_map_name_mode = "save_as"
+	_save_as_dialog.current_file = map.map_name + ".map"
+	_save_as_dialog.current_dir = _active_map_bundle_path.get_base_dir() if not _active_map_bundle_path.is_empty() else _maps_dir_abs()
+	_save_as_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _save_map_as_path(bundle_path: String) -> void:
+	## Copy the current map into a new .map bundle and switch to it.
+	var map: MapData = _map_view.get_map()
+	if map == null:
+		return
+	_ensure_bundle_dir(bundle_path)
+	var ext: String = map.image_path.get_extension().to_lower()
+	var new_img_abs: String = _image_dest_path_abs(bundle_path, ext)
+
+	# Only copy image if destination is different from source.
+	if new_img_abs != map.image_path:
+		var err := _copy_file(map.image_path, new_img_abs)
+		if err != OK:
+			push_error("DMWindow: failed to copy image for save-as (err %d)" % err)
+			_set_status("Error: could not duplicate image.")
+			return
+
+	_map_view.save_camera_to_map()
+	map.map_name = bundle_path.get_file().get_basename()
+	map.image_path = new_img_abs
+	_active_map_bundle_path = bundle_path
+	_save_map_data(map)
+	NetworkManager.broadcast_map_update(map)
+	_set_status("Saved as: %s" % map.map_name)
 
 
 # ---------------------------------------------------------------------------
@@ -637,52 +880,109 @@ func _init_player_cam_from_dm() -> void:
 	_broadcast_player_viewport()
 
 
-func _json_path_for(map_name: String) -> String:
-	if not DirAccess.dir_exists_absolute(SAVE_DIR):
-		DirAccess.make_dir_recursive_absolute(SAVE_DIR)
-	return SAVE_DIR + map_name + ".json"
+func _maps_dir_abs() -> String:
+	return ProjectSettings.globalize_path(MAP_DIR)
 
 
-func _save_map_json(map: MapData, path: String) -> void:
-	var data := {
-		"map_name": map.map_name,
-		"image_path": map.image_path,
-		"grid_type": map.grid_type,
-		"cell_px": map.cell_px,
-		"hex_size": map.hex_size,
-		"camera_position": {"x": map.camera_position.x, "y": map.camera_position.y},
-		"camera_zoom": map.camera_zoom,
-	}
+func _bundle_dir_abs(map_name: String) -> String:
+	## Default bundle location under the managed maps directory.
+	return _maps_dir_abs().path_join(map_name + ".map")
+
+
+func _bundle_json_path_abs(bundle_path: String) -> String:
+	return bundle_path.path_join("map.json")
+
+
+func _image_dest_path_abs(bundle_path: String, ext: String) -> String:
+	return bundle_path.path_join("image." + ext.to_lower())
+
+
+func _ensure_maps_dir() -> void:
+	var abs_dir := _maps_dir_abs()
+	if not DirAccess.dir_exists_absolute(abs_dir):
+		DirAccess.make_dir_recursive_absolute(abs_dir)
+
+
+func _ensure_bundle_dir(bundle_path: String) -> void:
+	var abs_dir := bundle_path
+	# Native save panels can leave behind a placeholder file at the selected path.
+	# If that happened, remove it so the .map path can become a directory bundle.
+	if FileAccess.file_exists(abs_dir) and not DirAccess.dir_exists_absolute(abs_dir):
+		var remove_err := DirAccess.remove_absolute(abs_dir)
+		if remove_err != OK:
+			push_error("DMWindow: could not replace placeholder file '%s' with bundle dir (err %d)" % [abs_dir, remove_err])
+			return
+	if not DirAccess.dir_exists_absolute(abs_dir):
+		DirAccess.make_dir_recursive_absolute(abs_dir)
+
+
+func _normalise_bundle_path(path: String) -> String:
+	if path.to_lower().ends_with(".map"):
+		return path
+	return path + ".map"
+
+
+func _save_map_data(map: MapData) -> void:
+	## Serialise MapData to map.json inside the active .map bundle directory.
+	## image_path is stored as a relative filename so the bundle is self-contained.
+	if _active_map_bundle_path.is_empty():
+		_active_map_bundle_path = _bundle_dir_abs(map.map_name)
+	_ensure_bundle_dir(_active_map_bundle_path)
+	var path := _bundle_json_path_abs(_active_map_bundle_path)
+	var d := map.to_dict()
+	d["image_path"] = map.image_path.get_file()
 	var fa := FileAccess.open(path, FileAccess.WRITE)
 	if fa == null:
 		push_error("DMWindow: cannot write to '%s'" % path)
 		return
-	fa.store_string(JSON.stringify(data, "\t"))
+	fa.store_string(JSON.stringify(d, "\t"))
 	fa.close()
 
 
-func _load_map_json(map: MapData, path: String) -> void:
-	var fa := FileAccess.open(path, FileAccess.READ)
+func _load_map_from_bundle(bundle_path: String) -> MapData:
+	## Read map.json from a .map bundle directory and resolve image_path to absolute.
+	var json_path := bundle_path.path_join("map.json")
+	var fa := FileAccess.open(json_path, FileAccess.READ)
 	if fa == null:
-		push_error("DMWindow: cannot read '%s'" % path)
-		return
+		push_error("DMWindow: cannot read '%s'" % json_path)
+		return null
 	var text := fa.get_as_text()
 	fa.close()
 	var parsed: Variant = JSON.parse_string(text)
 	if not (parsed is Dictionary):
-		push_error("DMWindow: invalid JSON in '%s'" % path)
-		return
+		push_error("DMWindow: invalid JSON in '%s'" % json_path)
+		return null
 	var d: Dictionary = parsed as Dictionary
-	if d.has("grid_type"): map.grid_type = int(d["grid_type"])
-	if d.has("cell_px"): map.cell_px = float(d["cell_px"])
-	if d.has("hex_size"): map.hex_size = float(d["hex_size"])
-	if d.has("camera_zoom"): map.camera_zoom = float(d["camera_zoom"])
-	if d.has("camera_position"):
-		var cp: Dictionary = d["camera_position"]
-		map.camera_position = Vector2(float(cp.get("x", 0)), float(cp.get("y", 0)))
+	# Resolve relative image filename to an absolute path inside the bundle.
+	if d.has("image_path"):
+		var img_ref: String = d["image_path"]
+		if not img_ref.is_absolute_path() and not img_ref.begins_with("user://"):
+			d["image_path"] = bundle_path.path_join(img_ref)
+	return MapData.from_dict(d)
 
 
 func _set_status(msg: String) -> void:
 	if _status_label:
 		_status_label.text = msg
 	print("DMWindow: %s" % msg)
+
+
+func _copy_file(from_path: String, to_path: String) -> Error:
+	## Copy any file by reading and writing raw bytes.
+	## Works with OS absolute paths, user://, and res:// paths.
+	var parent_dir := to_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent_dir):
+		var mkdir_err := DirAccess.make_dir_recursive_absolute(parent_dir)
+		if mkdir_err != OK:
+			return mkdir_err
+	var src := FileAccess.open(from_path, FileAccess.READ)
+	if src == null:
+		return FileAccess.get_open_error()
+	var data := src.get_buffer(src.get_length())
+	src.close()
+	var dst := FileAccess.open(to_path, FileAccess.WRITE)
+	if dst == null:
+		return FileAccess.get_open_error()
+	dst.store_buffer(data)
+	dst.close()
+	return OK

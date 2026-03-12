@@ -35,10 +35,13 @@
 2. Grid type selector: enum `GridType { SQUARE, HEX_FLAT, HEX_POINTY }` stored in map metadata
 3. `GridOverlay.gd`: `_draw()` renders either square grid (using `cell_px`) or hex grid (using `hex_size` + `GridType` orientation)
 4. Calibration tool: DM drags ruler → pixel distance / "5 ft" prompt = `cell_px` (square) or `hex_size` (hex)
-5. Map metadata JSON: `{ "path", "grid_type", "cell_px", "hex_size", "offset" }` → `data/maps/<name>.json`
+5. Map definition bundle: `data/maps/<name>.map/`
+   - `map.json` stores `{ "image_path", "grid_type", "cell_px", "hex_size", "grid_offset", ... }`
+   - `image.<ext>` is copied into the bundle so the map is self-contained
+   - DM uses native system dialogs to create/open `.map` bundles
 6. DM can paint `LightOccluder2D` wall polygons in editor; stored in map JSON
 
-**Verification:** Load PNG, WEBP, and BMP maps; switch between square and hex overlay; calibrate each; grid aligns to tiles; persists on reload
+**Verification:** Load PNG, WEBP, and BMP maps; switch between square and hex overlay; calibrate each; set grid offset; grid aligns to tiles; `.map` bundle persists on reload
 
 ---
 
@@ -99,7 +102,7 @@
    - **Secret**: Hidden door/object; combination of perception (to notice it exists) + investigation (to interact); `perception_dc` + `investigation_dc`
    - **Hazard**: Visible area effect (fire, acid, difficult terrain); doesn't freeze but applies ongoing state or movement penalty; has `damage_type`, `effect_label`
 4. Editor Mode tools: click to place object, drag to resize trigger shape, right-click to edit properties, delete key to remove
-5. Objects stored in map JSON under `"map_objects": [...]`; DM Window renders object icons/outlines; Player Window renders nothing (objects are hidden from players)
+5. Objects stored in the `.map` bundle metadata under `"map_objects": [...]`; DM Window renders object icons/outlines; Player Window renders nothing (objects are hidden from players)
 
 **Verification:** Place all 5 object types; configure trap with perception_dc=15; save map; reload — all objects restored
 
@@ -156,7 +159,7 @@
 *Depends on: All prior phases*
 
 Saved state includes:
-- Active map file path + calibration
+- Reference to active `.map` bundle + session-specific transforms
 - All player positions and lock states
 - FoW mask (serialized as base64-encoded image data or RLE-compressed pixel array)
 - All map object states (which have fired, which have been revealed per player)
@@ -166,7 +169,9 @@ Saved state includes:
 
 Implementation:
 1. `SaveManager.gd` (Autoload): `save_slot(name: String)` / `load_slot(name: String)` / `list_slots() -> Array`
-2. Save format: single JSON file per slot → `data/saves/<name>.json`
+2. Save format: `.sav` bundle per slot → `data/saves/<name>.sav/`
+   - Contains session JSON and transient assets/state only
+   - References a `.map` bundle rather than duplicating the base map definition
 3. DM Save/Load UI panel in `DMWindow.tscn`: list of named slots with timestamps, Save, Load, Delete
 4. On save: serialize all above state via `GameState` + `TriggerSystem` + FoW mask
 5. On load: restore scene tree state — reinitialize map, reposition sprites, restore FoW mask, restore trigger states
@@ -180,9 +185,13 @@ Implementation:
 
 1. `OSHelper.gd`: `get_data_dir() -> String` using `OS.get_name()` for platform-correct user data paths
 2. Audit all hardcoded paths → replace with `OSHelper.get_data_dir()`
-3. Integration test: 4-gamepad + 2-phone session on a real map; all auto-triggers, FoW, saves tested
-4. Window resolution/DPI: ensure Player TV Window fills secondary screen on both platforms
-5. Stretch/post-MVP: status condition overlays on sprites
+3. Finalise native map/save document behavior per OS:
+   - macOS: exported app `Info.plist` declares `.map` as package/document type (and `.sav` when implemented)
+   - Windows: exported app registers file associations/icons for `.map`/`.sav`; verify Explorer/open-with behavior
+   - Verify native file dialogs treat `.map` and `.sav` consistently as user-facing documents as much as platform APIs allow
+4. Integration test: 4-gamepad + 2-phone session on a real map; all auto-triggers, FoW, saves tested
+5. Window resolution/DPI: ensure Player TV Window fills secondary screen on both platforms
+6. Stretch/post-MVP: status condition overlays on sprites
 
 ---
 
@@ -258,6 +267,7 @@ Design: each effect is a self-contained `.tscn`. Adding a new effect = drop scen
 - 5 map object types: Trap, Event, Observable, Secret, Hazard
 - Perception vs Investigation distinct: Traps = passive perception (auto); Observables = active player button; Secrets = both
 - Save format: named JSON slots in `data/saves/`
+- Runtime caveat: editor/dev runtime can show `.map` bundles as plain directories until exported app document metadata is applied (finalised in Phase 10)
 - WebSocket port: 9090
 - Effects: manifest-driven expandable library; each effect is a .tscn with `size: float` + `effect_finished` signal; supports GPUParticles2D, CPUParticles2D, AnimatedSprite2D or any mix
 - Effects render on both DM + Player windows via EffectLayer CanvasLayer
