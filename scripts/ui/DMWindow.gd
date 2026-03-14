@@ -6,7 +6,7 @@ extends Node
 # Provides:
 #   • MenuBar with File / Edit / View menus
 #   • Collapsible toolbar with Select / Pan tool toggle + Zoom controls +
-#     Grid-type selector + status label
+#	 Grid-type selector + status label
 #   • Map loading via native FileDialog
 #   • Calibration workflow via Edit > Calibrate Grid...
 #   • Manual scale entry via Edit > Set Scale Manually...
@@ -62,7 +62,32 @@ var _view_menu: PopupMenu = null ## kept for checkmark management
 var _fog_tool_option: OptionButton = null
 var _fog_brush_spin: SpinBox = null
 var _fog_visible_check: CheckBox = null
-var _wall_rect_btn: Button = null
+## Removed unused _wall_tool_dropdown variable
+# Handler for wall tool dropdown selection
+func _on_wall_tool_selected(index: int) -> void:
+	# 0 = Rectangle, 1 = Polygon
+	# print("[DEBUG] Wall tool dropdown selected: index=", index)
+	if _map_view == null:
+		# print("[DEBUG] _on_wall_tool_selected: _map_view is null")
+		return
+	if index == 0:
+		# print("[DEBUG] Activating Wall Rect tool in MapView")
+		# _map_view.active_tool = _map_view.Tool.WALL
+		# _map_view.wall_subtool = "rect"
+		_map_view.set_wall_rect_mode(true)
+		# print("[DEBUG] MapView state after dropdown: active_tool=", _map_view.active_tool, "wall_subtool=", _map_view.wall_subtool)
+
+		# _map_view.set_wall_polygon_mode(false)
+		_set_status("Wall Rect: drag on map to place wall occluder rectangle")
+	elif index == 1:
+		# print("[DEBUG] Activating Wall Polygon tool in MapView")
+		# _map_view.active_tool = _map_view.Tool.WALL
+		# _map_view.wall_subtool = "polygon"
+		# _map_view.set_wall_rect_mode(false)
+		_map_view.set_wall_polygon_mode(true)
+		# print("[DEBUG] MapView state after dropdown: active_tool=", _map_view.active_tool, "wall_subtool=", _map_view.wall_subtool)
+
+		_set_status("Wall Polygon: click to add points, double-click/right-click/Escape to finish")
 var _wall_delete_btn: Button = null
 
 # ── Phase 3: player profiles ------------------------------------------------
@@ -402,14 +427,22 @@ func _build_ui() -> void:
 	_fog_visible_check.toggled.connect(_on_dm_fog_visible_toggled)
 	toolbar_hbox.add_child(_fog_visible_check)
 
-	_wall_rect_btn = Button.new()
-	_wall_rect_btn.text = "▭"
-	_wall_rect_btn.toggle_mode = true
-	_wall_rect_btn.focus_mode = Control.FOCUS_NONE
-	_wall_rect_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_wall_rect_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
-	_wall_rect_btn.toggled.connect(_on_wall_rect_toggled)
-	toolbar_hbox.add_child(_wall_rect_btn)
+	# Wall tool dropdown
+	var wall_tool_dropdown := OptionButton.new()
+	wall_tool_dropdown.name = "WallToolDropdown"
+	wall_tool_dropdown.focus_mode = Control.FOCUS_NONE
+	wall_tool_dropdown.custom_minimum_size = Vector2(roundi(70.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	wall_tool_dropdown.add_theme_font_size_override("font_size", roundi(16.0 * _ui_scale()))
+	wall_tool_dropdown.tooltip_text = "Wall tools: Rectangle or Polygon"
+	wall_tool_dropdown.add_item("▭ Rectangle", 0)
+	wall_tool_dropdown.add_item("▲ Polygon", 1)
+	wall_tool_dropdown.select(0)
+	wall_tool_dropdown.item_selected.connect(_on_wall_tool_selected)
+	wall_tool_dropdown.pressed.connect(func():
+		var idx := wall_tool_dropdown.selected
+		_on_wall_tool_selected(idx)
+	)
+	toolbar_hbox.add_child(wall_tool_dropdown)
 
 	_wall_delete_btn = _make_toolbar_btn("⌫", "Delete selected wall (or press Delete)")
 	_wall_delete_btn.pressed.connect(_on_delete_wall_pressed)
@@ -567,7 +600,7 @@ func _build_ui() -> void:
 	_save_as_dialog.file_selected.connect(_on_save_as_path_selected)
 	add_child(_save_as_dialog)
 
-	# ── Standalone Grid Offset dialog (Edit > Set Grid Offset) ───────────────
+	# ── Standalone Grid Offset dialog (Edit > Set Grid Offset…)
 	_offset_dialog = ConfirmationDialog.new()
 	_offset_dialog.title = "Set Grid Offset"
 	_offset_dialog.min_size = Vector2i(280, 0)
@@ -865,11 +898,13 @@ func _on_view_menu_id(id: int) -> void:
 
 func _on_tool_changed(tool: int) -> void:
 	if _map_view:
-		# MapView.Tool enum values match 0 / 1
-		_map_view.active_tool = tool
-	match tool:
-		0: _set_status("Tool: Select")
-		1: _set_status("Tool: Pan  (left-drag to pan)")
+		match tool:
+			0:
+				_map_view.active_tool = _map_view.Tool.SELECT
+				_set_status("Tool: Select")
+			1:
+				_map_view.active_tool = _map_view.Tool.PAN
+				_set_status("Tool: Pan  (left-drag to pan)")
 
 
 func _on_fog_tool_selected(index: int) -> void:
@@ -877,6 +912,7 @@ func _on_fog_tool_selected(index: int) -> void:
 		return
 	var tool_id := _fog_tool_option.get_item_id(index)
 	_map_view.set_fog_tool(tool_id, _fog_brush_spin.value if _fog_brush_spin else 64.0)
+	# Tool enum assignment handled in set_fog_tool
 	_set_status("Fog tool: %s" % _fog_tool_option.get_item_text(index))
 
 

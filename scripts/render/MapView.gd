@@ -7,14 +7,14 @@ extends Node2D
 # Scene structure (MapView.tscn):
 #   MapView (Node2D)
 #   └── Camera2D
-#   └── MapImage     (TextureRect)
+#   └── MapImage		 (TextureRect)
 #   └── GridOverlay  (Node2D, GridOverlay.gd)
-#   └── WallLayer    (Node2D — LightOccluder2D children, Phase 6)
+#   └── WallLayer		(Node2D — LightOccluder2D children, Phase 6)
 #   └── TokenLayer   (Node2D — PlayerSprite children, Phase 4)
 #
 # Tool modes (set by DMWindow toolbar):
 #   SELECT — default; left-click is reserved for future token interaction
-#   PAN    — left-click-drag pans the camera
+#   PAN		— left-click-drag pans the camera
 #
 # Camera: position = world point shown at screen centre.
 #   To show world (0,0) at screen top-left, init to viewport_size * 0.5.
@@ -22,15 +22,24 @@ extends Node2D
 #
 # Input summary:
 #   Left-drag (Pan tool)   — pan
-#   Middle-drag            — pan (always, regardless of tool)
-#   Scroll wheel           — zoom toward cursor
-#   Trackpad two-finger    — pan (InputEventPanGesture)
-#   Trackpad pinch         — zoom (InputEventMagnifyGesture)
-#   Arrow keys             — smooth pan via _process / Input.is_key_pressed()
-#                            (buttons must have FOCUS_NONE to avoid UI nav)
+#   Middle-drag						— pan (always, regardless of tool)
+#   Scroll wheel				   — zoom toward cursor
+#   Trackpad two-finger		— pan (InputEventPanGesture)
+#   Trackpad pinch				 — zoom (InputEventMagnifyGesture)
+#   Arrow keys						 — smooth pan via _process / Input.is_key_pressed()
+#														(buttons must have FOCUS_NONE to avoid UI nav)
 # ---------------------------------------------------------------------------
 
-enum Tool {SELECT, PAN}
+enum Tool {
+	NONE,
+	SELECT,
+	PAN,
+	ZOOM,
+	PLAYER_ZOOM,
+	FOG_BRUSH,
+	FOG_RECT,
+	WALL
+}
 
 const ZOOM_MIN: float = 0.1
 const ZOOM_MAX: float = 8.0
@@ -74,18 +83,29 @@ var _render_profile: int = RenderProfile.DM
 
 var _fog_hidden_cells: Dictionary = {}
 var _fog_rect_dragging: bool = false
-var _fog_rect_start: Vector2 = Vector2.ZERO
-var _wall_rect_mode: bool = false
+## var _fog_rect_start: Vector2 = Vector2.ZERO
 var _wall_rect_dragging: bool = false
 var _wall_rect_start: Vector2 = Vector2.ZERO
 var _wall_rect_preview: Line2D = null
 var _wall_rect_preview_fill: Polygon2D = null
 var _fog_rect_preview: Line2D = null
 var _fog_rect_preview_fill: Polygon2D = null
+var wall_polygon_points: Array = []
+var wall_subtool: String = "rect" # "rect" or "polygon"
+var _wall_polygon_preview: Line2D = null
+var _wall_polygon_preview_fill: Polygon2D = null
+func _clear_wall_polygon_preview() -> void:
+	if _wall_polygon_preview and is_instance_valid(_wall_polygon_preview):
+		_wall_polygon_preview.queue_free()
+	_wall_polygon_preview = null
+	if _wall_polygon_preview_fill and is_instance_valid(_wall_polygon_preview_fill):
+		_wall_polygon_preview_fill.queue_free()
+	_wall_polygon_preview_fill = null
+	wall_polygon_points.clear()
 var _selected_wall_index: int = -1
-var _wall_dragging_move: bool = false
+## var _wall_dragging_move: bool = false
 var _wall_dragging_handle: int = -1
-var _wall_drag_start_mouse: Vector2 = Vector2.ZERO
+## var _wall_drag_start_mouse: Vector2 = Vector2.ZERO
 var _wall_drag_start_points: Array = []
 var _wall_selection_outline: Line2D = null
 var _wall_handle_nodes: Array = []
@@ -224,11 +244,37 @@ func force_fog_sync() -> void:
 
 
 func set_wall_rect_mode(enabled: bool) -> void:
-	_wall_rect_mode = enabled
-	if not enabled:
-		_clear_wall_rect_preview()
 	if enabled:
+		active_tool = Tool.WALL
+		wall_subtool = "rect"
+		_clear_wall_rect_preview()
+		_clear_wall_polygon_preview()
+		wall_polygon_points.clear() # Ensure polygon points are cleared
 		_set_selected_wall(-1)
+	else:
+		if active_tool == Tool.WALL:
+			active_tool = Tool.SELECT
+		wall_subtool = "none"
+		_clear_wall_rect_preview()
+		_clear_wall_polygon_preview()
+		wall_polygon_points.clear() # Also clear polygon points when disabling
+
+
+func set_wall_polygon_mode(enabled: bool) -> void:
+	if enabled:
+		active_tool = Tool.WALL
+		wall_subtool = "polygon"
+		_clear_wall_polygon_preview()
+		_clear_wall_rect_preview()
+		wall_polygon_points.clear()
+		_set_selected_wall(-1)
+	else:
+		if active_tool == Tool.WALL:
+			active_tool = Tool.SELECT
+		wall_subtool = "none"
+		_clear_wall_polygon_preview()
+		_clear_wall_rect_preview()
+		wall_polygon_points.clear()
 
 
 func has_selected_wall() -> bool:
@@ -304,6 +350,11 @@ func zoom_out() -> void:
 # ---------------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
+	# print("[DEBUG] _unhandled_input: event=", event, "active_tool=", active_tool, "wall_subtool=", wall_subtool)
+	if _handle_fog_wall_input(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and not key_event.echo and (key_event.keycode == KEY_DELETE or key_event.keycode == KEY_BACKSPACE):
@@ -311,9 +362,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 
-	if _handle_fog_wall_input(event):
-		get_viewport().set_input_as_handled()
-		return
+	# Fix: Deselect wall tools when SELECT or PAN is chosen
+	if active_tool == Tool.SELECT or active_tool == Tool.PAN:
+		set_wall_rect_mode(false)
+		set_wall_polygon_mode(false)
 
 	# --- Trackpad: two-finger pan -------------------------------------------
 	if event is InputEventPanGesture:
@@ -414,95 +466,137 @@ func _zoom_camera(step: float, pivot_screen: Vector2) -> void:
 
 
 func _handle_fog_wall_input(event: InputEvent) -> bool:
-	if _map == null:
-		return false
-	if not is_dm_view:
+	# print("[DEBUG] _handle_fog_wall_input: event=", event, "active_tool=", active_tool, "wall_subtool=", wall_subtool)
+	if _map == null or not is_dm_view:
 		return false
 
-	if _wall_rect_mode:
-		if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			var mb := event as InputEventMouseButton
-			if mb.pressed:
-				_wall_rect_dragging = true
-				_wall_rect_start = get_global_mouse_position()
-				_update_wall_rect_preview(_wall_rect_start, _wall_rect_start)
-			else:
-				if _wall_rect_dragging:
-					_wall_rect_dragging = false
-					_clear_wall_rect_preview()
-					_apply_wall_rect(_wall_rect_start, get_global_mouse_position())
-			return true
-		if _wall_rect_dragging and event is InputEventMouseMotion:
-			_update_wall_rect_preview(_wall_rect_start, get_global_mouse_position())
-			return true
+	# Wall tool input handling
+	if active_tool == Tool.WALL:
+		# print("[DEBUG] Wall Tool Active: wall_subtool=", wall_subtool)
+		if wall_subtool == "rect":
+			if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				var mb := event as InputEventMouseButton
+				if mb.pressed:
+					# print("[DEBUG] Wall Rect: Drag started at", get_global_mouse_position())
+					_wall_rect_dragging = true
+					_wall_rect_start = get_global_mouse_position()
+					_update_wall_rect_preview(_wall_rect_start, _wall_rect_start)
+				else:
+					if _wall_rect_dragging:
+						# print("[DEBUG] Wall Rect: Drag ended at", get_global_mouse_position())
+						_wall_rect_dragging = false
+						_clear_wall_rect_preview()
+						_apply_wall_rect(_wall_rect_start, get_global_mouse_position())
+				return true
+			# print("[DEBUG] Wall Rect: Event not handled:", event)
+			if _wall_rect_dragging and event is InputEventMouseMotion:
+				_update_wall_rect_preview(_wall_rect_start, get_global_mouse_position())
+				return true
+		elif wall_subtool == "polygon":
+			if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				var mb := event as InputEventMouseButton
+				if mb.pressed:
+					var pos := get_global_mouse_position()
+					# print("[DEBUG] Wall Polygon: Point added", pos)
+					wall_polygon_points.append(pos)
+					_update_wall_polygon_preview()
+				return true
+			if event is InputEventMouseButton and ((event as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT or (event as InputEventMouseButton).double_click):
+				if wall_polygon_points.size() >= 3:
+					# print("[DEBUG] Wall Polygon: Polygon created with points", wall_polygon_points)
+					_apply_wall_polygon(wall_polygon_points)
+				else:
+					print("[DEBUG] Wall Polygon: Not enough points to create polygon")
+					pass
+				_clear_wall_polygon_preview()
+				wall_polygon_points.clear()
+				return true
+			if event is InputEventKey:
+				var key_event := event as InputEventKey
+				if key_event.pressed and not key_event.echo and (key_event.keycode == KEY_ESCAPE):
+					# print("[DEBUG] Wall Polygon: ESC pressed, clearing preview and points")
+					_clear_wall_polygon_preview()
+					wall_polygon_points.clear()
+					return true
+			if event is InputEventMouseMotion:
+				_update_wall_polygon_preview(get_global_mouse_position())
+				return true
+		else:
+			print("[DEBUG] Wall Tool: Unknown wall_subtool value:", wall_subtool)
+			# Optionally, return false or handle as needed
+			return false
 
+	# Restore SELECT tool wall selection, handle drag, and move drag logic
 	if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
 		if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			var sb := event as InputEventMouseButton
 			if sb.pressed:
-				_wall_drag_start_mouse = get_global_mouse_position()
-				var handle_idx := _hit_test_selected_wall_handle(_wall_drag_start_mouse)
+				var mouse_pos := get_global_mouse_position()
+				var handle_idx := _hit_test_selected_wall_handle(mouse_pos)
 				if handle_idx >= 0:
 					_wall_dragging_handle = handle_idx
-					_wall_dragging_move = false
 					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
 					return true
-				var wall_idx := _find_wall_at_point(_wall_drag_start_mouse)
+				var wall_idx := _find_wall_at_point(mouse_pos)
 				if wall_idx >= 0:
 					_set_selected_wall(wall_idx)
-					_wall_dragging_move = true
-					_wall_dragging_handle = -1
 					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
 					return true
 				_set_selected_wall(-1)
 				return false
-			_wall_dragging_move = false
 			_wall_dragging_handle = -1
 			if not _wall_drag_start_points.is_empty():
 				walls_changed.emit(_map)
 				_wall_drag_start_points.clear()
 			return true
-
 		if event is InputEventMouseMotion:
 			var mm := event as InputEventMouseMotion
-			if _wall_dragging_move:
-				_apply_wall_move_drag(mm)
-				return true
 			if _wall_dragging_handle >= 0:
 				_apply_wall_handle_drag(get_global_mouse_position())
 				return true
-
-	if fog_tool == FogTool.NONE:
-		return false
-
-	if fog_tool == FogTool.REVEAL_RECT or fog_tool == FogTool.HIDE_RECT:
-		if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			var rect_mb := event as InputEventMouseButton
-			if rect_mb.pressed:
-				_fog_rect_dragging = true
-				_fog_rect_start = get_global_mouse_position()
-				_update_fog_rect_preview(_fog_rect_start, _fog_rect_start, fog_tool == FogTool.REVEAL_RECT)
-			else:
-				if _fog_rect_dragging:
-					_fog_rect_dragging = false
-					_clear_fog_rect_preview()
-					var reveal := fog_tool == FogTool.REVEAL_RECT
-					_apply_fog_rect(_fog_rect_start, get_global_mouse_position(), reveal)
-			return true
-		if _fog_rect_dragging and event is InputEventMouseMotion:
-			_update_fog_rect_preview(_fog_rect_start, get_global_mouse_position(), fog_tool == FogTool.REVEAL_RECT)
-			return true
-		return false
-
-	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		var brush_mb := event as InputEventMouseButton
-		if brush_mb.pressed:
-			_apply_fog_brush(get_global_mouse_position(), fog_tool == FogTool.REVEAL_BRUSH)
-		return true
-	if event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT:
-		_apply_fog_brush(get_global_mouse_position(), fog_tool == FogTool.REVEAL_BRUSH)
-		return true
+			elif has_selected_wall() and not _wall_drag_start_points.is_empty():
+				_apply_wall_move_drag(mm)
+				return true
 	return false
+
+
+func _update_wall_polygon_preview(mouse_pos: Variant = null) -> void:
+	if wall_visual_layer == null or not is_dm_view:
+		return
+	var points := wall_polygon_points.duplicate()
+	if typeof(mouse_pos) == TYPE_VECTOR2:
+		points.append(mouse_pos)
+	if _wall_polygon_preview == null or not is_instance_valid(_wall_polygon_preview):
+		_wall_polygon_preview = Line2D.new()
+		_wall_polygon_preview.width = 2.0
+		_wall_polygon_preview.default_color = Color(1.0, 0.9, 0.2, 0.95)
+		_wall_polygon_preview.closed = true
+		wall_visual_layer.add_child(_wall_polygon_preview)
+	if _wall_polygon_preview_fill == null or not is_instance_valid(_wall_polygon_preview_fill):
+		_wall_polygon_preview_fill = Polygon2D.new()
+		_wall_polygon_preview_fill.color = Color(1.0, 0.9, 0.2, 0.18)
+		wall_visual_layer.add_child(_wall_polygon_preview_fill)
+	var packed := PackedVector2Array()
+	for p in points:
+		packed.append(p)
+	_wall_polygon_preview.points = packed
+	_wall_polygon_preview_fill.polygon = packed
+
+
+func _apply_wall_polygon(points: Array) -> void:
+	if _map == null:
+		return
+	if points.size() < 3:
+		return
+	var poly := []
+	for p in points:
+		if p is Vector2:
+			poly.append(p)
+	_map.wall_polygons.append(poly)
+	_rebuild_wall_occluders(_map)
+	walls_changed.emit(_map)
+
+	# Removed unreachable/incorrect event handling and return statements from void function
 
 
 func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
@@ -548,6 +642,7 @@ func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 
 
 func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
+	# print("[DEBUG] _apply_wall_rect called: a=%s, b=%s" % [str(a), str(b)])
 	if _map == null:
 		return
 	var min_x := minf(a.x, b.x)
@@ -555,6 +650,7 @@ func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 	var max_x := maxf(a.x, b.x)
 	var max_y := maxf(a.y, b.y)
 	if absf(max_x - min_x) < 4.0 or absf(max_y - min_y) < 4.0:
+		# print("[DEBUG] Wall Rect: Ignored, too small. a=", a, "b=", b)
 		return
 	var poly := [
 		Vector2(min_x, min_y),
@@ -562,6 +658,7 @@ func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 		Vector2(max_x, max_y),
 		Vector2(min_x, max_y),
 	]
+	# print("[DEBUG] Wall Rect: Created polygon=", poly)
 	_map.wall_polygons.append(poly)
 	_rebuild_wall_occluders(_map)
 	walls_changed.emit(_map)
@@ -667,6 +764,13 @@ func apply_render_profile(profile: int) -> void:
 	_render_profile = profile
 	is_dm_view = (profile == RenderProfile.DM)
 	_apply_layer_visibility()
+	# Ensure wall layers are visible and z-index is correct
+	if wall_visual_layer:
+		wall_visual_layer.visible = is_dm_view
+		wall_visual_layer.z_index = RenderLayer.WALL
+	if wall_layer:
+		wall_layer.visible = is_dm_view
+		wall_layer.z_index = RenderLayer.WALL
 	_refresh_fog_overlay()
 
 
@@ -752,31 +856,25 @@ func _rebuild_wall_occluders(map: MapData) -> void:
 
 
 func _build_dm_reveal_sources(map: MapData) -> Array:
-	if map == null:
-		return []
-	var reveals: Array = []
-	for raw_object in map.map_objects:
-		if not raw_object is Dictionary:
-			continue
-		var obj := raw_object as Dictionary
-		var secret := bool(obj.get("is_secret", false))
-		var trap := bool(obj.get("is_trap", false))
-		if not secret and not trap:
-			continue
-		var pos_raw: Variant = obj.get("position", {"x": 0.0, "y": 0.0})
-		var pos := Vector2.ZERO
-		if pos_raw is Vector2:
-			pos = pos_raw as Vector2
-		elif pos_raw is Dictionary:
-			pos = Vector2(float(pos_raw.get("x", 0.0)), float(pos_raw.get("y", 0.0)))
-		reveals.append({
-			"position": pos,
-			"radius": maxf(float(obj.get("dm_reveal_radius", 56.0)), 12.0),
-		})
-	return reveals
+		if map == null:
+			return []
+		var reveals: Array = []
+		# This function should build DM reveal sources from map data
+		# Example: iterate map.dm_reveal_objects or similar
+		# Placeholder logic (update as needed for your map data structure):
+		if "dm_reveal_objects" in map and map.dm_reveal_objects != null:
+			for obj in map.dm_reveal_objects:
+				var pos_raw = obj.get("position", {})
+				var pos = Vector2(float(pos_raw.get("x", 0.0)), float(pos_raw.get("y", 0.0)))
+				reveals.append({
+					"position": pos,
+					"radius": maxf(float(obj.get("dm_reveal_radius", 56.0)), 12.0),
+				})
+		return reveals
 
 
 func _update_wall_rect_preview(a: Vector2, b: Vector2) -> void:
+	# print("[DEBUG] _update_wall_rect_preview called: a=%s, b=%s" % [str(a), str(b)])
 	if wall_visual_layer == null or not is_dm_view:
 		return
 	if _wall_rect_preview == null or not is_instance_valid(_wall_rect_preview):
@@ -889,23 +987,23 @@ func _refresh_selected_wall_visuals() -> void:
 	var points := _get_wall_points(_selected_wall_index)
 	if points.is_empty():
 		return
-
-	_wall_selection_outline = Line2D.new()
-	_wall_selection_outline.width = 4.0
-	_wall_selection_outline.default_color = Color(0.25, 0.95, 1.0, 0.95)
-	_wall_selection_outline.closed = true
+	if _wall_selection_outline == null or not is_instance_valid(_wall_selection_outline):
+		_wall_selection_outline = Line2D.new()
+		_wall_selection_outline.width = 4.0
+		_wall_selection_outline.default_color = Color(0.25, 0.95, 1.0, 0.95)
+		_wall_selection_outline.closed = true
 	var packed := PackedVector2Array()
 	for p in points:
 		packed.append(p)
 	_wall_selection_outline.points = packed
 	wall_visual_layer.add_child(_wall_selection_outline)
 
-	if points.size() == 4:
+	# Always show handles for both rectangles and polygons
+	if points.size() >= 3:
 		for p in points:
 			if not p is Vector2:
 				continue
 			var handle := Polygon2D.new()
-			handle.color = Color(0.25, 0.95, 1.0, 1.0)
 			handle.position = p
 			handle.polygon = PackedVector2Array([
 				Vector2(-WALL_HANDLE_SIZE_WORLD, -WALL_HANDLE_SIZE_WORLD),
@@ -956,7 +1054,7 @@ func _hit_test_selected_wall_handle(world_pos: Vector2) -> int:
 	if not has_selected_wall():
 		return -1
 	var points := _get_wall_points(_selected_wall_index)
-	if points.size() != 4:
+	if points.size() < 3:
 		return -1
 	var hit_radius := WALL_HANDLE_HIT_RADIUS_PX / maxf(camera.zoom.x, 0.001)
 	for i in range(points.size()):
@@ -980,20 +1078,28 @@ func _apply_wall_move_drag(mm: InputEventMouseMotion) -> void:
 func _apply_wall_handle_drag(world_pos: Vector2) -> void:
 	if not has_selected_wall() or _wall_dragging_handle < 0:
 		return
-	if _wall_drag_start_points.size() != 4:
+	var points := _wall_drag_start_points.duplicate()
+	if points.size() < 3:
 		return
-	var opposite_idx := (_wall_dragging_handle + 2) % 4
-	var fixed_v: Variant = _wall_drag_start_points[opposite_idx]
-	if not fixed_v is Vector2:
-		return
-	var fixed := fixed_v as Vector2
-	var min_x := minf(fixed.x, world_pos.x)
-	var min_y := minf(fixed.y, world_pos.y)
-	var max_x := maxf(fixed.x, world_pos.x)
-	var max_y := maxf(fixed.y, world_pos.y)
-	_set_wall_points(_selected_wall_index, [
-		Vector2(min_x, min_y),
-		Vector2(max_x, min_y),
-		Vector2(max_x, max_y),
-		Vector2(min_x, max_y),
-	])
+	# For rectangles, preserve opposite corner logic
+	if points.size() == 4:
+		var opposite_idx := (_wall_dragging_handle + 2) % 4
+		var fixed_v: Variant = points[opposite_idx]
+		if not fixed_v is Vector2:
+			return
+		var fixed := fixed_v as Vector2
+		var min_x := minf(fixed.x, world_pos.x)
+		var min_y := minf(fixed.y, world_pos.y)
+		var max_x := maxf(fixed.x, world_pos.x)
+		var max_y := maxf(fixed.y, world_pos.y)
+		_set_wall_points(_selected_wall_index, [
+			Vector2(min_x, min_y),
+			Vector2(max_x, min_y),
+			Vector2(max_x, max_y),
+			Vector2(min_x, max_y),
+		])
+	else:
+		# For polygons, move only the selected handle
+		if _wall_dragging_handle >= 0 and _wall_dragging_handle < points.size():
+			points[_wall_dragging_handle] = world_pos
+			_set_wall_points(_selected_wall_index, points)
