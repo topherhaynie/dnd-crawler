@@ -1,4 +1,7 @@
 extends Node2D
+# DM Fog Migration: GPU-based workflow
+# In DM mode, FogOverlay renders fog using GPU texture from FogSystem.
+# Player mode uses CPU mask logic.
 
 var _map_size: Vector2 = Vector2(1920, 1080)
 var _cell_px: int = 32
@@ -52,6 +55,11 @@ func configure(
 
 
 func apply_delta(revealed_cells: Array, hidden_cells: Array) -> void:
+	var fog_system := get_node_or_null("/root/FogSystem")
+	if fog_system and fog_system.has_method("is_dm_mode") and fog_system.is_dm_mode():
+		# DM mode: GPU authority, bypass pixel manipulation
+		return
+	# Player mode: CPU pixel logic
 	if _mask_image == null:
 		return
 
@@ -81,6 +89,18 @@ func apply_delta(revealed_cells: Array, hidden_cells: Array) -> void:
 func _draw() -> void:
 	if not _fog_enabled:
 		return
+	var fog_system := get_node_or_null("/root/FogSystem")
+	if fog_system and fog_system.has_method("is_dm_mode") and fog_system.is_dm_mode():
+			# DM mode: render GPU fog texture
+			var gpu_texture: Texture2D = fog_system.get_history_texture() if fog_system.has_method("get_history_texture") else null
+			if gpu_texture:
+				var tint_gpu := FOG_TINT_DARK
+				if _view_world_rect.size.x > 0.0 and _view_world_rect.size.y > 0.0:
+					tint_gpu = FOG_TINT_DIM
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+				draw_texture_rect(gpu_texture, Rect2(Vector2.ZERO, _map_size), false, Color(tint_gpu.r, tint_gpu.g, tint_gpu.b, _opacity))
+				return
+	# Player mode: render CPU mask texture
 	if _mask_texture == null:
 		return
 	var tint := FOG_TINT_DARK

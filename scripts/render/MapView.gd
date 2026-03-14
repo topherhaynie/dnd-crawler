@@ -511,6 +511,12 @@ func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	if fog_overlay and fog_overlay.has_method("apply_history_brush"):
 		var changed := bool(fog_overlay.call("apply_history_brush", world_pos, fog_brush_radius_px, reveal))
 		if changed:
+			var revealed: Array = []
+			var hidden_cells_changed: Array = []
+			_paint_fog_brush(world_pos, reveal, revealed, hidden_cells_changed)
+			if not revealed.is_empty() or not hidden_cells_changed.is_empty():
+				_sync_fog_to_map(false)
+				fog_delta.emit(maxi(1, _map.fog_cell_px), revealed, hidden_cells_changed)
 			fog_changed.emit(_map)
 		return
 
@@ -543,8 +549,35 @@ func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 	if fog_overlay and fog_overlay.has_method("apply_history_rect"):
 		var changed := bool(fog_overlay.call("apply_history_rect", a, b, reveal))
 		if changed:
+			var revealed: Array = []
+			var hidden_cells_changed: Array = []
+			_paint_fog_rect(a, b, reveal, revealed, hidden_cells_changed)
+			if not revealed.is_empty() or not hidden_cells_changed.is_empty():
+				_sync_fog_to_map(false)
+				fog_delta.emit(maxi(1, _map.fog_cell_px), revealed, hidden_cells_changed)
 			fog_changed.emit(_map)
 		return
+
+
+func _paint_fog_rect(a: Vector2, b: Vector2, reveal: bool, revealed: Array, hidden_cells_changed: Array) -> void:
+	if _map == null:
+		return
+	var cell_px: int = maxi(1, _map.fog_cell_px)
+	var min_x := floori(minf(a.x, b.x) / cell_px)
+	var min_y := floori(minf(a.y, b.y) / cell_px)
+	var max_x := ceili(maxf(a.x, b.x) / cell_px)
+	var max_y := ceili(maxf(a.y, b.y) / cell_px)
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var cell := Vector2i(x, y)
+			if reveal:
+				if _fog_hidden_cells.has(cell):
+					_fog_hidden_cells.erase(cell)
+					revealed.append(cell)
+			else:
+				if not _fog_hidden_cells.has(cell):
+					_fog_hidden_cells[cell] = true
+					hidden_cells_changed.append(cell)
 
 
 func _apply_wall_rect(a: Vector2, b: Vector2) -> void:

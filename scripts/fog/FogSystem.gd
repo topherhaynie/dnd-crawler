@@ -108,6 +108,14 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 		])
 
 
+func is_dm_mode() -> bool:
+	return _is_dm
+
+
+func get_history_texture() -> Texture2D:
+	return _get_active_history_texture()
+
+
 func get_fog_state() -> PackedByteArray:
 	if _history_gpu_ready:
 		if _history_swap_pending or _history_seed_pending:
@@ -150,13 +158,12 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 		image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
 	_history_image = image
 	if _history_gpu_ready:
-		_seed_gpu_history_from_image(image)
+		_seed_gpu_history_from_image(_history_image)
 	else:
 		_history_dirty = true
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
-
 	var fog_manager := get_node_or_null("/root/FogManager")
 	if fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(buffer)
@@ -231,21 +238,30 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 
 
 func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> bool:
+	if _history_gpu_ready:
+		var safe_radius := maxf(1.0, radius_px)
+		return _apply_gpu_history_edit({
+			"mode": 1,
+			"reveal": reveal,
+			"center": world_pos,
+			"radius": safe_radius,
+		})
+
 	_ensure_history_storage(_map_size)
 	if _history_image == null or _history_image.is_empty():
 		return false
-	var safe_radius := maxf(1.0, radius_px)
-	var min_x := maxi(0, int(floor(world_pos.x - safe_radius)))
-	var min_y := maxi(0, int(floor(world_pos.y - safe_radius)))
-	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius)))
-	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
+	var safe_radius_cpu := maxf(1.0, radius_px)
+	var min_x := maxi(0, int(floor(world_pos.x - safe_radius_cpu)))
+	var min_y := maxi(0, int(floor(world_pos.y - safe_radius_cpu)))
+	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius_cpu)))
+	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius_cpu)))
 	if min_x > max_x or min_y > max_y:
 		return false
 	var target := 1.0 if reveal else 0.0
 	var changed := false
 	for py in range(min_y, max_y + 1):
 		for px in range(min_x, max_x + 1):
-			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
+			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius_cpu:
 				continue
 			var current := _history_image.get_pixel(px, py).r
 			if absf(current - target) < 0.001:
@@ -258,6 +274,18 @@ func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> 
 
 
 func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
+	if _history_gpu_ready:
+		var rect_min := Vector2(minf(a.x, b.x), minf(a.y, b.y))
+		var rect_max := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+		if rect_max.x <= rect_min.x or rect_max.y <= rect_min.y:
+			return false
+		return _apply_gpu_history_edit({
+			"mode": 2,
+			"reveal": reveal,
+			"rect_min": rect_min,
+			"rect_max": rect_max,
+		})
+
 	_ensure_history_storage(_map_size)
 	if _history_image == null or _history_image.is_empty():
 		return false
@@ -548,6 +576,13 @@ func _seed_gpu_history_from_image(image: Image) -> void:
 		mat.set_shader_parameter("prev_history_tex", _history_seed_texture)
 		mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
 		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		mat.set_shader_parameter("edit_mode", 0)
+		mat.set_shader_parameter("edit_reveal", true)
+		mat.set_shader_parameter("edit_center_px", Vector2.ZERO)
+		mat.set_shader_parameter("edit_radius_px", 0.0)
+		mat.set_shader_parameter("edit_rect_min_px", Vector2.ZERO)
+		mat.set_shader_parameter("edit_rect_max_px", Vector2.ZERO)
+		mat.set_shader_parameter("tex_size_px", _map_size)
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 	_history_active_index = 0
@@ -633,6 +668,42 @@ func _upload_history_texture() -> void:
 	_history_dirty = false
 
 
+func _apply_gpu_history_edit(edit: Dictionary) -> bool:
+	if _history_viewports.size() < 2 or _history_merge_rects.size() < 2:
+		return false
+	var src_idx := clampi(_history_active_index, 0, 1)
+	var dst_idx := 1 - src_idx
+	var src_vp := _history_viewports[src_idx] as SubViewport
+	var dst_vp := _history_viewports[dst_idx] as SubViewport
+	var dst_rect := _history_merge_rects[dst_idx] as ColorRect
+	if src_vp == null or dst_vp == null or dst_rect == null:
+		return false
+	var mat := dst_rect.material as ShaderMaterial
+	if mat == null:
+		return false
+
+	var mode := int(edit.get("mode", 0))
+	if mode <= 0:
+		return false
+
+	mat.set_shader_parameter("seed_mode", false)
+	mat.set_shader_parameter("prev_history_tex", src_vp.get_texture())
+	mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
+	mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+	mat.set_shader_parameter("edit_mode", mode)
+	mat.set_shader_parameter("edit_reveal", bool(edit.get("reveal", true)))
+	mat.set_shader_parameter("edit_center_px", edit.get("center", Vector2.ZERO) as Vector2)
+	mat.set_shader_parameter("edit_radius_px", float(edit.get("radius", 0.0)))
+	mat.set_shader_parameter("edit_rect_min_px", edit.get("rect_min", Vector2.ZERO) as Vector2)
+	mat.set_shader_parameter("edit_rect_max_px", edit.get("rect_max", Vector2.ZERO) as Vector2)
+	mat.set_shader_parameter("tex_size_px", _map_size)
+
+	dst_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_history_swap_pending = true
+	_history_pending_target_index = dst_idx
+	return true
+
+
 func _bake_live_los_into_history() -> void:
 	if not _fog_enabled:
 		return
@@ -659,6 +730,13 @@ func _bake_live_los_into_history() -> void:
 		mat.set_shader_parameter("prev_history_tex", src_vp.get_texture())
 		mat.set_shader_parameter("live_lights_tex", _live_lights_viewport.get_texture())
 		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		mat.set_shader_parameter("edit_mode", 0)
+		mat.set_shader_parameter("edit_reveal", true)
+		mat.set_shader_parameter("edit_center_px", Vector2.ZERO)
+		mat.set_shader_parameter("edit_radius_px", 0.0)
+		mat.set_shader_parameter("edit_rect_min_px", Vector2.ZERO)
+		mat.set_shader_parameter("edit_rect_max_px", Vector2.ZERO)
+		mat.set_shader_parameter("tex_size_px", _map_size)
 		dst_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 		_history_swap_pending = true
@@ -876,7 +954,10 @@ func _apply_shader_uniforms() -> void:
 	mat.set_shader_parameter("dm_history_alpha_scale", DM_HISTORY_ALPHA_SCALE)
 	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
 	_fog_rect.visible = _fog_enabled
-	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if _is_dm:
+		_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	else:
+		_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 
 func _new_occluder(points: PackedVector2Array) -> LightOccluder2D:

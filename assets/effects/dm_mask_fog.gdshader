@@ -1,7 +1,7 @@
 shader_type canvas_item;
 
-uniform sampler2D history_tex : filter_nearest, repeat_disable;
-uniform sampler2D live_lights_tex : filter_nearest, repeat_disable;
+uniform sampler2D history_tex : filter_linear, repeat_disable;
+uniform sampler2D live_lights_tex : filter_linear, repeat_disable;
 uniform bool is_dm = false;
 uniform float player_alpha_scale = 1.00;
 uniform float dm_history_alpha_scale = 0.80;
