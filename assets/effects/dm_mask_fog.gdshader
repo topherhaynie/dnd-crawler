@@ -3,7 +3,7 @@ shader_type canvas_item;
 uniform sampler2D history_tex : filter_nearest, repeat_disable;
 uniform sampler2D live_lights_tex : filter_nearest, repeat_disable;
 uniform bool is_dm = false;
-uniform float player_alpha_scale = 0.90;
+uniform float player_alpha_scale = 1.00;
 uniform float dm_history_alpha_scale = 0.80;
 uniform float live_mask_gain = 6.0;
 uniform vec4 fog_color = vec4(0.0, 0.0, 0.0, 1.0);

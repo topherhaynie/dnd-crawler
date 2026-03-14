@@ -1,7 +1,7 @@
 extends Node2D
 
 const VISION_LAYER_MASK: int = 2
-const PLAYER_ALPHA_SCALE: float = 0.90
+const PLAYER_ALPHA_SCALE: float = 1.00
 const DM_HISTORY_ALPHA_SCALE: float = 0.80
 const LIVE_LIGHT_ENERGY_GAIN: float = 8.0
 const LIVE_LIGHT_MIN_ENERGY: float = 10.0

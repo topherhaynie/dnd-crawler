@@ -7,10 +7,7 @@ var _opacity: float = 0.9
 var _fog_enabled: bool = true
 var _view_world_rect: Rect2 = Rect2()
 
-# Stable fog renderer:
-# - One pixel per fog truth cell in a compact mask image.
-# - No custom shader path (avoids renderer shader compatibility failures).
-# - DM/player share exactly the same rendering behavior and truth data.
+
 const MASK_UPLOAD_MIN_INTERVAL_SEC: float = 1.0 / 60.0
 const FOG_TINT_DARK: Color = Color(0.07, 0.09, 0.11, 1.0)
 const FOG_TINT_DIM: Color = Color(0.06, 0.08, 0.10, 1.0)
