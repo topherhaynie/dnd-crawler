@@ -123,15 +123,53 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 	if not ("x" in data and "y" in data):
 		return
 
-	var player_id = ws_bindings.get(peer_id, data.get("player_id", ""))
-	var x: float = clampf(float(data["x"]), -1.0, 1.0)
-	var y: float = clampf(float(data["y"]), -1.0, 1.0)
+	var player_id := _resolve_packet_player_id(peer_id, data)
+	if player_id.is_empty():
+		return
+
+	var x_raw: Variant = data["x"]
+	var y_raw: Variant = data["y"]
+	if not _is_valid_axis_value(x_raw) or not _is_valid_axis_value(y_raw):
+		return
+	var x: float = clampf(float(x_raw), -1.0, 1.0)
+	var y: float = clampf(float(y_raw), -1.0, 1.0)
 
 	# Only accept packets from player_ids that exist in profiles
-	if player_id == "" or not _game_state().player_locked.has(player_id):
+	if not _is_known_player_id(player_id):
 		return
 
 	_input_manager().set_network_vector(player_id, Vector2(x, y))
+
+
+func _resolve_packet_player_id(peer_id: int, data: Dictionary) -> String:
+	var bound: Variant = ws_bindings.get(peer_id, "")
+	if bound != null and str(bound) != "":
+		return str(bound)
+
+	if not data.has("player_id"):
+		return ""
+
+	var raw: Variant = data["player_id"]
+	if raw == null:
+		return ""
+	return str(raw).strip_edges()
+
+
+func _is_valid_axis_value(value: Variant) -> bool:
+	if not (value is int or value is float):
+		return false
+	var axis := float(value)
+	if is_nan(axis) or is_inf(axis):
+		return false
+	return true
+
+
+func _is_known_player_id(player_id: String) -> bool:
+	if player_id.is_empty():
+		return false
+	if _game_state().player_locked.has(player_id):
+		return true
+	return _game_state().get_profile_by_id(player_id) != null
 
 # ---------------------------------------------------------------------------
 # Connection events

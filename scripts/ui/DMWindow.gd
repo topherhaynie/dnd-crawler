@@ -81,7 +81,14 @@ var _profile_ws_option: OptionButton = null
 var _profile_extras_edit: TextEdit = null
 var _profile_passive_label: Label = null
 var _profile_id_label: Label = null
+var _profile_add_btn: Button = null
+var _profile_delete_btn: Button = null
+var _profile_add_btn_alt: Button = null
+var _profile_delete_btn_alt: Button = null
+var _profile_save_btn: Button = null
+var _profile_cancel_new_btn: Button = null
 var _profile_selected_index: int = -1
+var _profile_is_new_draft: bool = false
 var _profiles_import_dialog: FileDialog = null
 var _profiles_export_dialog: FileDialog = null
 var _profiles_root: Control = null
@@ -1008,6 +1015,7 @@ func _build_profiles_dialog() -> void:
 
 	var root := HSplitContainer.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.split_offset = 280
 	_profiles_dialog.add_child(root)
 	_profiles_root = root
 
@@ -1027,15 +1035,16 @@ func _build_profiles_dialog() -> void:
 	var list_btn_row := HBoxContainer.new()
 	left_panel.add_child(list_btn_row)
 
-	var add_btn := Button.new()
-	add_btn.text = "Add"
-	add_btn.pressed.connect(_on_profile_add_pressed)
-	list_btn_row.add_child(add_btn)
+	_profile_add_btn = Button.new()
+	_profile_add_btn.text = "New"
+	_profile_add_btn.pressed.connect(_on_profile_add_pressed)
+	list_btn_row.add_child(_profile_add_btn)
 
-	var del_btn := Button.new()
-	del_btn.text = "Delete"
-	del_btn.pressed.connect(_on_profile_delete_pressed)
-	list_btn_row.add_child(del_btn)
+	_profile_delete_btn = Button.new()
+	_profile_delete_btn.text = "Remove"
+	_profile_delete_btn.disabled = true
+	_profile_delete_btn.pressed.connect(_on_profile_delete_pressed)
+	list_btn_row.add_child(_profile_delete_btn)
 
 	var right_scroll := ScrollContainer.new()
 	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1154,10 +1163,27 @@ func _build_profiles_dialog() -> void:
 	var action_row := HBoxContainer.new()
 	right_panel.add_child(action_row)
 
-	var save_btn := Button.new()
-	save_btn.text = "Save Profile"
-	save_btn.pressed.connect(_on_profile_save_pressed)
-	action_row.add_child(save_btn)
+	_profile_add_btn_alt = Button.new()
+	_profile_add_btn_alt.text = "New"
+	_profile_add_btn_alt.pressed.connect(_on_profile_add_pressed)
+	action_row.add_child(_profile_add_btn_alt)
+
+	_profile_delete_btn_alt = Button.new()
+	_profile_delete_btn_alt.text = "Remove"
+	_profile_delete_btn_alt.disabled = true
+	_profile_delete_btn_alt.pressed.connect(_on_profile_delete_pressed)
+	action_row.add_child(_profile_delete_btn_alt)
+
+	_profile_cancel_new_btn = Button.new()
+	_profile_cancel_new_btn.text = "Cancel New"
+	_profile_cancel_new_btn.visible = false
+	_profile_cancel_new_btn.pressed.connect(_on_profile_cancel_new_pressed)
+	action_row.add_child(_profile_cancel_new_btn)
+
+	_profile_save_btn = Button.new()
+	_profile_save_btn.text = "Save Profile"
+	_profile_save_btn.pressed.connect(_on_profile_save_pressed)
+	action_row.add_child(_profile_save_btn)
 
 	var import_btn := Button.new()
 	import_btn.text = "Import JSON"
@@ -1204,6 +1230,7 @@ func _build_profiles_dialog() -> void:
 func _open_profiles_editor() -> void:
 	_refresh_available_inputs()
 	_refresh_profiles_list()
+	_update_profile_action_state()
 	_apply_ui_scale()
 	_profiles_dialog.popup_centered_ratio(0.9)
 
@@ -1220,15 +1247,24 @@ func _refresh_profiles_list() -> void:
 	if GameState.profiles.is_empty():
 		_profile_selected_index = -1
 		_clear_profile_form()
+		_profile_is_new_draft = false
+		_update_profile_action_state()
 		return
+
+	if _profile_is_new_draft:
+		_profiles_list.deselect_all()
+		_update_profile_action_state()
+		return
+
 	if _profile_selected_index < 0 or _profile_selected_index >= _profiles_list.item_count:
 		_profile_selected_index = 0
 	_profiles_list.select(_profile_selected_index)
 	_load_selected_profile_into_form(_profile_selected_index)
+	_update_profile_action_state()
 
 
 func _clear_profile_form() -> void:
-	_profile_id_label.text = "ID: —"
+	_profile_id_label.text = "ID: (new profile)" if _profile_is_new_draft else "ID: —"
 	_profile_name_edit.text = ""
 	_profile_speed_spin.value = 30
 	_profile_vision_option.select(0)
@@ -1241,11 +1277,14 @@ func _clear_profile_form() -> void:
 	_profile_input_id_edit.text = ""
 	_profile_extras_edit.text = "{}"
 	_on_profile_vision_selected(0)
+	_update_profile_action_state()
 
 
 func _on_profile_selected(index: int) -> void:
+	_profile_is_new_draft = false
 	_profile_selected_index = index
 	_load_selected_profile_into_form(index)
+	_update_profile_action_state()
 
 
 func _load_selected_profile_into_form(index: int) -> void:
@@ -1270,23 +1309,28 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_input_id_edit.text = p.input_id
 	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
 	_on_profile_vision_selected(_profile_vision_option.selected)
+	_update_profile_action_state()
 
 
 func _on_profile_add_pressed() -> void:
-	var profile := PlayerProfile.new()
-	profile.ensure_id()
-	profile.player_name = "Player %d" % (GameState.profiles.size() + 1)
-	profile.extras["is_dashing"] = false
-	GameState.profiles.append(profile)
-	GameState.save_profiles()
-	GameState.load_profiles()
-	_profile_selected_index = GameState.profiles.size() - 1
-	_refresh_profiles_list()
-	_set_status("Added profile: %s" % profile.player_name)
+	_profile_is_new_draft = true
+	_profile_selected_index = -1
+	if _profiles_list:
+		_profiles_list.deselect_all()
+	_clear_profile_form()
+	_profile_name_edit.text = "Player %d" % (GameState.profiles.size() + 1)
+	if _profile_name_edit:
+		_profile_name_edit.grab_focus()
+		_profile_name_edit.select_all()
+	_set_status("Creating new profile. Fill fields, then click Create Profile.")
 
 
 func _on_profile_delete_pressed() -> void:
+	if _profile_is_new_draft:
+		_on_profile_cancel_new_pressed()
+		return
 	if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
+		_set_status("Select a profile to remove.")
 		return
 	var removed_name := "Profile"
 	if GameState.profiles[_profile_selected_index] is PlayerProfile:
@@ -1295,28 +1339,61 @@ func _on_profile_delete_pressed() -> void:
 	GameState.save_profiles()
 	GameState.load_profiles()
 	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, GameState.profiles.size() - 1))
+	_profile_is_new_draft = false
 	_refresh_profiles_list()
+	_update_profile_action_state()
 	_set_status("Deleted profile: %s" % removed_name)
 
 
 func _on_profile_save_pressed() -> void:
-	if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
-		# If nothing is selected, create one so Save behaves intuitively.
-		if GameState.profiles.is_empty():
-			_on_profile_add_pressed()
-		else:
-			_profile_selected_index = 0
-			if _profiles_list and _profiles_list.item_count > 0:
-				_profiles_list.select(_profile_selected_index)
-				_load_selected_profile_into_form(_profile_selected_index)
-		if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
-			_set_status("Unable to select a profile to save.")
+	if _profile_is_new_draft:
+		var created := PlayerProfile.new()
+		if not _apply_form_to_profile(created):
 			return
+		GameState.profiles.append(created)
+		GameState.save_profiles()
+		GameState.load_profiles()
+		_profile_is_new_draft = false
+		_profile_selected_index = _find_profile_index_by_id(created.id)
+		_refresh_profiles_list()
+		_update_profile_action_state()
+		_set_status("Created profile: %s (PP %d)" % [created.player_name, created.get_passive_perception()])
+		return
+
+	if _profile_selected_index < 0 or _profile_selected_index >= GameState.profiles.size():
+		_set_status("Select a profile to edit or click New.")
+		return
+
 	var profile = GameState.profiles[_profile_selected_index]
 	if not profile is PlayerProfile:
 		_set_status("Invalid profile selected.")
 		return
 	var p := profile as PlayerProfile
+	if not _apply_form_to_profile(p):
+		return
+	GameState.save_profiles()
+	GameState.load_profiles()
+	_apply_profile_bindings()
+	_refresh_profiles_list()
+	_update_profile_action_state()
+	_set_status("Saved profile: %s (PP %d) to user://data/profiles.json" % [p.player_name, p.get_passive_perception()])
+
+
+func _on_profile_cancel_new_pressed() -> void:
+	if not _profile_is_new_draft:
+		return
+	_profile_is_new_draft = false
+	if GameState.profiles.is_empty():
+		_profile_selected_index = -1
+		_clear_profile_form()
+	else:
+		_profile_selected_index = clampi(_profile_selected_index, 0, GameState.profiles.size() - 1)
+	_refresh_profiles_list()
+	_update_profile_action_state()
+	_set_status("New profile draft canceled.")
+
+
+func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	p.player_name = _profile_name_edit.text.strip_edges()
 	if p.player_name.is_empty():
 		p.player_name = "Unnamed Player"
@@ -1334,16 +1411,36 @@ func _on_profile_save_pressed() -> void:
 		var parsed: Variant = JSON.parse_string(extras_raw)
 		if parsed == null or not parsed is Dictionary:
 			_set_status("Extras must be valid JSON object; profile not saved.")
-			return
+			return false
 		p.extras = (parsed as Dictionary).duplicate(true)
 	p.extras["is_dashing"] = _profile_dash_check.button_pressed if _profile_dash_check else false
 
 	p.ensure_id()
-	GameState.save_profiles()
-	GameState.load_profiles()
-	_apply_profile_bindings()
-	_refresh_profiles_list()
-	_set_status("Saved profile: %s (PP %d) to user://data/profiles.json" % [p.player_name, p.get_passive_perception()])
+	return true
+
+
+func _find_profile_index_by_id(profile_id: String) -> int:
+	for i in range(GameState.profiles.size()):
+		var profile = GameState.profiles[i]
+		if profile is PlayerProfile and (profile as PlayerProfile).id == profile_id:
+			return i
+	return max(0, GameState.profiles.size() - 1)
+
+
+func _update_profile_action_state() -> void:
+	var has_selected := _profile_selected_index >= 0 and _profile_selected_index < GameState.profiles.size() and not _profile_is_new_draft
+	if _profile_delete_btn:
+		_profile_delete_btn.disabled = not has_selected and not _profile_is_new_draft
+	if _profile_delete_btn_alt:
+		_profile_delete_btn_alt.disabled = not has_selected and not _profile_is_new_draft
+	if _profile_save_btn:
+		_profile_save_btn.text = "Create Profile" if _profile_is_new_draft else "Save Profile"
+	if _profile_cancel_new_btn:
+		_profile_cancel_new_btn.visible = _profile_is_new_draft
+	if _profile_add_btn:
+		_profile_add_btn.disabled = _profile_is_new_draft
+	if _profile_add_btn_alt:
+		_profile_add_btn_alt.disabled = _profile_is_new_draft
 
 
 func _on_profile_vision_selected(index: int) -> void:
@@ -1421,6 +1518,7 @@ func _on_profiles_changed() -> void:
 	_broadcast_player_state()
 	if _profiles_dialog and _profiles_dialog.visible:
 		_refresh_profiles_list()
+	_update_profile_action_state()
 
 
 func _on_profile_import_pressed() -> void:
