@@ -14,6 +14,7 @@ const WS_PORT: int = 9090
 const MAX_PENDING_CONNECTIONS: int = 8
 const DEBUG_FOG_TELEMETRY: bool = false
 const OUTBOUND_PRESSURE_WARN_BYTES: int = 262144
+const FOG_OUTBOUND_SOFT_LIMIT_BYTES: int = 786432
 const FOG_SNAPSHOT_B64_CHUNK_CHARS: int = 12000
 
 var _server: WebSocketMultiplayerPeer = null
@@ -231,6 +232,10 @@ func broadcast_to_displays(data: Dictionary) -> void:
 		return
 	var payload := JSON.stringify(data).to_utf8_buffer()
 	var msg_type := str(data.get("msg", ""))
+	if _is_fog_message(msg_type) and displays_under_backpressure():
+		if DEBUG_FOG_TELEMETRY and OS.is_debug_build():
+			print("NetworkManager: skipped fog broadcast under backpressure (msg=%s bytes=%d)" % [msg_type, payload.size()])
+		return
 	if msg_type == "fog_updated" or msg_type == "fog_delta":
 		_track_fog_packet_metrics(msg_type, payload.size())
 	for peer_id: int in _display_peers:
@@ -253,10 +258,38 @@ func send_to_display(peer_id: int, data: Dictionary) -> void:
 		return
 	if ws_peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
+	var msg_type := str(data.get("msg", data.get("type", "")))
+	if _is_fog_message(msg_type) and _is_peer_under_backpressure(peer_id):
+		if DEBUG_FOG_TELEMETRY and OS.is_debug_build():
+			print("NetworkManager: skipped fog send under backpressure (peer=%d msg=%s)" % [peer_id, msg_type])
+		return
 	var payload := JSON.stringify(data).to_utf8_buffer()
 	var err := ws_peer.send(payload)
 	if err != OK:
 		push_warning("NetworkManager: send_to_display failed peer=%d err=%d msg=%s" % [peer_id, err, str(data.get("msg", data.get("type", "?")))])
+
+
+func displays_under_backpressure() -> bool:
+	for peer_id in _display_peers:
+		if _is_peer_under_backpressure(peer_id):
+			return true
+	return false
+
+
+func _is_peer_under_backpressure(peer_id: int) -> bool:
+	if _server == null:
+		return false
+	var ws_peer := _server.get_peer(peer_id)
+	if ws_peer == null:
+		return false
+	if not ws_peer.has_method("get_current_outbound_buffered_amount"):
+		return false
+	var queued := int(ws_peer.get_current_outbound_buffered_amount())
+	return queued >= FOG_OUTBOUND_SOFT_LIMIT_BYTES
+
+
+func _is_fog_message(msg_type: String) -> bool:
+	return msg_type.begins_with("fog_")
 
 
 func send_map_to_display(peer_id: int, map: MapData, is_update: bool = false, fog_snapshot: Dictionary = {}) -> void:

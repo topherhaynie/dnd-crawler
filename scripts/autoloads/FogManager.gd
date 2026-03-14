@@ -11,6 +11,7 @@ var _fog_state_image: Image = null
 var _fog_state_png: PackedByteArray = PackedByteArray()
 var _fog_state_size: Vector2i = Vector2i.ZERO
 var _vision_scale_by_player_id: Dictionary = {}
+const DEBUG_SAVE_CAPTURE_PNG: bool = false
 
 
 func get_fog_state() -> PackedByteArray:
@@ -50,10 +51,11 @@ func get_compressed_fog_snapshot(viewport: SubViewport) -> PackedByteArray:
 	var image := tex.get_image()
 	if image == null or image.is_empty():
 		return PackedByteArray()
-	# Debug capture for visual verification of DM-side snapshot readback.
-	var save_err := image.save_png("user://last_captured_fog.png")
-	if save_err != OK:
-		push_warning("FogManager: failed to save debug capture user://last_captured_fog.png (err=%d)" % save_err)
+	if DEBUG_SAVE_CAPTURE_PNG:
+		# Optional debug capture for visual verification of DM-side snapshot readback.
+		var save_err := image.save_png("user://last_captured_fog.png")
+		if save_err != OK:
+			push_warning("FogManager: failed to save debug capture user://last_captured_fog.png (err=%d)" % save_err)
 	image.convert(Image.FORMAT_L8)
 	_fog_state_image = image
 	_fog_state_png = image.save_png_to_buffer()

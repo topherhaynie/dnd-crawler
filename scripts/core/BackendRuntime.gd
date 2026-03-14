@@ -73,8 +73,9 @@ func step(delta: float) -> bool:
 	var map: MapData = _map_view.get_map() if _map_view else null
 	if map == null:
 		return false
-
-	sync_profiles()
+	var wall_sig := _wall_signature(map)
+	if wall_sig != _cached_wall_signature:
+		_rebuild_cached_wall_edges(map)
 	_ensure_spawn_positions()
 
 	var moved := false
@@ -86,7 +87,9 @@ func step(delta: float) -> bool:
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
-		var token: Node2D = _ensure_token(p)
+		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
+		if token == null or not is_instance_valid(token):
+			token = _ensure_token(p)
 		if token == null:
 			continue
 		if token.has_method("set_token_diameter_px"):
@@ -382,6 +385,8 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 		return null
 	token.name = "DMToken_%s" % profile.id.left(8)
 	_map_view.get_token_layer().add_child(token)
+	if token.has_method("set_vision_render_enabled"):
+		token.set_vision_render_enabled(false)
 	token.apply_from_state({
 		"id": profile.id,
 		"name": profile.player_name,
@@ -423,13 +428,15 @@ func _token_diameter_px_for_map(map: MapData) -> float:
 	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 
 
-func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, map: MapData) -> Vector2:
-	if map.wall_polygons.is_empty():
+func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, _map: MapData) -> Vector2:
+	if _cached_wall_edges.is_empty():
 		return next_pos
-	if not _point_inside_any_wall(next_pos, map) and not _segment_hits_any_wall(prev_pos, next_pos, map):
+	if prev_pos.distance_squared_to(next_pos) <= 0.000001:
+		return next_pos
+	if not _segment_hits_any_wall(prev_pos, next_pos):
 		return next_pos
 
-	var hit_info := _first_wall_hit(prev_pos, next_pos, map)
+	var hit_info := _first_wall_hit(prev_pos, next_pos)
 	if hit_info.is_empty():
 		return prev_pos
 
@@ -451,9 +458,7 @@ func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, map: MapData)
 
 	var slide_start := hit_point - move_vec.normalized() * 1.0
 	var slide_target := slide_start + slide_vec
-	if _point_inside_any_wall(slide_target, map):
-		return slide_start
-	if _segment_hits_any_wall(slide_start, slide_target, map):
+	if _segment_hits_any_wall(slide_start, slide_target):
 		return slide_start
 	return slide_target
 
@@ -473,57 +478,55 @@ func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 	return false
 
 
-func _segment_hits_any_wall(a: Vector2, b: Vector2, map: MapData) -> bool:
+func _segment_hits_any_wall(a: Vector2, b: Vector2) -> bool:
 	var seg_len := a.distance_to(b)
 	if seg_len <= 0.001:
 		return false
-	for poly in map.wall_polygons:
-		if not poly is Array:
+	for edge in _cached_wall_edges:
+		if not edge is Array:
 			continue
-		var pts := poly as Array
-		if pts.size() < 2:
+		var pair := edge as Array
+		if pair.size() < 2:
 			continue
-		for i in range(pts.size()):
-			var av: Variant = pts[i]
-			var bv: Variant = pts[(i + 1) % pts.size()]
-			if not av is Vector2 or not bv is Vector2:
-				continue
-			var hit: Variant = Geometry2D.segment_intersects_segment(a, b, av as Vector2, bv as Vector2)
-			if not hit is Vector2:
-				continue
-			var d := a.distance_to(hit as Vector2)
-			if d > 0.5 and d < (seg_len - 0.5):
-				return true
+		var av: Variant = pair[0]
+		var bv: Variant = pair[1]
+		if not av is Vector2 or not bv is Vector2:
+			continue
+		var hit: Variant = Geometry2D.segment_intersects_segment(a, b, av as Vector2, bv as Vector2)
+		if not hit is Vector2:
+			continue
+		var d := a.distance_to(hit as Vector2)
+		if d > 0.5 and d < (seg_len - 0.5):
+			return true
 	return false
 
 
-func _first_wall_hit(a: Vector2, b: Vector2, map: MapData) -> Dictionary:
+func _first_wall_hit(a: Vector2, b: Vector2) -> Dictionary:
 	var best: Dictionary = {}
 	var best_d := INF
 	var seg_len := a.distance_to(b)
 	if seg_len <= 0.001:
 		return best
-	for poly in map.wall_polygons:
-		if not poly is Array:
+	for edge in _cached_wall_edges:
+		if not edge is Array:
 			continue
-		var pts := poly as Array
-		if pts.size() < 2:
+		var pair := edge as Array
+		if pair.size() < 2:
 			continue
-		for i in range(pts.size()):
-			var av: Variant = pts[i]
-			var bv: Variant = pts[(i + 1) % pts.size()]
-			if not av is Vector2 or not bv is Vector2:
-				continue
-			var pa := av as Vector2
-			var pb := bv as Vector2
-			var hit: Variant = Geometry2D.segment_intersects_segment(a, b, pa, pb)
-			if not hit is Vector2:
-				continue
-			var hp := hit as Vector2
-			var d := a.distance_to(hp)
-			if d <= 0.5 or d >= (seg_len - 0.5):
-				continue
-			if d < best_d:
-				best_d = d
-				best = {"point": hp, "a": pa, "b": pb}
+		var av: Variant = pair[0]
+		var bv: Variant = pair[1]
+		if not av is Vector2 or not bv is Vector2:
+			continue
+		var pa := av as Vector2
+		var pb := bv as Vector2
+		var hit: Variant = Geometry2D.segment_intersects_segment(a, b, pa, pb)
+		if not hit is Vector2:
+			continue
+		var hp := hit as Vector2
+		var d := a.distance_to(hp)
+		if d <= 0.5 or d >= (seg_len - 0.5):
+			continue
+		if d < best_d:
+			best_d = d
+			best = {"point": hp, "a": pa, "b": pb}
 	return best

@@ -105,10 +105,12 @@ var _play_mode_btn: Button = null
 const _BROADCAST_DEBOUNCE: float = 0.05 ## seconds — near-instant feel
 const _PLAYER_STATE_BROADCAST_DEBOUNCE: float = 0.0
 const _FOG_BROADCAST_DEBOUNCE: float = 1.5
-const _FOG_AUTO_SYNC_DEBOUNCE: float = 0.25
+const _FOG_AUTO_SYNC_DEBOUNCE: float = 0.0
 const _FOG_DELTA_MAX_CELLS: int = 1200
+const _FOG_TRUTH_MAX_CELLS_PER_CHUNK: int = 400
+const _FOG_TRUTH_CHUNKS_PER_FRAME: int = 100000
 const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
-const DEBUG_FOG_SNAPSHOT: bool = true
+const DEBUG_FOG_SNAPSHOT: bool = false
 const DEBUG_FOG_TELEMETRY: bool = false
 var _broadcast_dirty: bool = false
 var _broadcast_countdown: float = 0.0
@@ -116,6 +118,10 @@ var _player_state_dirty: bool = false
 var _player_state_countdown: float = 0.0
 var _fog_dirty: bool = false
 var _fog_countdown: float = 0.0
+var _fog_snapshot_in_flight: bool = false
+var _fog_snapshot_queued: bool = false
+var _fog_truth_send_queue: Array = []
+var _fog_truth_send_index: int = 0
 var _backend: Node = null
 var _dm_override_player_id: String = ""
 var _initial_sync_ack_pending: Dictionary = {}
@@ -151,8 +157,10 @@ func _process(delta: float) -> void:
 		_fog_countdown = maxf(0.0, _fog_countdown - delta)
 	if _fog_dirty and _fog_countdown <= 0.0:
 		_fog_dirty = false
-		_broadcast_fog_state()
+		_broadcast_fog_truth_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
+
+	_pump_fog_truth_send_queue()
 
 	_update_dm_override_input()
 	if _simulate_player_movement(delta):
@@ -248,6 +256,10 @@ func _build_ui() -> void:
 	# idx 1 → id 21 Grid Overlay
 	# idx 2 → separator
 	# idx 3 → id 22 Reset View
+	# idx 4 → separator
+	# idx 5 → id 24 Sync Fog Now
+	# idx 6 → separator
+	# idx 7 → id 23 Launch Player Window
 	_view_menu = PopupMenu.new()
 	_view_menu.name = "View"
 	_view_menu.add_check_item("Toolbar", 20)
@@ -256,6 +268,8 @@ func _build_ui() -> void:
 	_view_menu.set_item_checked(1, true)
 	_view_menu.add_separator()
 	_view_menu.add_item("Reset View", 22)
+	_view_menu.add_separator()
+	_view_menu.add_item("Sync Fog Now", 24)
 	_view_menu.add_separator()
 	_view_menu.add_item("▶ Launch Player Window", 23)
 	_view_menu.id_pressed.connect(_on_view_menu_id)
@@ -839,6 +853,8 @@ func _on_view_menu_id(id: int) -> void:
 		22: # Reset DM view
 			if _map_view:
 				_map_view._reset_camera()
+		24: # Manual fog resync
+			_manual_fog_sync_now()
 		23: # Launch player display process
 			_launch_player_process()
 
@@ -1803,7 +1819,7 @@ func _on_map_fog_changed(_map: MapData) -> void:
 	_fog_dirty = true
 	if _fog_countdown <= 0.0:
 		_fog_dirty = false
-		_broadcast_fog_state()
+		_broadcast_fog_truth_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
 
 
@@ -1811,7 +1827,10 @@ func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 	if not _ENABLE_CONTINUOUS_FOG_SYNC:
 		if revealed_cells.is_empty() and hidden_cells.is_empty():
 			return
-		_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
+		if revealed_cells.size() + hidden_cells.size() > (_FOG_DELTA_MAX_CELLS * 4):
+			_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
+			return
+		_broadcast_fog_delta_chunked(cell_px, revealed_cells, hidden_cells)
 		return
 	if revealed_cells.is_empty() and hidden_cells.is_empty():
 		return
@@ -1830,6 +1849,13 @@ func _queue_fog_snapshot_sync(delay: float) -> void:
 		_fog_countdown = delay
 	else:
 		_fog_countdown = minf(_fog_countdown, delay)
+
+
+func _manual_fog_sync_now() -> void:
+	_fog_dirty = false
+	_fog_countdown = 0.0
+	_broadcast_fog_truth_state()
+	_set_status("Fog sync queued to player displays.")
 
 
 func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:
@@ -1875,19 +1901,114 @@ func _on_map_walls_changed(map: MapData) -> void:
 func _broadcast_fog_state() -> void:
 	if _map_view == null:
 		return
+	if _fog_snapshot_in_flight:
+		_fog_snapshot_queued = true
+		return
+	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+		_queue_fog_snapshot_sync(0.5)
+		return
 	if _map_view.has_method("force_fog_sync"):
 		_map_view.force_fog_sync()
+	_fog_snapshot_in_flight = true
 	_broadcast_fog_state_after_frame()
 
 
 func _broadcast_fog_state_after_frame() -> void:
 	await get_tree().process_frame
 	if _map_view == null:
+		_fog_snapshot_in_flight = false
+		return
+	var map: MapData = _map_view.get_map()
+	if map == null:
+		_fog_snapshot_in_flight = false
+		return
+	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+		_fog_snapshot_in_flight = false
+		_queue_fog_snapshot_sync(0.5)
+		return
+	NetworkManager.broadcast_to_displays(await _build_fog_state_snapshot(map))
+	_fog_snapshot_in_flight = false
+	if _fog_snapshot_queued:
+		_fog_snapshot_queued = false
+		_queue_fog_snapshot_sync(0.1)
+
+
+func _broadcast_fog_truth_state() -> void:
+	if _map_view == null:
+		return
+	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+		_queue_fog_snapshot_sync(0.5)
 		return
 	var map: MapData = _map_view.get_map()
 	if map == null:
 		return
-	NetworkManager.broadcast_to_displays(await _build_fog_state_snapshot(map))
+	_queue_fog_truth_chunked(map)
+
+
+func _queue_fog_truth_chunked(map: MapData) -> void:
+	var queue: Array = []
+	var serial_cells := _serialise_fog_cells(map.fog_hidden_cells)
+	var total_cells := serial_cells.size()
+	var chunk_size := maxi(1, _FOG_TRUTH_MAX_CELLS_PER_CHUNK)
+	var chunks := int(ceil(float(total_cells) / float(chunk_size)))
+	chunks = maxi(1, chunks)
+
+	queue.append({
+		"msg": "fog_truth_begin",
+		"fog_cell_px": int(maxi(1, map.fog_cell_px)),
+		"chunks": chunks,
+	})
+
+	if total_cells == 0:
+		queue.append({
+			"msg": "fog_truth_chunk",
+			"index": 0,
+			"chunks": 1,
+			"hidden_cells": [],
+		})
+		queue.append({
+			"msg": "fog_truth_end",
+			"chunks": 1,
+		})
+		_fog_truth_send_queue = queue
+		_fog_truth_send_index = 0
+		return
+
+	for i in range(chunks):
+		var start := i * chunk_size
+		var end := mini(total_cells, start + chunk_size)
+		var chunk := serial_cells.slice(start, end)
+		queue.append({
+			"msg": "fog_truth_chunk",
+			"index": i,
+			"chunks": chunks,
+			"hidden_cells": chunk,
+		})
+
+	queue.append({
+		"msg": "fog_truth_end",
+		"chunks": chunks,
+	})
+	_fog_truth_send_queue = queue
+	_fog_truth_send_index = 0
+
+
+func _pump_fog_truth_send_queue() -> void:
+	if _fog_truth_send_index >= _fog_truth_send_queue.size():
+		if _fog_truth_send_queue.size() > 0:
+			_fog_truth_send_queue.clear()
+			_fog_truth_send_index = 0
+		return
+	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+		return
+	var sent := 0
+	var per_frame := maxi(1, _FOG_TRUTH_CHUNKS_PER_FRAME)
+	while sent < per_frame and _fog_truth_send_index < _fog_truth_send_queue.size():
+		var msg: Variant = _fog_truth_send_queue[_fog_truth_send_index]
+		if msg is Dictionary:
+			NetworkManager.broadcast_to_displays(msg as Dictionary)
+		_fog_truth_send_index += 1
+		sent += 1
 
 
 func _serialise_fog_cells(cells: Array) -> Array:

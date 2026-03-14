@@ -7,11 +7,13 @@ const LIVE_LIGHT_ENERGY_GAIN: float = 8.0
 const LIVE_LIGHT_MIN_ENERGY: float = 10.0
 const LIVE_MASK_GAIN: float = 6.0
 const LOS_BAKE_GAIN: float = 4.0
-const DEBUG_FOG_TELEMETRY: bool = true
-const LOS_BAKE_INTERVAL_MSEC: int = 8
-const LIGHT_MOVE_EPSILON_PX: float = 0.5
+const DEBUG_FOG_TELEMETRY: bool = false
+const LOS_BAKE_INTERVAL_MSEC: int = 0
+const LIGHT_MOVE_EPSILON_PX: float = 0.0
 const MIN_LIGHT_RADIUS_PX: float = 12.0
 const MAX_LIGHT_RADIUS_PX: float = 320.0
+const DIRTY_REGION_MERGE_PADDING_PX: int = 12
+const MAX_DIRTY_REGIONS: int = 12
 
 var _map_size: Vector2 = Vector2(1920, 1080)
 var _is_dm: bool = true
@@ -20,7 +22,9 @@ var _fog_enabled: bool = false
 var _history_image: Image = null
 var _history_texture: ImageTexture = null
 var _history_dirty: bool = false
-var _prev_los_image: Image = null
+var _prev_los_data: PackedByteArray = PackedByteArray()
+var _prev_los_width: int = 0
+var _prev_los_height: int = 0
 var _history_seed_cell_px: int = 1
 
 var _mask_host: SubViewportContainer = null
@@ -39,7 +43,7 @@ var _debug_los_bakes_frame: int = 0
 var _debug_last_metrics_msec: int = 0
 var _los_bake_pending: bool = true
 var _last_los_bake_msec: int = 0
-var _los_dirty_rect: Rect2i = Rect2i()
+var _los_dirty_regions: Array = []
 
 
 func _ready() -> void:
@@ -58,6 +62,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	if not _fog_enabled:
+		return
 	if _history_dirty:
 		_upload_history_texture()
 	if _should_bake_los_now():
@@ -74,6 +80,8 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 		_build_nodes()
 	_resize_buffers_and_nodes()
 	_apply_shader_uniforms()
+	if _live_lights_viewport:
+		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _fog_enabled else SubViewport.UPDATE_DISABLED
 	_queue_los_full_bake()
 	if DEBUG_FOG_TELEMETRY:
 		print("FogSystem: configure (is_dm=%s fog_enabled=%s map_size=%s viewport=%s)" % [
@@ -110,6 +118,9 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 		image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
 	_history_image = image
 	_history_dirty = true
+	_prev_los_data = PackedByteArray()
+	_prev_los_width = 0
+	_prev_los_height = 0
 
 	var fog_manager := get_node_or_null("/root/FogManager")
 	if fog_manager and fog_manager.has_method("set_fog_state"):
@@ -122,7 +133,9 @@ func reset_history() -> void:
 	if _history_image == null:
 		return
 	_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
-	_prev_los_image = null
+	_prev_los_data = PackedByteArray()
+	_prev_los_width = 0
+	_prev_los_height = 0
 	_history_dirty = true
 	_queue_los_full_bake()
 
@@ -141,7 +154,9 @@ func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> voi
 			continue
 		_paint_cell_block(key as Vector2i, safe_cell_px, 0.0)
 
-	_prev_los_image = null
+	_prev_los_data = PackedByteArray()
+	_prev_los_width = 0
+	_prev_los_height = 0
 	_history_dirty = true
 	_queue_los_full_bake()
 
@@ -250,7 +265,7 @@ func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
 
 
 func sync_player_revealers(tokens: Array) -> void:
-	if _live_lights_viewport == null:
+	if _live_lights_viewport == null or not _fog_enabled:
 		return
 	var seen_ids: Dictionary = {}
 	for raw_token in tokens:
@@ -277,17 +292,27 @@ func sync_player_revealers(tokens: Array) -> void:
 
 		var src := token.get_node_or_null("PointLight2D") as PointLight2D
 		if src:
-			light.texture = src.texture
-			light.texture_scale = src.texture_scale
-			light.energy = maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
+			if light.texture != src.texture:
+				light.texture = src.texture
+			if absf(light.texture_scale - src.texture_scale) > 0.0001:
+				light.texture_scale = src.texture_scale
+			var scaled_energy := maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
+			if absf(light.energy - scaled_energy) > 0.0001:
+				light.energy = scaled_energy
 		else:
-			light.energy = LIVE_LIGHT_MIN_ENERGY
+			if absf(light.energy - LIVE_LIGHT_MIN_ENERGY) > 0.0001:
+				light.energy = LIVE_LIGHT_MIN_ENERGY
 		# Always bake LOS from additive lights for stable reveal mask intensity.
-		light.blend_mode = Light2D.BLEND_MODE_ADD
-		light.shadow_enabled = true
-		light.range_item_cull_mask = VISION_LAYER_MASK
-		light.shadow_item_cull_mask = VISION_LAYER_MASK
-		light.visibility_layer = VISION_LAYER_MASK
+		if light.blend_mode != Light2D.BLEND_MODE_ADD:
+			light.blend_mode = Light2D.BLEND_MODE_ADD
+		if not light.shadow_enabled:
+			light.shadow_enabled = true
+		if light.range_item_cull_mask != VISION_LAYER_MASK:
+			light.range_item_cull_mask = VISION_LAYER_MASK
+		if light.shadow_item_cull_mask != VISION_LAYER_MASK:
+			light.shadow_item_cull_mask = VISION_LAYER_MASK
+		if light.visibility_layer != VISION_LAYER_MASK:
+			light.visibility_layer = VISION_LAYER_MASK
 		if light.texture == null:
 			light.texture = _get_or_create_radial_texture()
 
@@ -297,8 +322,10 @@ func sync_player_revealers(tokens: Array) -> void:
 		var reveal_local := reveal_world
 		if token.get_parent() is Node2D:
 			reveal_local = (token.get_parent() as Node2D).to_local(reveal_world)
-		light.position = reveal_local
-		light.rotation = token.rotation
+		if light.position.distance_to(reveal_local) > 0.0001:
+			light.position = reveal_local
+		if absf(light.rotation - token.rotation) > 0.0001:
+			light.rotation = token.rotation
 
 		var radius_px := _estimate_light_radius_px(light, src)
 		_mark_light_movement_dirty(token_id, reveal_local, radius_px)
@@ -463,38 +490,60 @@ func _bake_live_los_into_history() -> void:
 	los_image.convert(Image.FORMAT_L8)
 	if los_image.get_width() != _history_image.get_width() or los_image.get_height() != _history_image.get_height():
 		los_image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
-	var prev_los := _prev_los_image
-	var can_use_prev := prev_los != null and not prev_los.is_empty() and prev_los.get_width() == los_image.get_width() and prev_los.get_height() == los_image.get_height()
+	var width := _history_image.get_width()
+	var height := _history_image.get_height()
+	var history_data := _history_image.get_data()
+	var los_data := los_image.get_data()
+	var can_use_prev := (
+		not _prev_los_data.is_empty()
+		and _prev_los_width == width
+		and _prev_los_height == height
+		and _prev_los_data.size() == los_data.size()
+	)
 
 	var bounds := Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())
-	var bake_rect := bounds
-	if _los_dirty_rect.size.x > 0 and _los_dirty_rect.size.y > 0:
-		bake_rect = _los_dirty_rect.intersection(bounds)
-	if bake_rect.size.x <= 0 or bake_rect.size.y <= 0:
+	var bake_regions: Array = []
+	if _los_dirty_regions.is_empty():
+		bake_regions.append(bounds)
+	else:
+		for raw_region in _los_dirty_regions:
+			if not raw_region is Rect2i:
+				continue
+			var clipped := (raw_region as Rect2i).intersection(bounds)
+			if clipped.size.x <= 0 or clipped.size.y <= 0:
+				continue
+			bake_regions.append(clipped)
+	if bake_regions.is_empty():
 		_los_bake_pending = false
-		_los_dirty_rect = Rect2i()
+		_los_dirty_regions.clear()
 		return
 
 	# Preserve history monotonically: never allow a new frame to hide already
 	# revealed pixels. Merge using max(existing, live_los).
 	var changed := false
-	for y in range(bake_rect.position.y, bake_rect.end.y):
-		for x in range(bake_rect.position.x, bake_rect.end.x):
-			var existing := _history_image.get_pixel(x, y).r
-			var live := los_image.get_pixel(x, y).r
-			if can_use_prev:
-				live = maxf(live, prev_los.get_pixel(x, y).r)
-			live = clampf(live * LOS_BAKE_GAIN, 0.0, 1.0)
-			if live > existing:
-				_history_image.set_pixel(x, y, Color(live, 0.0, 0.0, 1.0))
-				changed = true
+	for bake_rect in bake_regions:
+		for y in range(bake_rect.position.y, bake_rect.end.y):
+			var row_base := y * width
+			for x in range(bake_rect.position.x, bake_rect.end.x):
+				var idx := row_base + x
+				var existing_u8 := int(history_data[idx])
+				var live_u8 := int(los_data[idx])
+				if can_use_prev:
+					live_u8 = maxi(live_u8, int(_prev_los_data[idx]))
+				var scaled_u8 := mini(255, int(round(float(live_u8) * LOS_BAKE_GAIN)))
+				if scaled_u8 > existing_u8:
+					history_data[idx] = scaled_u8
+					changed = true
 
-	_prev_los_image = los_image.duplicate()
+	_prev_los_data = los_data.duplicate()
+	_prev_los_width = width
+	_prev_los_height = height
 
 	if changed:
+		_history_image.set_data(width, height, false, Image.FORMAT_L8, history_data)
 		_history_texture.update(_history_image)
 	_los_bake_pending = false
-	_los_dirty_rect = Rect2i()
+	_los_dirty_regions.clear()
 	_last_los_bake_msec = Time.get_ticks_msec()
 	if DEBUG_FOG_TELEMETRY:
 		_debug_los_bakes_frame += 1
@@ -560,19 +609,54 @@ func _rect_from_circle(center_px: Vector2, radius_px: float) -> Rect2i:
 func _queue_los_dirty_rect(rect: Rect2i) -> void:
 	if rect.size.x <= 0 or rect.size.y <= 0:
 		return
-	if _los_dirty_rect.size.x <= 0 or _los_dirty_rect.size.y <= 0:
-		_los_dirty_rect = rect
-	else:
-		_los_dirty_rect = _los_dirty_rect.merge(rect)
+	_los_dirty_regions.append(rect)
+	_compact_los_dirty_regions()
 	_los_bake_pending = true
 
 
 func _queue_los_full_bake() -> void:
 	if _history_image and not _history_image.is_empty():
-		_los_dirty_rect = Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())
+		_los_dirty_regions = [Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())]
 	else:
-		_los_dirty_rect = Rect2i()
+		_los_dirty_regions.clear()
 	_los_bake_pending = true
+
+
+func _compact_los_dirty_regions() -> void:
+	if _los_dirty_regions.size() <= 1:
+		return
+
+	var merge_padding := DIRTY_REGION_MERGE_PADDING_PX
+	var i := 0
+	while i < _los_dirty_regions.size():
+		if not _los_dirty_regions[i] is Rect2i:
+			_los_dirty_regions.remove_at(i)
+			continue
+		var current := _los_dirty_regions[i] as Rect2i
+		var j := i + 1
+		while j < _los_dirty_regions.size():
+			if not _los_dirty_regions[j] is Rect2i:
+				_los_dirty_regions.remove_at(j)
+				continue
+			var other := _los_dirty_regions[j] as Rect2i
+			var current_padded := current.grow(merge_padding)
+			var other_padded := other.grow(merge_padding)
+			if current_padded.intersects(other) or other_padded.intersects(current):
+				current = current.merge(other)
+				_los_dirty_regions[i] = current
+				_los_dirty_regions.remove_at(j)
+				continue
+			j += 1
+		i += 1
+
+	if _los_dirty_regions.size() <= MAX_DIRTY_REGIONS:
+		return
+
+	var merged := _los_dirty_regions[0] as Rect2i
+	for idx in range(1, _los_dirty_regions.size()):
+		if _los_dirty_regions[idx] is Rect2i:
+			merged = merged.merge(_los_dirty_regions[idx] as Rect2i)
+	_los_dirty_regions = [merged]
 
 
 func _apply_shader_uniforms() -> void:
@@ -699,14 +783,14 @@ func _log_debug_metrics() -> void:
 		live_size = _live_lights_viewport.size
 	var light_count := _live_light_by_token_id.size()
 
-	print("FogSystem metrics: is_dm=%s hist=%s live=%s lights=%d los_bakes_last_sec=%d pending=%s dirty_rect=%s history_dirty=%s" % [
+	print("FogSystem metrics: is_dm=%s hist=%s live=%s lights=%d los_bakes_last_sec=%d pending=%s dirty_regions=%d history_dirty=%s" % [
 		str(_is_dm),
 		str(hist_size),
 		str(live_size),
 		light_count,
 		_debug_los_bakes_frame,
 		str(_los_bake_pending),
-		str(_los_dirty_rect),
+		_los_dirty_regions.size(),
 		str(_history_dirty),
 	])
 

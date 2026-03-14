@@ -21,8 +21,10 @@ var _last_nonzero_dir: Vector2 = Vector2.RIGHT
 var _remote_smoothing_enabled: bool = false
 var _remote_target_position: Vector2 = Vector2.ZERO
 var _remote_initialized: bool = false
-var _remote_lerp_speed: float = 50.0
+var _remote_lerp_speed: float = 18.0
+var _remote_snap_epsilon_px: float = 0.75
 var _vision_radius_tween: Tween = null
+var _token_diameter_px: float = _TOKEN_TEXTURE_DIAMETER_PX
 
 static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
@@ -48,6 +50,9 @@ func _process(delta: float) -> void:
 	if not _remote_smoothing_enabled:
 		return
 	var dist := global_position.distance_to(_remote_target_position)
+	if dist <= _remote_snap_epsilon_px:
+		global_position = _remote_target_position
+		return
 	if dist > 36.0:
 		global_position = _remote_target_position
 		return
@@ -55,6 +60,13 @@ func _process(delta: float) -> void:
 
 
 func apply_from_state(data: Dictionary) -> void:
+	var prev_player_id := player_id
+	var prev_vision_type := vision_type
+	var prev_darkvision_range := darkvision_range
+	var prev_is_dashing := is_dashing
+	var prev_vision_scale := vision_scale
+	var prev_token_diameter := _token_diameter_px
+
 	player_id = str(data.get("id", ""))
 	player_name = str(data.get("name", ""))
 	base_speed = float(data.get("base_speed", 30.0))
@@ -69,7 +81,8 @@ func apply_from_state(data: Dictionary) -> void:
 		_last_nonzero_dir = Vector2.RIGHT.rotated(facing).normalized()
 	rotation = facing
 	var token_diameter_px := float(data.get("token_diameter_px", _TOKEN_TEXTURE_DIAMETER_PX))
-	set_token_diameter_px(token_diameter_px)
+	if absf(token_diameter_px - prev_token_diameter) > 0.01:
+		set_token_diameter_px(token_diameter_px)
 	var pos_d: Dictionary = data.get("position", {"x": 0.0, "y": 0.0})
 	var pos := Vector2(float(pos_d.get("x", 0.0)), float(pos_d.get("y", 0.0)))
 	if _remote_smoothing_enabled:
@@ -80,7 +93,15 @@ func apply_from_state(data: Dictionary) -> void:
 	else:
 		global_position = pos
 		_remote_target_position = pos
-	_update_visuals()
+	var visuals_changed := (
+		player_id != prev_player_id
+		or vision_type != prev_vision_type
+		or absf(darkvision_range - prev_darkvision_range) > 0.01
+		or is_dashing != prev_is_dashing
+		or absf(vision_scale - prev_vision_scale) > 0.001
+	)
+	if visuals_changed:
+		_update_visuals()
 
 
 func set_movement_input(vec: Vector2) -> void:
@@ -96,6 +117,11 @@ func enable_remote_smoothing(enabled: bool) -> void:
 		_remote_initialized = false
 
 
+func set_vision_render_enabled(enabled: bool) -> void:
+	if vision_light:
+		vision_light.enabled = enabled
+
+
 func get_fog_reveal_position() -> Vector2:
 	if _remote_smoothing_enabled:
 		return _remote_target_position
@@ -103,6 +129,7 @@ func get_fog_reveal_position() -> Vector2:
 
 
 func set_token_diameter_px(diameter_px: float) -> void:
+	_token_diameter_px = diameter_px
 	var factor := maxf(diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, 0.15)
 	sprite.scale = Vector2.ONE * factor
 	collision.scale = Vector2.ONE * factor
