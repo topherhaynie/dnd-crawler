@@ -14,6 +14,7 @@ extends Node
 
 const PlayerSpriteScene: PackedScene = preload("res://scenes/PlayerSprite.tscn")
 const NORMAL_VISION_HALF_ANGLE_RAD: float = 0.9599311 ## 55 degrees
+const NORMAL_VISION_RANGE_FEET: float = 30.0
 const ENABLE_AUTOMATIC_FOG_REVEAL: bool = false
 
 var _map_view: Node2D = null
@@ -94,11 +95,14 @@ func step(delta: float) -> bool:
 			continue
 		if token.has_method("set_token_diameter_px"):
 			token.set_token_diameter_px(_token_diameter_px_for_map(map))
+		var token_radius_px := _token_diameter_px_for_map(map) * 0.5
+		if token.has_method("set_vision_radius_px"):
+			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = _input_manager().get_vector(p.id)
 		token.set_movement_input(vec)
 		var prev_pos: Vector2 = token.global_position
 		token.step_authoritative_motion(delta, _profile_speed_px_per_second(p, map), max_bounds)
-		token.global_position = _resolve_wall_collision(prev_pos, token.global_position, map)
+		token.global_position = _resolve_wall_collision(prev_pos, token.global_position, map, token_radius_px)
 		var pos: Vector2 = token.global_position
 		if _game_state().player_positions.get(p.id, Vector2.ZERO) != pos:
 			_game_state().player_positions[p.id] = pos
@@ -146,7 +150,7 @@ func _reveal_fog_from_tokens_los(map: MapData) -> Array:
 
 	var revealed: Array = []
 	var cell_px: int = maxi(1, map.fog_cell_px)
-	var px_per_5ft := map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
+	var px_per_5ft := _pixels_per_5ft(map)
 
 	for token_entry in _dm_tokens.values():
 		if not token_entry is Node2D:
@@ -157,7 +161,7 @@ func _reveal_fog_from_tokens_los(map: MapData) -> Array:
 
 		var vision_type := int(token.get("vision_type")) if token.get("vision_type") != null else 0
 		var darkvision_range := float(token.get("darkvision_range")) if token.get("darkvision_range") != null else 60.0
-		var radius_feet := darkvision_range if vision_type == 1 else 30.0
+		var radius_feet := darkvision_range if vision_type == 1 else NORMAL_VISION_RANGE_FEET
 		var radius_px := (radius_feet / 5.0) * px_per_5ft
 		if bool(token.get("is_dashing")):
 			radius_px *= 0.5
@@ -175,7 +179,7 @@ func _reveal_fog_from_tokens_los(map: MapData) -> Array:
 		for i in range(samples + 1):
 			var t := float(i) / float(samples)
 			var stamp_origin := prev_origin.lerp(origin, t)
-			_stamp_reveal_from_origin(hidden, revealed, stamp_origin, facing_dir, vision_type, radius_px, cell_px)
+			_stamp_reveal_from_origin(hidden, revealed, stamp_origin, facing_dir, vision_type, radius_px, cell_px, map)
 
 		_los_prev_origin_by_token[token_key] = origin
 
@@ -214,7 +218,7 @@ func _is_cell_in_vision_cone(origin: Vector2, facing_dir: Vector2, vision_type: 
 	return true
 
 
-func _stamp_reveal_from_origin(hidden: Dictionary, revealed: Array, origin: Vector2, facing_dir: Vector2, vision_type: int, radius_px: float, cell_px: int) -> void:
+func _stamp_reveal_from_origin(hidden: Dictionary, revealed: Array, origin: Vector2, facing_dir: Vector2, vision_type: int, radius_px: float, cell_px: int, map: MapData) -> void:
 	var radius_cells := int(ceil(radius_px / float(cell_px)))
 	var center := Vector2i(floori(origin.x / cell_px), floori(origin.y / cell_px))
 	var sample_step := _auto_reveal_sample_step(radius_cells)
@@ -234,6 +238,8 @@ func _stamp_reveal_from_origin(hidden: Dictionary, revealed: Array, origin: Vect
 					var cell_center := Vector2((cell.x + 0.5) * cell_px, (cell.y + 0.5) * cell_px)
 					if not _is_cell_in_vision_cone(origin, facing_dir, vision_type, radius_px, cell_center):
 						continue
+					if _is_los_blocked(origin, cell_center, map):
+						continue
 					hidden.erase(cell)
 					revealed.append(cell)
 
@@ -248,10 +254,13 @@ func _auto_reveal_sample_step(radius_cells: int) -> int:
 	return 1
 
 
-func _is_los_blocked(origin: Vector2, target: Vector2, _map: MapData) -> bool:
+func _is_los_blocked(origin: Vector2, target: Vector2, map: MapData) -> bool:
 	var seg_len := origin.distance_to(target)
 	if seg_len <= 0.001:
 		return false
+	if map != null and (_point_inside_any_wall(origin, map) or _point_inside_any_wall(target, map)):
+		return true
+	var target_epsilon := minf(0.05, seg_len * 0.1)
 	for edge in _cached_wall_edges:
 		if not edge is Array:
 			continue
@@ -269,7 +278,7 @@ func _is_los_blocked(origin: Vector2, target: Vector2, _map: MapData) -> bool:
 			continue
 		var hp := hit as Vector2
 		var d := origin.distance_to(hp)
-		if d > 1.0 and d < (seg_len - 1.0):
+		if d <= (seg_len - target_epsilon):
 			return true
 	return false
 
@@ -279,10 +288,17 @@ func _wall_signature(map: MapData) -> String:
 		return ""
 	var poly_count := map.wall_polygons.size()
 	var point_count := 0
+	var checksum := 17
 	for poly in map.wall_polygons:
 		if poly is Array:
-			point_count += (poly as Array).size()
-	return "%d:%d" % [poly_count, point_count]
+			for point in (poly as Array):
+				if not point is Vector2:
+					continue
+				point_count += 1
+				var p := point as Vector2
+				checksum = int(((checksum * 31) + int(roundf(p.x * 10.0))) & 0x7fffffff)
+				checksum = int(((checksum * 31) + int(roundf(p.y * 10.0))) & 0x7fffffff)
+	return "%d:%d:%d" % [poly_count, point_count, checksum]
 
 
 func _rebuild_cached_wall_edges(map: MapData) -> void:
@@ -323,6 +339,7 @@ func build_player_state_payload() -> Array:
 			"base_speed": p.base_speed,
 			"vision_type": p.vision_type,
 			"darkvision_range": p.darkvision_range,
+			"vision_radius_px": _profile_vision_radius_px(p, map),
 			"perception_mod": p.perception_mod,
 			"is_dashing": bool(p.extras.get("is_dashing", false)),
 			"vision_scale": _vision_scale_for_profile(p),
@@ -367,6 +384,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 				"base_speed": profile.base_speed,
 				"vision_type": profile.vision_type,
 				"darkvision_range": profile.darkvision_range,
+				"vision_radius_px": _profile_vision_radius_px(profile, _map_view.get_map() if _map_view else null),
 				"perception_mod": profile.perception_mod,
 				"is_dashing": bool(profile.extras.get("is_dashing", false)),
 				"vision_scale": _vision_scale_for_profile(profile),
@@ -393,6 +411,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 		"base_speed": profile.base_speed,
 		"vision_type": profile.vision_type,
 		"darkvision_range": profile.darkvision_range,
+		"vision_radius_px": _profile_vision_radius_px(profile, _map_view.get_map() if _map_view else null),
 		"perception_mod": profile.perception_mod,
 		"is_dashing": bool(profile.extras.get("is_dashing", false)),
 		"vision_scale": _vision_scale_for_profile(profile),
@@ -406,11 +425,24 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 
 
 func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float:
-	var px_per_5ft := map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
+	var px_per_5ft := _pixels_per_5ft(map)
 	var speed := (maxf(profile.base_speed, 5.0) / 5.0) * px_per_5ft
 	if bool(profile.extras.get("is_dashing", false)):
 		speed *= 1.5
 	return speed
+
+
+func _profile_vision_radius_px(profile: PlayerProfile, map: MapData) -> float:
+	if map == null:
+		return profile.darkvision_range if profile.vision_type == PlayerProfile.VisionType.DARKVISION else 60.0
+	var radius_feet := profile.darkvision_range if profile.vision_type == PlayerProfile.VisionType.DARKVISION else NORMAL_VISION_RANGE_FEET
+	return (maxf(radius_feet, 5.0) / 5.0) * _pixels_per_5ft(map)
+
+
+func _pixels_per_5ft(map: MapData) -> float:
+	if map == null:
+		return 60.0
+	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 
 
 func _vision_scale_for_profile(profile: PlayerProfile) -> float:
@@ -428,39 +460,67 @@ func _token_diameter_px_for_map(map: MapData) -> float:
 	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 
 
-func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, _map: MapData) -> Vector2:
+func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, map: MapData, token_radius_px: float) -> Vector2:
 	if _cached_wall_edges.is_empty():
 		return next_pos
 	if prev_pos.distance_squared_to(next_pos) <= 0.000001:
 		return next_pos
-	if not _segment_hits_any_wall(prev_pos, next_pos):
+	var clearance := maxf(token_radius_px, 0.0)
+	if _can_move_between(prev_pos, next_pos, map, clearance):
 		return next_pos
 
-	var hit_info := _first_wall_hit(prev_pos, next_pos)
-	if hit_info.is_empty():
-		return prev_pos
+	# Deterministic axis-stepped resolution avoids intermittent corner tunneling
+	# and keeps movement smooth along wall boundaries.
+	var resolved := prev_pos
+	var x_step := Vector2(next_pos.x, resolved.y)
+	if _can_move_between(resolved, x_step, map, clearance):
+		resolved = x_step
+	var y_step := Vector2(resolved.x, next_pos.y)
+	if _can_move_between(resolved, y_step, map, clearance):
+		resolved = y_step
+	if resolved != prev_pos:
+		return resolved
 
-	var hit_point := hit_info["point"] as Vector2
-	var edge_a := hit_info["a"] as Vector2
-	var edge_b := hit_info["b"] as Vector2
-	var move_vec := next_pos - prev_pos
-	if move_vec.length_squared() <= 0.000001:
-		return prev_pos
+	var alt := prev_pos
+	var y_first := Vector2(alt.x, next_pos.y)
+	if _can_move_between(alt, y_first, map, clearance):
+		alt = y_first
+	var x_second := Vector2(next_pos.x, alt.y)
+	if _can_move_between(alt, x_second, map, clearance):
+		alt = x_second
+	if alt != prev_pos:
+		return alt
 
-	var edge_dir := (edge_b - edge_a).normalized()
-	if edge_dir.length_squared() <= 0.000001:
-		return prev_pos
+	return prev_pos
 
-	var remaining := next_pos - hit_point
-	var slide_vec := edge_dir * remaining.dot(edge_dir)
-	if slide_vec.length_squared() <= 0.000001:
-		return prev_pos
 
-	var slide_start := hit_point - move_vec.normalized() * 1.0
-	var slide_target := slide_start + slide_vec
-	if _segment_hits_any_wall(slide_start, slide_target):
-		return slide_start
-	return slide_target
+func _can_move_between(a: Vector2, b: Vector2, map: MapData, radius_px: float) -> bool:
+	if _segment_hits_any_wall(a, b, radius_px):
+		return false
+	if map != null and _is_point_blocked_for_radius(b, map, radius_px):
+		return false
+	return true
+
+
+func _is_point_blocked_for_radius(pos: Vector2, map: MapData, radius_px: float) -> bool:
+	if _point_inside_any_wall(pos, map):
+		return true
+	if radius_px <= 0.001:
+		return false
+	for edge in _cached_wall_edges:
+		if not edge is Array:
+			continue
+		var pair := edge as Array
+		if pair.size() < 2:
+			continue
+		var av: Variant = pair[0]
+		var bv: Variant = pair[1]
+		if not av is Vector2 or not bv is Vector2:
+			continue
+		var closest := Geometry2D.get_closest_point_to_segment(pos, av as Vector2, bv as Vector2)
+		if pos.distance_to(closest) < radius_px:
+			return true
+	return false
 
 
 func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
@@ -478,10 +538,30 @@ func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 	return false
 
 
-func _segment_hits_any_wall(a: Vector2, b: Vector2) -> bool:
+func _segment_hits_any_wall(a: Vector2, b: Vector2, radius_px: float = 0.0) -> bool:
 	var seg_len := a.distance_to(b)
 	if seg_len <= 0.001:
 		return false
+	if _segment_hits_any_wall_center(a, b):
+		return true
+	if radius_px <= 0.001:
+		return false
+	var move_dir := (b - a).normalized()
+	if move_dir.length_squared() <= 0.000001:
+		return false
+	var offset := Vector2(-move_dir.y, move_dir.x) * radius_px
+	if _segment_hits_any_wall_center(a + offset, b + offset):
+		return true
+	if _segment_hits_any_wall_center(a - offset, b - offset):
+		return true
+	return false
+
+
+func _segment_hits_any_wall_center(a: Vector2, b: Vector2) -> bool:
+	var seg_len := a.distance_to(b)
+	if seg_len <= 0.001:
+		return false
+	var endpoint_epsilon := minf(0.05, seg_len * 0.1)
 	for edge in _cached_wall_edges:
 		if not edge is Array:
 			continue
@@ -496,7 +576,7 @@ func _segment_hits_any_wall(a: Vector2, b: Vector2) -> bool:
 		if not hit is Vector2:
 			continue
 		var d := a.distance_to(hit as Vector2)
-		if d > 0.5 and d < (seg_len - 0.5):
+		if d >= endpoint_epsilon and d <= (seg_len - endpoint_epsilon):
 			return true
 	return false
 
@@ -507,6 +587,7 @@ func _first_wall_hit(a: Vector2, b: Vector2) -> Dictionary:
 	var seg_len := a.distance_to(b)
 	if seg_len <= 0.001:
 		return best
+	var endpoint_epsilon := minf(0.05, seg_len * 0.1)
 	for edge in _cached_wall_edges:
 		if not edge is Array:
 			continue
@@ -524,7 +605,7 @@ func _first_wall_hit(a: Vector2, b: Vector2) -> Dictionary:
 			continue
 		var hp := hit as Vector2
 		var d := a.distance_to(hp)
-		if d <= 0.5 or d >= (seg_len - 0.5):
+		if d < endpoint_epsilon or d > (seg_len - endpoint_epsilon):
 			continue
 		if d < best_d:
 			best_d = d

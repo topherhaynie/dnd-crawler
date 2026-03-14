@@ -16,6 +16,7 @@ var darkvision_range: float = 60.0
 var perception_mod: int = 0
 var is_dashing: bool = false
 var vision_scale: float = 1.0
+var vision_radius_px: float = 60.0
 var _movement_input: Vector2 = Vector2.ZERO
 var _last_nonzero_dir: Vector2 = Vector2.RIGHT
 var _remote_smoothing_enabled: bool = false
@@ -65,6 +66,7 @@ func apply_from_state(data: Dictionary) -> void:
 	var prev_darkvision_range := darkvision_range
 	var prev_is_dashing := is_dashing
 	var prev_vision_scale := vision_scale
+	var prev_vision_radius_px := vision_radius_px
 	var prev_token_diameter := _token_diameter_px
 
 	player_id = str(data.get("id", ""))
@@ -76,6 +78,8 @@ func apply_from_state(data: Dictionary) -> void:
 	is_dashing = bool(data.get("is_dashing", false))
 	var default_vision_scale := 0.5 if is_dashing else 1.0
 	vision_scale = clampf(float(data.get("vision_scale", default_vision_scale)), 0.1, 4.0)
+	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
+	vision_radius_px = maxf(float(data.get("vision_radius_px", default_radius_px)), 8.0)
 	var facing := float(data.get("facing", rotation))
 	if vision_type == VisionType.NORMAL:
 		_last_nonzero_dir = Vector2.RIGHT.rotated(facing).normalized()
@@ -99,6 +103,7 @@ func apply_from_state(data: Dictionary) -> void:
 		or absf(darkvision_range - prev_darkvision_range) > 0.01
 		or is_dashing != prev_is_dashing
 		or absf(vision_scale - prev_vision_scale) > 0.001
+		or absf(vision_radius_px - prev_vision_radius_px) > 0.01
 	)
 	if visuals_changed:
 		_update_visuals()
@@ -151,22 +156,40 @@ func _update_visuals() -> void:
 		vision_light.texture = _get_or_create_radial_light_texture()
 	else:
 		vision_light.texture = _get_or_create_cone_light_texture()
-	var radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
+	var radius_px := vision_radius_px
 	radius_px *= vision_scale
 	update_vision_radius(radius_px)
 	if vision_type == VisionType.NORMAL:
 		rotation = _last_nonzero_dir.angle()
 
 
+func set_vision_radius_px(radius_px: float) -> void:
+	var safe_radius := maxf(radius_px, 8.0)
+	if absf(safe_radius - vision_radius_px) <= 0.01:
+		return
+	vision_radius_px = safe_radius
+	update_vision_radius(vision_radius_px * vision_scale)
+
+
 func update_vision_radius(radius: float) -> void:
 	var safe_radius := maxf(radius, 8.0)
-	var target_scale := maxf(safe_radius / 60.0, 0.2) * 2.0
+	var base_radius := _vision_texture_base_radius_px()
+	var target_scale := maxf(safe_radius / base_radius, 0.05)
 	if _vision_radius_tween and _vision_radius_tween.is_running():
 		_vision_radius_tween.kill()
 	_vision_radius_tween = create_tween()
 	_vision_radius_tween.set_trans(Tween.TRANS_SINE)
 	_vision_radius_tween.set_ease(Tween.EASE_OUT)
 	_vision_radius_tween.tween_property(vision_light, "texture_scale", target_scale, 0.2)
+
+
+func _vision_texture_base_radius_px() -> float:
+	if vision_light and vision_light.texture:
+		var tex_size := vision_light.texture.get_size()
+		var base := maxf(tex_size.x, tex_size.y) * 0.5
+		if base > 0.0:
+			return base
+	return 128.0
 
 
 func _color_from_id(id: String) -> Color:

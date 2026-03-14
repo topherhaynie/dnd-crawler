@@ -922,6 +922,7 @@ func _on_grid_type_selected(index: int) -> void:
 	map.grid_type = _grid_option.get_item_id(index)
 	_map_view.grid_overlay.apply_map_data(map)
 	NetworkManager.broadcast_map_update(map)
+	_broadcast_player_state()
 	_set_status("Grid: %s" % _grid_option.get_item_text(index))
 
 
@@ -953,6 +954,7 @@ func _on_calibration_done(map: MapData) -> void:
 	map.grid_offset = Vector2(_offset_x_spin.value, _offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
 	NetworkManager.broadcast_map_update(map)
+	_broadcast_player_state()
 	var detail := ("cell_px=%.1f" % map.cell_px) if map.grid_type == MapData.GridType.SQUARE else ("hex_size=%.1f" % map.hex_size)
 	_set_status("Calibrated: %s  offset=(%.0f, %.0f)" % [detail, map.grid_offset.x, map.grid_offset.y])
 
@@ -991,6 +993,7 @@ func _on_manual_scale_confirmed() -> void:
 			map.hex_size = cell_px * 0.5
 	_map_view.grid_overlay.apply_map_data(map)
 	NetworkManager.broadcast_map_update(map)
+	_broadcast_player_state()
 	_set_status("Scale set: %.1f px = %.0f ft" % [px_per_cell, ft_per_cell])
 
 
@@ -1015,6 +1018,7 @@ func _on_offset_confirmed() -> void:
 	map.grid_offset = Vector2(_solo_offset_x_spin.value, _solo_offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
 	NetworkManager.broadcast_map_update(map)
+	_broadcast_player_state()
 	_set_status("Grid offset: (%.0f, %.0f)" % [map.grid_offset.x, map.grid_offset.y])
 
 

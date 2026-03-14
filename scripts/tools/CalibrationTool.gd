@@ -102,6 +102,12 @@ func _show_confirm_dialog() -> void:
 	if confirm_dialog == null:
 		push_error("CalibrationTool: confirm_dialog not set")
 		return
+	var on_confirmed := Callable(self , "_on_confirmed")
+	if confirm_dialog.confirmed.is_connected(on_confirmed):
+		confirm_dialog.confirmed.disconnect(on_confirmed)
+	var on_canceled := Callable(self , "_on_canceled")
+	if confirm_dialog.canceled.is_connected(on_canceled):
+		confirm_dialog.canceled.disconnect(on_canceled)
 	confirm_dialog.confirmed.connect(_on_confirmed, CONNECT_ONE_SHOT)
 	confirm_dialog.canceled.connect(_on_canceled, CONNECT_ONE_SHOT)
 	confirm_dialog.popup_centered(Vector2i(340, 120))
