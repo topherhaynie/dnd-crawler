@@ -60,7 +60,7 @@
 
 ---
 
-## Phase 4: Movement & Fog of War
+## Phase 4: Movement & Fog of War (Complete)
 **Goal:** Player sprites move with vision arcs; fog reveals around them; walls cast shadows.
 *Depends on: Phases 2 & 3*
 

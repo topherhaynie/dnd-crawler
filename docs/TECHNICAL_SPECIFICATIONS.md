@@ -17,6 +17,8 @@ The runtime is split into three roles:
 | **DM Window** | UI/editor interactions and operator controls; forwards intent to backend and broadcasts backend-authoritative state. | `scripts/ui/DMWindow.gd` |
 | **Player Window** | Render-only consumer of DM packets (`map`, `camera`, `state`, `fog`). | `scripts/ui/PlayerWindow.gd` |
 
+Status: Phase 4 is complete.
+
 ## 2. Input Handling Strategy
 To support 6+ players across Mac/Windows while bypassing Bluetooth hardware caps:
 
@@ -73,12 +75,19 @@ The player viewport indicator layer is hidden in player profile mode.
 ### 3.2 Display Protocol (DM -> Player)
 * `map_loaded`:
     * Full map payload for initial load / late-join recovery.
+    * Does not inline fog snapshot bytes.
 * `map_updated`:
     * Structural map changes (grid calibration, walls, map metadata).
     * Avoid for high-frequency fog updates.
-* `fog_updated`:
-    * Lightweight fog-only update payload (`fog_cell_px`, `fog_hidden_cells`).
-    * Used for frequent visibility changes to avoid player-side full map reload hitches.
+* `fog_state_snapshot_begin` / `fog_state_snapshot_chunk` / `fog_state_snapshot_end`:
+    * Chunked fog snapshot transport for large fog images.
+    * Prevents websocket outbound OOM during initial sync and resync.
+* `fog_state_snapshot`:
+    * Reassembled snapshot message applied atomically on Player runtime.
+    * Encodes fog history as PNG bytes (base64 in transport).
+* `fog_updated` / `fog_delta`:
+    * Legacy compatibility channels retained for non-snapshot paths.
+    * Not the primary transport for DM toolbar fog edits.
 * `camera_update`:
     * Player camera center/zoom from DM viewport controls.
 * `state` / `delta`:
@@ -86,12 +95,24 @@ The player viewport indicator layer is hidden in player profile mode.
 
 ### 3.3 Performance Rule
 * Never send full-map packets for per-frame visibility changes.
-* High-frequency gameplay updates should use narrow payloads (`state`/`delta`, `fog_updated`) to minimize serialization and map rebuild cost.
+* Never inline large fog snapshots into `map_loaded` or `map_updated` payloads.
+* Fog full-sync must use chunked snapshot transport.
+* High-frequency gameplay updates should use narrow payloads (`state`/`delta`, camera updates) to minimize serialization and render churn.
 
 ### 3.4 Fog Authority
-* LOS-driven fog reveal is backend-authoritative (`BackendRuntime.gd`) and runs on a fixed reveal tick.
-* DM brush/rectangle fog edits are treated as DM input events and serialized/broadcast from DM runtime.
-* `MapView.gd` is now rendering/application logic for fog state, not fog-visibility authority.
+* DM process is authoritative for visibility output distributed to players.
+* Fog runtime uses image-backed history plus live LOS lights compositing (`scripts/fog/FogSystem.gd`).
+* DM brush/rectangle fog tools edit fog history directly in image space.
+* Player runtime is render-only and applies DM snapshots without local fog-authority simulation.
+
+### 3.5 Fog Rendering Pipeline (Current)
+* Persistent fog history is stored as an L8 image/texture (`history_tex`).
+* Live LOS is rendered in a dedicated lights-only SubViewport (`live_lights_tex`) using `PointLight2D` and `LightOccluder2D`.
+* Composite shader (`assets/effects/dm_mask_fog.gdshader`) combines history and live masks:
+    * DM: history-weighted dimming view.
+    * Player: gameplay fog alpha from combined reveal mask.
+* History merge is monotonic (`max(existing, live)`) so revealed areas are not lost.
+* Initial sync and manual resync send PNG snapshot data through chunked fog snapshot messages.
 
 ## 4. Software Stack & Dev Workflow
 * **Version Control:** Git.
