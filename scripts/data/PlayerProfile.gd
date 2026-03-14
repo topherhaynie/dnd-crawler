@@ -12,6 +12,7 @@ class_name PlayerProfile
 enum VisionType {NORMAL, DARKVISION}
 enum InputType {NONE, GAMEPAD, WEBSOCKET}
 
+
 var id: String = ""
 var player_name: String = "New Player"
 var base_speed: float = 30.0
@@ -20,7 +21,8 @@ var darkvision_range: float = 60.0
 var perception_mod: int = 0
 var input_id: String = ""
 var input_type: int = InputType.NONE
-
+# Table orientation in degrees (0 = default, 90 = right, 180 = top, 270 = left)
+var table_orientation: int = 0
 # Future-proof payload for custom fields (status effects, inventory, etc.)
 var extras: Dictionary = {}
 
@@ -46,6 +48,7 @@ func to_dict() -> Dictionary:
 		"passive_perception": get_passive_perception(),
 		"input_id": input_id,
 		"input_type": input_type,
+		"table_orientation": table_orientation,
 		"extras": extras.duplicate(true),
 	}
 
@@ -60,6 +63,7 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 	p.perception_mod = int(d.get("perception_mod", 0))
 	p.input_id = str(d.get("input_id", ""))
 	p.input_type = int(d.get("input_type", InputType.NONE))
+	p.table_orientation = int(d.get("table_orientation", 0))
 
 	# Keep explicit extras, then absorb unknown top-level keys so future schema
 	# additions survive load/save even before code knows about them.
@@ -77,6 +81,7 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 			"passive_perception",
 			"input_id",
 			"input_type",
+			"table_orientation",
 			"extras",
 		]:
 			continue

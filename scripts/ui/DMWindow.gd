@@ -55,6 +55,9 @@ var _status_label: Label = null
 var _grid_option: OptionButton = null
 var _ui_root: VBoxContainer = null
 
+# Player profile form fields
+var _profile_orientation_spin: SpinBox = null
+
 var _toolbar: Control = null ## HBoxContainer — shown/hidden by View menu
 var _select_btn: Button = null
 var _pan_btn: Button = null
@@ -1181,6 +1184,19 @@ func _build_profiles_dialog() -> void:
 	_profile_input_id_edit.placeholder_text = "Gamepad device id or WS peer id"
 	form.add_child(_profile_input_id_edit)
 
+	# Table orientation field
+	var orient_lbl := Label.new(); orient_lbl.text = "Table Orientation:"; form.add_child(orient_lbl)
+	_profile_orientation_spin = SpinBox.new()
+	_profile_orientation_spin.min_value = 0
+	_profile_orientation_spin.max_value = 359
+	_profile_orientation_spin.step = 1
+	_profile_orientation_spin.value = 0
+	_profile_orientation_spin.suffix = "°"
+	form.add_child(_profile_orientation_spin)
+	_profile_orientation_spin.value = 0
+	_profile_orientation_spin.suffix = "°"
+	form.add_child(_profile_orientation_spin)
+
 	var bind_sep := HSeparator.new()
 	right_panel.add_child(bind_sep)
 
@@ -1364,6 +1380,8 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_input_type_option.select(_profile_input_type_option.get_item_index(p.input_type))
 	_profile_input_id_edit.text = p.input_id
 	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
+	if _profile_orientation_spin:
+		_profile_orientation_spin.value = p.table_orientation
 	_on_profile_vision_selected(_profile_vision_option.selected)
 	_update_profile_action_state()
 
@@ -1427,6 +1445,8 @@ func _on_profile_save_pressed() -> void:
 	var p := profile as PlayerProfile
 	if not _apply_form_to_profile(p):
 		return
+	# Assign updated profile back to array
+	GameState.profiles[_profile_selected_index] = p
 	GameState.save_profiles()
 	GameState.load_profiles()
 	_apply_profile_bindings()
@@ -1459,6 +1479,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	p.perception_mod = int(_profile_perception_spin.value)
 	p.input_type = _profile_input_type_option.get_item_id(_profile_input_type_option.selected)
 	p.input_id = _profile_input_id_edit.text.strip_edges()
+	if _profile_orientation_spin:
+		p.table_orientation = int(_profile_orientation_spin.value)
 
 	var extras_raw := _profile_extras_edit.text.strip_edges()
 	if extras_raw.is_empty():

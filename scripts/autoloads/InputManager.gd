@@ -57,10 +57,19 @@ func get_vector(player_id) -> Vector2:
 	if _game_state().is_locked(player_id):
 		return Vector2.ZERO
 	var source_map: Dictionary = _source_vectors.get(player_id, {}) as Dictionary
+	var vec := Vector2.ZERO
 	for source_id in _SOURCE_ORDER:
 		if source_map.has(source_id):
-			return source_map[source_id] as Vector2
-	return Vector2.ZERO
+			vec = source_map[source_id] as Vector2
+			break
+	if vec == Vector2.ZERO:
+		return vec
+	# Rotate input vector based on table_orientation
+	var profile: Variant = _game_state().get_profile_by_id(player_id)
+	if profile and profile is PlayerProfile:
+		var angle_rad := deg_to_rad((profile as PlayerProfile).table_orientation)
+		vec = vec.rotated(-angle_rad)
+	return vec
 
 ## Called by NetworkManager when a WebSocket packet arrives.
 func set_vector(player_id, vec: Vector2, source: int = InputSource.NETWORK) -> void:
