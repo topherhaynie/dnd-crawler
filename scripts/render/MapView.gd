@@ -80,6 +80,8 @@ var _wall_rect_dragging: bool = false
 var _wall_rect_start: Vector2 = Vector2.ZERO
 var _wall_rect_preview: Line2D = null
 var _wall_rect_preview_fill: Polygon2D = null
+var _fog_rect_preview: Line2D = null
+var _fog_rect_preview_fill: Polygon2D = null
 var _selected_wall_index: int = -1
 var _wall_dragging_move: bool = false
 var _wall_dragging_handle: int = -1
@@ -94,6 +96,7 @@ var _pan_start_cam: Vector2 = Vector2.ZERO
 
 signal viewport_indicator_moved(new_center: Vector2)
 signal fog_changed(map: MapData)
+@warning_ignore("unused_signal")
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
 
@@ -131,6 +134,8 @@ func load_map(map: MapData) -> void:
 	var applied_cached_snapshot := _apply_cached_fog_snapshot_if_compatible()
 	if not applied_cached_snapshot and fog_overlay and fog_overlay.has_method("reset_history"):
 		fog_overlay.reset_history()
+	if not applied_cached_snapshot and fog_overlay and fog_overlay.has_method("set_history_seed_from_hidden"):
+		fog_overlay.set_history_seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
 	if fog_overlay and fog_overlay.has_method("set_dm_reveals"):
 		fog_overlay.set_dm_reveals(_build_dm_reveal_sources(map))
 
@@ -176,6 +181,9 @@ func set_dm_fog_visible(enabled: bool) -> void:
 func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
 	fog_tool = tool_id
 	fog_brush_radius_px = maxf(8.0, brush_radius_px)
+	if fog_tool != FogTool.REVEAL_RECT and fog_tool != FogTool.HIDE_RECT:
+		_fog_rect_dragging = false
+		_clear_fog_rect_preview()
 
 
 func apply_fog_state(cell_px: int, hidden_cells: Array) -> void:
@@ -473,13 +481,16 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 			if rect_mb.pressed:
 				_fog_rect_dragging = true
 				_fog_rect_start = get_global_mouse_position()
+				_update_fog_rect_preview(_fog_rect_start, _fog_rect_start, fog_tool == FogTool.REVEAL_RECT)
 			else:
 				if _fog_rect_dragging:
 					_fog_rect_dragging = false
+					_clear_fog_rect_preview()
 					var reveal := fog_tool == FogTool.REVEAL_RECT
 					_apply_fog_rect(_fog_rect_start, get_global_mouse_position(), reveal)
 			return true
 		if _fog_rect_dragging and event is InputEventMouseMotion:
+			_update_fog_rect_preview(_fog_rect_start, get_global_mouse_position(), fog_tool == FogTool.REVEAL_RECT)
 			return true
 		return false
 
@@ -497,26 +508,11 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	if _map == null:
 		return
-	var revealed: Array = []
-	var hidden_cells_changed: Array = []
-	_paint_fog_brush(world_pos, reveal, revealed, hidden_cells_changed)
-
-	# Fallback pass for coordinate edge-cases (HiDPI / camera transforms).
-	# If primary pass changed nothing, retry using viewport->world conversion.
-	if revealed.is_empty() and hidden_cells_changed.is_empty() and camera != null:
-		var vp_size := get_viewport().get_visible_rect().size
-		var half_vp := vp_size * 0.5
-		var alt_world := camera.position + (get_viewport().get_mouse_position() - half_vp) / maxf(camera.zoom.x, 0.001)
-		if alt_world.distance_to(world_pos) > 0.5:
-			_paint_fog_brush(alt_world, reveal, revealed, hidden_cells_changed)
-
-	if revealed.is_empty() and hidden_cells_changed.is_empty():
+	if fog_overlay and fog_overlay.has_method("apply_history_brush"):
+		var changed := bool(fog_overlay.call("apply_history_brush", world_pos, fog_brush_radius_px, reveal))
+		if changed:
+			fog_changed.emit(_map)
 		return
-	_sync_fog_to_map(false)
-	fog_delta.emit(_map.fog_cell_px, revealed, hidden_cells_changed)
-	_apply_fog_overlay_delta(revealed, hidden_cells_changed)
-	# Correctness-first: rebuild overlay from authoritative hidden-cell truth.
-	_refresh_fog_overlay()
 
 
 func _paint_fog_brush(world_pos: Vector2, reveal: bool, revealed: Array, hidden_cells_changed: Array) -> void:
@@ -544,31 +540,11 @@ func _paint_fog_brush(world_pos: Vector2, reveal: bool, revealed: Array, hidden_
 func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 	if _map == null:
 		return
-	var cell_px: int = maxi(1, _map.fog_cell_px)
-	var min_x := minf(a.x, b.x)
-	var min_y := minf(a.y, b.y)
-	var max_x := maxf(a.x, b.x)
-	var max_y := maxf(a.y, b.y)
-	var revealed: Array = []
-	var hidden_cells_changed: Array = []
-	for y in range(floori(min_y / cell_px), floori(max_y / cell_px) + 1):
-		for x in range(floori(min_x / cell_px), floori(max_x / cell_px) + 1):
-			var cell := Vector2i(x, y)
-			if reveal:
-				if _fog_hidden_cells.has(cell):
-					_fog_hidden_cells.erase(cell)
-					revealed.append(cell)
-			else:
-				if not _fog_hidden_cells.has(cell):
-					_fog_hidden_cells[cell] = true
-					hidden_cells_changed.append(cell)
-	if revealed.is_empty() and hidden_cells_changed.is_empty():
+	if fog_overlay and fog_overlay.has_method("apply_history_rect"):
+		var changed := bool(fog_overlay.call("apply_history_rect", a, b, reveal))
+		if changed:
+			fog_changed.emit(_map)
 		return
-	_sync_fog_to_map(false)
-	fog_delta.emit(_map.fog_cell_px, revealed, hidden_cells_changed)
-	_apply_fog_overlay_delta(revealed, hidden_cells_changed)
-	# Correctness-first: rebuild overlay from authoritative hidden-cell truth.
-	_refresh_fog_overlay()
 
 
 func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
@@ -728,7 +704,12 @@ func _apply_layer_visibility() -> void:
 func _apply_fog_overlay_delta(revealed_cells: Array, hidden_cells: Array) -> void:
 	if fog_overlay == null:
 		return
-	if not revealed_cells.is_empty() or not hidden_cells.is_empty():
+	if revealed_cells.is_empty() and hidden_cells.is_empty():
+		return
+	if fog_overlay.has_method("apply_history_seed_delta"):
+		var cell_px := maxi(1, _map.fog_cell_px) if _map else 1
+		fog_overlay.apply_history_seed_delta(revealed_cells, hidden_cells, cell_px)
+	else:
 		_refresh_fog_overlay()
 
 
@@ -834,6 +815,51 @@ func _clear_wall_rect_preview() -> void:
 	if _wall_rect_preview and is_instance_valid(_wall_rect_preview):
 		_wall_rect_preview.queue_free()
 	_wall_rect_preview = null
+
+
+func _update_fog_rect_preview(a: Vector2, b: Vector2, reveal: bool) -> void:
+	if wall_visual_layer == null or not is_dm_view:
+		return
+	if _fog_rect_preview == null or not is_instance_valid(_fog_rect_preview):
+		_fog_rect_preview_fill = Polygon2D.new()
+		wall_visual_layer.add_child(_fog_rect_preview_fill)
+
+		_fog_rect_preview = Line2D.new()
+		_fog_rect_preview.width = 2.0
+		_fog_rect_preview.closed = true
+		wall_visual_layer.add_child(_fog_rect_preview)
+
+	var edge_color := Color(0.2, 1.0, 0.35, 0.95) if reveal else Color(1.0, 0.35, 0.3, 0.95)
+	var fill_color := Color(0.2, 1.0, 0.35, 0.20) if reveal else Color(1.0, 0.35, 0.3, 0.20)
+	_fog_rect_preview.default_color = edge_color
+	_fog_rect_preview_fill.color = fill_color
+
+	var min_x := minf(a.x, b.x)
+	var min_y := minf(a.y, b.y)
+	var max_x := maxf(a.x, b.x)
+	var max_y := maxf(a.y, b.y)
+	_fog_rect_preview.points = PackedVector2Array([
+		Vector2(min_x, min_y),
+		Vector2(max_x, min_y),
+		Vector2(max_x, max_y),
+		Vector2(min_x, max_y),
+	])
+	if _fog_rect_preview_fill and is_instance_valid(_fog_rect_preview_fill):
+		_fog_rect_preview_fill.polygon = PackedVector2Array([
+			Vector2(min_x, min_y),
+			Vector2(max_x, min_y),
+			Vector2(max_x, max_y),
+			Vector2(min_x, max_y),
+		])
+
+
+func _clear_fog_rect_preview() -> void:
+	if _fog_rect_preview_fill and is_instance_valid(_fog_rect_preview_fill):
+		_fog_rect_preview_fill.queue_free()
+	_fog_rect_preview_fill = null
+	if _fog_rect_preview and is_instance_valid(_fog_rect_preview):
+		_fog_rect_preview.queue_free()
+	_fog_rect_preview = null
 
 
 func _set_selected_wall(index: int) -> void:

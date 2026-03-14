@@ -21,6 +21,7 @@ var _history_image: Image = null
 var _history_texture: ImageTexture = null
 var _history_dirty: bool = false
 var _prev_los_image: Image = null
+var _history_seed_cell_px: int = 1
 
 var _mask_host: SubViewportContainer = null
 var _live_lights_viewport: SubViewport = null
@@ -126,14 +127,102 @@ func reset_history() -> void:
 	_queue_los_full_bake()
 
 
-func set_history_seed_from_hidden(_cell_px: int, _hidden_cells: Dictionary) -> void:
-	# Snapshot/image authority path only.
-	return
+func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> void:
+	_ensure_history_storage(_map_size)
+	if _history_image == null or _history_image.is_empty():
+		return
+
+	# Start from fully revealed, then paint hidden cells from map truth.
+	_history_image.fill(Color(1.0, 0.0, 0.0, 1.0))
+	var safe_cell_px := maxi(1, cell_px)
+	_history_seed_cell_px = safe_cell_px
+	for key in hidden_cells.keys():
+		if not key is Vector2i:
+			continue
+		_paint_cell_block(key as Vector2i, safe_cell_px, 0.0)
+
+	_prev_los_image = null
+	_history_dirty = true
+	_queue_los_full_bake()
 
 
-func apply_history_seed_delta(_revealed_cells: Array, _hidden_cells: Array) -> void:
-	# Snapshot/image authority path only.
-	return
+func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int = -1) -> void:
+	_ensure_history_storage(_map_size)
+	if _history_image == null or _history_image.is_empty():
+		return
+	if revealed_cells.is_empty() and hidden_cells.is_empty():
+		return
+
+	# Convert cell-space brush edits into direct history image edits.
+	var safe_cell_px := maxi(1, cell_px if cell_px > 0 else _history_seed_cell_px)
+	var changed := false
+	for raw in revealed_cells:
+		var cell := _to_cell(raw)
+		if cell.x < 0 or cell.y < 0:
+			continue
+		_paint_cell_block(cell, safe_cell_px, 1.0)
+		changed = true
+	for raw in hidden_cells:
+		var cell := _to_cell(raw)
+		if cell.x < 0 or cell.y < 0:
+			continue
+		_paint_cell_block(cell, safe_cell_px, 0.0)
+		changed = true
+
+	if not changed:
+		return
+	_history_dirty = true
+
+
+func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> bool:
+	_ensure_history_storage(_map_size)
+	if _history_image == null or _history_image.is_empty():
+		return false
+	var safe_radius := maxf(1.0, radius_px)
+	var min_x := maxi(0, int(floor(world_pos.x - safe_radius)))
+	var min_y := maxi(0, int(floor(world_pos.y - safe_radius)))
+	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius)))
+	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
+	if min_x > max_x or min_y > max_y:
+		return false
+	var target := 1.0 if reveal else 0.0
+	var changed := false
+	for py in range(min_y, max_y + 1):
+		for px in range(min_x, max_x + 1):
+			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
+				continue
+			var current := _history_image.get_pixel(px, py).r
+			if absf(current - target) < 0.001:
+				continue
+			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
+			changed = true
+	if changed:
+		_history_dirty = true
+	return changed
+
+
+func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
+	_ensure_history_storage(_map_size)
+	if _history_image == null or _history_image.is_empty():
+		return false
+	var min_x := maxi(0, int(floor(minf(a.x, b.x))))
+	var min_y := maxi(0, int(floor(minf(a.y, b.y))))
+	var max_x := mini(_history_image.get_width() - 1, int(ceil(maxf(a.x, b.x))))
+	var max_y := mini(_history_image.get_height() - 1, int(ceil(maxf(a.y, b.y))))
+	if min_x > max_x or min_y > max_y:
+		return false
+	var target := 1.0 if reveal else 0.0
+	var changed := false
+	for py in range(min_y, max_y + 1):
+		for px in range(min_x, max_x + 1):
+			var current := _history_image.get_pixel(px, py).r
+			if absf(current - target) < 0.001:
+				continue
+			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
+			changed = true
+	if changed:
+		_history_dirty = true
+	return changed
 
 
 func collect_revealed_cells_from_candidates(_candidates: Array, _cell_px: int, _max_cells: int) -> Array:
@@ -549,6 +638,40 @@ func _get_or_create_fallback_black_texture() -> Texture2D:
 	img.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_fallback_black_texture = ImageTexture.create_from_image(img)
 	return _fallback_black_texture
+
+
+func _paint_cell_block(cell: Vector2i, cell_px: int, value: float) -> void:
+	if _history_image == null:
+		return
+	var x0 := cell.x * cell_px
+	var y0 := cell.y * cell_px
+	var x1 := x0 + cell_px
+	var y1 := y0 + cell_px
+	var w := _history_image.get_width()
+	var h := _history_image.get_height()
+	if x1 <= 0 or y1 <= 0 or x0 >= w or y0 >= h:
+		return
+	x0 = maxi(0, x0)
+	y0 = maxi(0, y0)
+	x1 = mini(w, x1)
+	y1 = mini(h, y1)
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			_history_image.set_pixel(px, py, Color(value, 0.0, 0.0, 1.0))
+
+
+func _to_cell(v: Variant) -> Vector2i:
+	if v is Vector2i:
+		return v as Vector2i
+	if v is Vector2:
+		var p := v as Vector2
+		return Vector2i(int(round(p.x)), int(round(p.y)))
+	if v is Dictionary:
+		return Vector2i(int(v.get("x", -1)), int(v.get("y", -1)))
+	if v is Array and (v as Array).size() >= 2:
+		var arr := v as Array
+		return Vector2i(int(arr[0]), int(arr[1]))
+	return Vector2i(-1, -1)
 
 
 func _verify_live_viewport_no_camera() -> void:

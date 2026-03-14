@@ -1700,6 +1700,7 @@ func _update_dm_override_input() -> void:
 
 func _on_map_fog_changed(_map: MapData) -> void:
 	if not _ENABLE_CONTINUOUS_FOG_SYNC:
+		_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 		return
 	_fog_dirty = true
 	if _fog_countdown <= 0.0:
@@ -1710,6 +1711,9 @@ func _on_map_fog_changed(_map: MapData) -> void:
 
 func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:
 	if not _ENABLE_CONTINUOUS_FOG_SYNC:
+		if revealed_cells.is_empty() and hidden_cells.is_empty():
+			return
+		_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 		return
 	if revealed_cells.is_empty() and hidden_cells.is_empty():
 		return
@@ -1720,6 +1724,14 @@ func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 		return
 
 	_broadcast_fog_delta_chunked(cell_px, revealed_cells, hidden_cells)
+
+
+func _queue_fog_snapshot_sync(delay: float) -> void:
+	_fog_dirty = true
+	if _fog_countdown <= 0.0:
+		_fog_countdown = delay
+	else:
+		_fog_countdown = minf(_fog_countdown, delay)
 
 
 func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:
