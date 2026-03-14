@@ -20,12 +20,20 @@ var _is_dm: bool = true
 var _fog_enabled: bool = false
 
 var _history_image: Image = null
-var _history_texture: ImageTexture = null
+var _history_texture: Texture2D = null
 var _history_dirty: bool = false
 var _prev_los_data: PackedByteArray = PackedByteArray()
 var _prev_los_width: int = 0
 var _prev_los_height: int = 0
 var _history_seed_cell_px: int = 1
+var _history_viewports: Array = []
+var _history_merge_rects: Array = []
+var _history_active_index: int = 0
+var _history_swap_pending: bool = false
+var _history_pending_target_index: int = -1
+var _history_seed_texture: ImageTexture = null
+var _history_gpu_ready: bool = false
+var _history_seed_pending: bool = false
 
 var _mask_host: SubViewportContainer = null
 var _live_lights_viewport: SubViewport = null
@@ -64,6 +72,14 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if not _fog_enabled:
 		return
+	if _history_swap_pending and _history_pending_target_index >= 0:
+		_history_active_index = _history_pending_target_index
+		_history_pending_target_index = -1
+		_history_swap_pending = false
+		_apply_shader_uniforms()
+	if _history_seed_pending:
+		_history_seed_pending = false
+		_apply_shader_uniforms()
 	if _history_dirty:
 		_upload_history_texture()
 	if _should_bake_los_now():
@@ -93,6 +109,22 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 
 
 func get_fog_state() -> PackedByteArray:
+	if _history_gpu_ready:
+		if _history_swap_pending or _history_seed_pending:
+			await get_tree().process_frame
+			if _history_swap_pending and _history_pending_target_index >= 0:
+				_history_active_index = _history_pending_target_index
+				_history_pending_target_index = -1
+				_history_swap_pending = false
+			if _history_seed_pending:
+				_history_seed_pending = false
+			_apply_shader_uniforms()
+		var live_tex := _get_active_history_texture()
+		if live_tex:
+			var image := live_tex.get_image()
+			if image and not image.is_empty():
+				image.convert(Image.FORMAT_L8)
+				return image.save_png_to_buffer()
 	if _history_image == null or _history_image.is_empty():
 		return PackedByteArray()
 	return _history_image.save_png_to_buffer()
@@ -117,7 +149,10 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 	if image.get_width() != _history_image.get_width() or image.get_height() != _history_image.get_height():
 		image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
 	_history_image = image
-	_history_dirty = true
+	if _history_gpu_ready:
+		_seed_gpu_history_from_image(image)
+	else:
+		_history_dirty = true
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
@@ -136,7 +171,10 @@ func reset_history() -> void:
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
-	_history_dirty = true
+	if _history_gpu_ready:
+		_seed_gpu_history_from_image(_history_image)
+	else:
+		_history_dirty = true
 	_queue_los_full_bake()
 
 
@@ -157,7 +195,10 @@ func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> voi
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
-	_history_dirty = true
+	if _history_gpu_ready:
+		_seed_gpu_history_from_image(_history_image)
+	else:
+		_history_dirty = true
 	_queue_los_full_bake()
 
 
@@ -423,8 +464,112 @@ func _build_nodes() -> void:
 	_fog_rect.visible = false
 	add_child(_fog_rect)
 
+	_build_history_gpu_pipeline()
+
 	_resize_buffers_and_nodes()
 	reset_history()
+
+
+func _build_history_gpu_pipeline() -> void:
+	_history_viewports.clear()
+	_history_merge_rects.clear()
+	_history_active_index = 0
+	_history_swap_pending = false
+	_history_pending_target_index = -1
+	_history_gpu_ready = false
+
+	if _mask_host == null:
+		return
+
+	var shader := load("res://assets/effects/fog_history_merge.gdshader") as Shader
+	if shader == null:
+		push_warning("FogSystem: fog_history_merge shader missing; falling back to CPU history")
+		return
+
+	for i in range(2):
+		var vp := SubViewport.new()
+		vp.name = "HistoryViewport_%d" % i
+		vp.transparent_bg = false
+		vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		vp.disable_3d = true
+		vp.handle_input_locally = false
+		_mask_host.add_child(vp)
+
+		var base := ColorRect.new()
+		base.name = "HistoryBase_%d" % i
+		base.color = Color(0.0, 0.0, 0.0, 1.0)
+		base.position = Vector2.ZERO
+		vp.add_child(base)
+
+		var merge := ColorRect.new()
+		merge.name = "HistoryMerge_%d" % i
+		merge.color = Color(1.0, 1.0, 1.0, 1.0)
+		merge.position = Vector2.ZERO
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		merge.material = mat
+		vp.add_child(merge)
+
+		_history_viewports.append(vp)
+		_history_merge_rects.append(merge)
+
+	_history_gpu_ready = _history_viewports.size() == 2 and _history_merge_rects.size() == 2
+
+
+func _get_active_history_texture() -> Texture2D:
+	if not _history_gpu_ready:
+		return _history_texture
+	if _history_active_index < 0 or _history_active_index >= _history_viewports.size():
+		return _history_texture
+	var vp := _history_viewports[_history_active_index] as SubViewport
+	return vp.get_texture() if vp else _history_texture
+
+
+func _seed_gpu_history_from_image(image: Image) -> void:
+	if not _history_gpu_ready:
+		_history_dirty = true
+		return
+	if image == null or image.is_empty():
+		return
+
+	_history_seed_texture = _create_or_update_image_texture(_history_seed_texture, image)
+
+	for i in range(_history_viewports.size()):
+		var merge := _history_merge_rects[i] as ColorRect
+		var vp := _history_viewports[i] as SubViewport
+		if merge == null or vp == null:
+			continue
+		var mat := merge.material as ShaderMaterial
+		if mat == null:
+			continue
+		mat.set_shader_parameter("seed_mode", true)
+		mat.set_shader_parameter("seed_tex", _history_seed_texture)
+		mat.set_shader_parameter("prev_history_tex", _history_seed_texture)
+		mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
+		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+	_history_active_index = 0
+	_history_swap_pending = false
+	_history_pending_target_index = -1
+	_history_seed_pending = true
+	_history_texture = _get_active_history_texture()
+	_apply_shader_uniforms()
+
+
+func _create_or_update_image_texture(existing: ImageTexture, image: Image) -> ImageTexture:
+	if image == null or image.is_empty():
+		return existing
+	if existing == null:
+		return ImageTexture.create_from_image(image)
+
+	var tex_size := existing.get_size()
+	if int(tex_size.x) != image.get_width() or int(tex_size.y) != image.get_height():
+		return ImageTexture.create_from_image(image)
+
+	existing.update(image)
+	return existing
 
 
 func _resize_buffers_and_nodes() -> void:
@@ -446,6 +591,15 @@ func _resize_buffers_and_nodes() -> void:
 	if _mask_host:
 		_mask_host.position = Vector2.ZERO
 		_mask_host.scale = Vector2.ONE
+	for vp_raw in _history_viewports:
+		var vp := vp_raw as SubViewport
+		if vp:
+			vp.size = target_size
+	for merge_raw in _history_merge_rects:
+		var merge := merge_raw as ColorRect
+		if merge:
+			merge.position = Vector2.ZERO
+			merge.size = _map_size
 	_queue_los_full_bake()
 
 
@@ -455,10 +609,10 @@ func _ensure_history_storage(size: Vector2) -> void:
 	if _history_image == null or _history_image.is_empty() or _history_image.get_width() != target_w or _history_image.get_height() != target_h:
 		_history_image = Image.create(target_w, target_h, false, Image.FORMAT_L8)
 		_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
-		if _history_texture == null:
+		if _history_texture == null or not (_history_texture is ImageTexture):
 			_history_texture = ImageTexture.create_from_image(_history_image)
 		else:
-			_history_texture.set_image(_history_image)
+			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
 		_history_dirty = false
 		if DEBUG_FOG_TELEMETRY:
 			print("FogSystem: history buffer resized (%dx%d)" % [target_w, target_h])
@@ -467,10 +621,15 @@ func _ensure_history_storage(size: Vector2) -> void:
 func _upload_history_texture() -> void:
 	if _history_image == null:
 		return
+	if _history_gpu_ready:
+		_seed_gpu_history_from_image(_history_image)
+		_history_dirty = false
+		return
 	if _history_texture == null:
 		_history_texture = ImageTexture.create_from_image(_history_image)
 	else:
-		_history_texture.update(_history_image)
+		if _history_texture is ImageTexture:
+			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
 	_history_dirty = false
 
 
@@ -479,7 +638,39 @@ func _bake_live_los_into_history() -> void:
 		return
 	if not _los_bake_pending:
 		return
-	if _history_image == null or _history_texture == null or _live_lights_viewport == null:
+	if _live_lights_viewport == null:
+		return
+
+	if _history_gpu_ready:
+		if _history_viewports.size() < 2 or _history_merge_rects.size() < 2:
+			return
+		var src_idx := clampi(_history_active_index, 0, 1)
+		var dst_idx := 1 - src_idx
+		var src_vp := _history_viewports[src_idx] as SubViewport
+		var dst_vp := _history_viewports[dst_idx] as SubViewport
+		var dst_rect := _history_merge_rects[dst_idx] as ColorRect
+		if src_vp == null or dst_vp == null or dst_rect == null:
+			return
+		var mat := dst_rect.material as ShaderMaterial
+		if mat == null:
+			return
+
+		mat.set_shader_parameter("seed_mode", false)
+		mat.set_shader_parameter("prev_history_tex", src_vp.get_texture())
+		mat.set_shader_parameter("live_lights_tex", _live_lights_viewport.get_texture())
+		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		dst_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+		_history_swap_pending = true
+		_history_pending_target_index = dst_idx
+		_los_bake_pending = false
+		_los_dirty_regions.clear()
+		_last_los_bake_msec = Time.get_ticks_msec()
+		if DEBUG_FOG_TELEMETRY:
+			_debug_los_bakes_frame += 1
+		return
+
+	if _history_image == null or _history_texture == null:
 		return
 	var live_tex := _live_lights_viewport.get_texture()
 	if live_tex == null:
@@ -541,7 +732,8 @@ func _bake_live_los_into_history() -> void:
 
 	if changed:
 		_history_image.set_data(width, height, false, Image.FORMAT_L8, history_data)
-		_history_texture.update(_history_image)
+		if _history_texture is ImageTexture:
+			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
 	_los_bake_pending = false
 	_los_dirty_regions.clear()
 	_last_los_bake_msec = Time.get_ticks_msec()
@@ -669,8 +861,9 @@ func _apply_shader_uniforms() -> void:
 		mat.shader = shader
 		_fog_rect.material = mat
 
-	if _history_texture:
-		mat.set_shader_parameter("history_tex", _history_texture)
+	var history_tex := _get_active_history_texture()
+	if history_tex:
+		mat.set_shader_parameter("history_tex", history_tex)
 	else:
 		mat.set_shader_parameter("history_tex", _get_or_create_fallback_black_texture())
 	if _live_lights_viewport:

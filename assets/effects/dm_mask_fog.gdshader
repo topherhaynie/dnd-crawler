@@ -17,7 +17,8 @@ void fragment() {
         float dm_alpha = clamp(1.0 - history_mask, 0.0, 1.0) * dm_history_alpha_scale;
         COLOR = vec4(fog_color.rgb, dm_alpha);
     } else {
-        float combined_mask = max(history_mask, live_mask);
+        float player_history_mask = clamp(history_mask * live_mask_gain, 0.0, 1.0);
+        float combined_mask = max(player_history_mask, live_mask);
         float alpha = clamp(1.0 - combined_mask, 0.0, 1.0) * player_alpha_scale;
         COLOR = vec4(fog_color.rgb, alpha);
     }
