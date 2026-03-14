@@ -13,14 +13,23 @@ extends Node
 # ---------------------------------------------------------------------------
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
+const DEBUG_FOG_SNAPSHOT: bool = true
+
+signal fog_snapshot_applied(payload: Dictionary)
 
 var _map_view: Node2D = null
+var _tokens_by_id: Dictionary = {}
+var _has_loaded_map: bool = false
+var _pending_fog_snapshot: Dictionary = {}
+var _incoming_fog_snapshot_chunks: Dictionary = {}
 
 
 func _ready() -> void:
 	_map_view = MapViewScene.instantiate()
 	_map_view.name = "MapView"
 	add_child(_map_view)
+	_map_view.allow_keyboard_pan = false
+	_map_view.set_dm_view(false)
 	print("PlayerWindow: ready — awaiting map from DM")
 
 
@@ -35,11 +44,21 @@ func on_state(data: Dictionary) -> void:
 			_handle_map_loaded(data.get("map", {}))
 		"map_updated":
 			_handle_map_updated(data.get("map", {}))
+		"fog_state_snapshot":
+			_handle_fog_state_snapshot(data)
+		"fog_state_snapshot_begin":
+			_handle_fog_state_snapshot_begin(data)
+		"fog_state_snapshot_chunk":
+			_handle_fog_state_snapshot_chunk(data)
+		"fog_state_snapshot_end":
+			_handle_fog_state_snapshot_end(data)
+		"fog_updated", "fog_delta":
+			# Snapshot-only player fog path.
+			pass
 		"camera_update":
 			_handle_camera_update(data)
 		"state", "delta":
-			# Phase 4: token positions, FoW updates, etc.
-			pass
+			_handle_player_state(data)
 		_:
 			pass
 
@@ -54,15 +73,34 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 		return
 	var map: MapData = MapData.from_dict(map_dict)
 	_map_view.load_map(map)
+	_has_loaded_map = true
+	_apply_cached_fog_stamp()
+	var map_snapshot: Variant = map_dict.get("fog_snapshot", {})
+	if map_snapshot is Dictionary and not (map_snapshot as Dictionary).is_empty():
+		_handle_fog_state_snapshot(map_snapshot as Dictionary)
+	_apply_pending_fog_packets()
+	_clear_tokens()
+	_apply_token_size_from_map(map)
 	print("PlayerWindow: map loaded — '%s'" % map.map_name)
 
 
 func _handle_map_updated(map_dict: Dictionary) -> void:
-	## Grid/scale change — update the overlay without touching the camera.
+	## Apply map updates (fog/walls/grid) while preserving player camera.
 	if map_dict.is_empty() or _map_view == null:
 		return
+	var cam_state: Dictionary = _map_view.get_camera_state()
 	var map: MapData = MapData.from_dict(map_dict)
-	_map_view.grid_overlay.apply_map_data(map)
+	_map_view.load_map(map)
+	_has_loaded_map = true
+	_apply_cached_fog_stamp()
+	var map_snapshot: Variant = map_dict.get("fog_snapshot", {})
+	if map_snapshot is Dictionary and not (map_snapshot as Dictionary).is_empty():
+		_handle_fog_state_snapshot(map_snapshot as Dictionary)
+	_apply_pending_fog_packets()
+	_map_view.set_camera_state(
+		Vector2(float(cam_state["position"]["x"]), float(cam_state["position"]["y"])),
+		float(cam_state["zoom"]))
+	_apply_token_size_from_map(map)
 	print("PlayerWindow: map updated (grid/scale) — '%s'" % map.map_name)
 
 
@@ -73,3 +111,190 @@ func _handle_camera_update(data: Dictionary) -> void:
 	var pos := Vector2(float(pos_d.get("x", 0.0)), float(pos_d.get("y", 0.0)))
 	var zoom := float(data.get("zoom", 1.0))
 	_map_view.set_camera_state(pos, zoom)
+
+
+func _handle_fog_state_snapshot(data: Dictionary) -> void:
+	if not _has_loaded_map:
+		_pending_fog_snapshot = data.duplicate(true)
+		return
+	if _map_view == null or _map_view.get_map() == null:
+		_pending_fog_snapshot = data.duplicate(true)
+		return
+	var fog_state_b64 := str(data.get("fog_state_png_b64", ""))
+	var fog_manager := get_node_or_null("/root/FogManager")
+	if fog_state_b64.is_empty():
+		push_warning("PlayerWindow: fog_state_snapshot missing fog_state_png_b64")
+		return
+
+	var fog_state_png := Marshalls.base64_to_raw(fog_state_b64)
+	if fog_state_png.is_empty():
+		push_warning("PlayerWindow: fog_state_snapshot PNG decode returned empty buffer")
+		return
+
+	var snapshot_hash := hash(fog_state_png)
+	if DEBUG_FOG_SNAPSHOT:
+		print("PlayerWindow: fog snapshot recv (stamp_bytes=%d stamp_hash=%d)" % [fog_state_png.size(), snapshot_hash])
+
+	if fog_manager and fog_manager.has_method("set_fog_state"):
+		fog_manager.set_fog_state(fog_state_png)
+	if _map_view and _map_view.has_method("apply_fog_snapshot"):
+		_map_view.apply_fog_snapshot(fog_state_png)
+	elif _map_view and _map_view.has_method("set_fog_state"):
+		_map_view.set_fog_state(fog_state_png)
+
+	print("PlayerWindow: fog_state_snapshot applied (stamp_bytes=%d)" % fog_state_png.size())
+	fog_snapshot_applied.emit({
+		"snapshot_bytes": fog_state_png.size(),
+		"snapshot_hash": snapshot_hash,
+	})
+
+
+func _handle_fog_state_snapshot_begin(data: Dictionary) -> void:
+	var chunks := maxi(1, int(data.get("chunks", 1)))
+	var parts: Array = []
+	parts.resize(chunks)
+	for i in range(chunks):
+		parts[i] = ""
+	_incoming_fog_snapshot_chunks = {
+		"snapshot_hash": int(data.get("snapshot_hash", -1)),
+		"snapshot_bytes": int(data.get("snapshot_bytes", -1)),
+		"chunks": chunks,
+		"parts": parts,
+	}
+
+
+func _handle_fog_state_snapshot_chunk(data: Dictionary) -> void:
+	if _incoming_fog_snapshot_chunks.is_empty():
+		_handle_fog_state_snapshot_begin(data)
+	var expected_hash := int(_incoming_fog_snapshot_chunks.get("snapshot_hash", -1))
+	var incoming_hash := int(data.get("snapshot_hash", -1))
+	if expected_hash != -1 and incoming_hash != -1 and incoming_hash != expected_hash:
+		return
+	var parts: Array = _incoming_fog_snapshot_chunks.get("parts", []) as Array
+	var index := int(data.get("index", -1))
+	if index < 0 or index >= parts.size():
+		return
+	parts[index] = str(data.get("fog_state_png_b64_chunk", ""))
+	_incoming_fog_snapshot_chunks["parts"] = parts
+
+
+func _handle_fog_state_snapshot_end(data: Dictionary) -> void:
+	if _incoming_fog_snapshot_chunks.is_empty():
+		return
+	var expected_hash := int(_incoming_fog_snapshot_chunks.get("snapshot_hash", -1))
+	var incoming_hash := int(data.get("snapshot_hash", -1))
+	if expected_hash != -1 and incoming_hash != -1 and incoming_hash != expected_hash:
+		_incoming_fog_snapshot_chunks.clear()
+		return
+
+	var parts: Array = _incoming_fog_snapshot_chunks.get("parts", []) as Array
+	var joined_b64 := ""
+	for part in parts:
+		var text := str(part)
+		if text.is_empty():
+			push_warning("PlayerWindow: fog_state_snapshot chunk missing before end")
+			_incoming_fog_snapshot_chunks.clear()
+			return
+		joined_b64 += text
+
+	var snapshot := {
+		"msg": "fog_state_snapshot",
+		"snapshot_bytes": int(data.get("snapshot_bytes", _incoming_fog_snapshot_chunks.get("snapshot_bytes", -1))),
+		"snapshot_hash": int(data.get("snapshot_hash", _incoming_fog_snapshot_chunks.get("snapshot_hash", -1))),
+		"fog_state_png_b64": joined_b64,
+	}
+	_incoming_fog_snapshot_chunks.clear()
+	_handle_fog_state_snapshot(snapshot)
+
+
+func _apply_cached_fog_stamp() -> void:
+	if _map_view == null:
+		return
+	var fog_manager := get_node_or_null("/root/FogManager")
+	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
+		return
+	var cached := fog_manager.get_fog_state() as PackedByteArray
+	if cached.is_empty():
+		return
+	if _map_view.has_method("apply_fog_snapshot"):
+		_map_view.apply_fog_snapshot(cached)
+	elif _map_view.has_method("set_fog_state"):
+		_map_view.set_fog_state(cached)
+
+
+func _handle_player_state(data: Dictionary) -> void:
+	if _map_view == null:
+		return
+	var players_raw: Variant = data.get("players", [])
+	if not players_raw is Array:
+		return
+	var active_ids: Dictionary = {}
+	for entry in players_raw:
+		if not entry is Dictionary:
+			continue
+		var item := entry as Dictionary
+		var player_id := str(item.get("id", ""))
+		if player_id.is_empty():
+			continue
+		active_ids[player_id] = true
+		var token := _ensure_token(player_id)
+		if token and token.has_method("apply_from_state"):
+			token.apply_from_state(item)
+
+	for existing_id in _tokens_by_id.keys():
+		if active_ids.has(existing_id):
+			continue
+		var stale = _tokens_by_id[existing_id]
+		if is_instance_valid(stale):
+			stale.queue_free()
+		_tokens_by_id.erase(existing_id)
+
+
+func _ensure_token(player_id: String) -> Node2D:
+	if _tokens_by_id.has(player_id):
+		var existing = _tokens_by_id[player_id]
+		if is_instance_valid(existing):
+			return existing
+		_tokens_by_id.erase(player_id)
+	var token: Node2D = null
+	if token == null:
+		var scene: PackedScene = load("res://scenes/PlayerSprite.tscn") as PackedScene
+		token = scene.instantiate() as Node2D if scene else null
+	if token == null:
+		return null
+	token.name = "PlayerToken_%s" % player_id.left(8)
+	if token.has_method("enable_remote_smoothing"):
+		token.enable_remote_smoothing(true)
+	var token_layer: Node2D = _map_view.get_token_layer()
+	token_layer.add_child(token)
+	_tokens_by_id[player_id] = token
+	return token
+
+
+func _clear_tokens() -> void:
+	for id in _tokens_by_id.keys():
+		var token = _tokens_by_id[id]
+		if is_instance_valid(token):
+			token.queue_free()
+	_tokens_by_id.clear()
+
+
+func _apply_token_size_from_map(map: MapData) -> void:
+	var token_diameter_px := map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
+	for id in _tokens_by_id.keys():
+		var token = _tokens_by_id[id]
+		if not is_instance_valid(token):
+			continue
+		if token.has_method("set_token_diameter_px"):
+			token.set_token_diameter_px(token_diameter_px)
+
+
+func _apply_pending_fog_packets() -> void:
+	if _map_view == null:
+		return
+	if _map_view.get_map() == null:
+		return
+	if not _pending_fog_snapshot.is_empty():
+		var snapshot_packet := _pending_fog_snapshot
+		_pending_fog_snapshot = {}
+		_handle_fog_state_snapshot(snapshot_packet)

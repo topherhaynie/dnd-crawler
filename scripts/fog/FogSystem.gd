@@ -1,0 +1,591 @@
+extends Node2D
+
+const VISION_LAYER_MASK: int = 2
+const PLAYER_ALPHA_SCALE: float = 0.90
+const DM_HISTORY_ALPHA_SCALE: float = 0.80
+const LIVE_LIGHT_ENERGY_GAIN: float = 8.0
+const LIVE_LIGHT_MIN_ENERGY: float = 10.0
+const LIVE_MASK_GAIN: float = 6.0
+const LOS_BAKE_GAIN: float = 4.0
+const DEBUG_FOG_TELEMETRY: bool = true
+const LOS_BAKE_INTERVAL_MSEC: int = 8
+const LIGHT_MOVE_EPSILON_PX: float = 0.5
+const MIN_LIGHT_RADIUS_PX: float = 12.0
+const MAX_LIGHT_RADIUS_PX: float = 320.0
+
+var _map_size: Vector2 = Vector2(1920, 1080)
+var _is_dm: bool = true
+var _fog_enabled: bool = false
+
+var _history_image: Image = null
+var _history_texture: ImageTexture = null
+var _history_dirty: bool = false
+var _prev_los_image: Image = null
+
+var _mask_host: SubViewportContainer = null
+var _live_lights_viewport: SubViewport = null
+var _live_base_rect: ColorRect = null
+var _live_light_rect: ColorRect = null
+var _live_occluder_layer: Node2D = null
+
+var _fog_rect: ColorRect = null
+var _radial_texture: Texture2D = null
+
+var _live_light_by_token_id: Dictionary = {}
+var _live_light_state_by_token_id: Dictionary = {}
+var _fallback_black_texture: ImageTexture = null
+var _debug_los_bakes_frame: int = 0
+var _debug_last_metrics_msec: int = 0
+var _los_bake_pending: bool = true
+var _last_los_bake_msec: int = 0
+var _los_dirty_rect: Rect2i = Rect2i()
+
+
+func _ready() -> void:
+	_build_nodes()
+	if _live_lights_viewport:
+		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_apply_shader_uniforms()
+	_verify_live_viewport_no_camera()
+	if DEBUG_FOG_TELEMETRY:
+		print("FogSystem: ready (is_dm=%s map_size=%s viewport=%s)" % [
+			str(_is_dm),
+			str(_map_size),
+			str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
+		])
+	set_process(true)
+
+
+func _process(_delta: float) -> void:
+	if _history_dirty:
+		_upload_history_texture()
+	if _should_bake_los_now():
+		_bake_live_los_into_history()
+	if DEBUG_FOG_TELEMETRY:
+		_log_debug_metrics()
+
+
+func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
+	_map_size = Vector2(maxf(1.0, map_size.x), maxf(1.0, map_size.y))
+	_is_dm = is_dm
+	_fog_enabled = enabled
+	if _mask_host == null:
+		_build_nodes()
+	_resize_buffers_and_nodes()
+	_apply_shader_uniforms()
+	_queue_los_full_bake()
+	if DEBUG_FOG_TELEMETRY:
+		print("FogSystem: configure (is_dm=%s fog_enabled=%s map_size=%s viewport=%s)" % [
+			str(_is_dm),
+			str(_fog_enabled),
+			str(_map_size),
+			str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
+		])
+
+
+func get_fog_state() -> PackedByteArray:
+	if _history_image == null or _history_image.is_empty():
+		return PackedByteArray()
+	return _history_image.save_png_to_buffer()
+
+
+func set_fog_state(data: PackedByteArray) -> bool:
+	return apply_fog_snapshot(data)
+
+
+func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
+	if buffer.is_empty():
+		return false
+	var image := Image.new()
+	var err := image.load_png_from_buffer(buffer)
+	if err != OK or image.is_empty():
+		push_warning("FogSystem: apply_fog_snapshot failed to decode PNG (err=%d bytes=%d)" % [err, buffer.size()])
+		return false
+	image.convert(Image.FORMAT_L8)
+	_ensure_history_storage(_map_size)
+	if _history_image == null:
+		return false
+	if image.get_width() != _history_image.get_width() or image.get_height() != _history_image.get_height():
+		image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
+	_history_image = image
+	_history_dirty = true
+
+	var fog_manager := get_node_or_null("/root/FogManager")
+	if fog_manager and fog_manager.has_method("set_fog_state"):
+		fog_manager.set_fog_state(buffer)
+	return true
+
+
+func reset_history() -> void:
+	_ensure_history_storage(_map_size)
+	if _history_image == null:
+		return
+	_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
+	_prev_los_image = null
+	_history_dirty = true
+	_queue_los_full_bake()
+
+
+func set_history_seed_from_hidden(_cell_px: int, _hidden_cells: Dictionary) -> void:
+	# Snapshot/image authority path only.
+	return
+
+
+func apply_history_seed_delta(_revealed_cells: Array, _hidden_cells: Array) -> void:
+	# Snapshot/image authority path only.
+	return
+
+
+func collect_revealed_cells_from_candidates(_candidates: Array, _cell_px: int, _max_cells: int) -> Array:
+	return []
+
+
+func export_hidden_cells_from_gpu(_cell_px: int) -> Array:
+	return []
+
+
+func export_hidden_cells_from_runtime(_cell_px: int) -> Array:
+	return []
+
+
+func export_hidden_cells_for_sync(_cell_px: int) -> Array:
+	return []
+
+
+func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
+	return {
+		"grid_w": 0,
+		"grid_h": 0,
+		"revealed_added": 0,
+	}
+
+
+func sync_player_revealers(tokens: Array) -> void:
+	if _live_lights_viewport == null:
+		return
+	var seen_ids: Dictionary = {}
+	for raw_token in tokens:
+		if not raw_token is Node2D:
+			continue
+		var token := raw_token as Node2D
+		if not is_instance_valid(token):
+			continue
+
+		var token_id := token.get_instance_id()
+		seen_ids[token_id] = true
+
+		var light := _live_light_by_token_id.get(token_id, null) as PointLight2D
+		if light == null or not is_instance_valid(light):
+			light = PointLight2D.new()
+			light.name = "VisionLight_%d" % token_id
+			light.enabled = true
+			light.shadow_enabled = true
+			light.range_item_cull_mask = VISION_LAYER_MASK
+			light.shadow_item_cull_mask = VISION_LAYER_MASK
+			light.visibility_layer = VISION_LAYER_MASK
+			_live_lights_viewport.add_child(light)
+			_live_light_by_token_id[token_id] = light
+
+		var src := token.get_node_or_null("PointLight2D") as PointLight2D
+		if src:
+			light.texture = src.texture
+			light.texture_scale = src.texture_scale
+			light.energy = maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
+		else:
+			light.energy = LIVE_LIGHT_MIN_ENERGY
+		# Always bake LOS from additive lights for stable reveal mask intensity.
+		light.blend_mode = Light2D.BLEND_MODE_ADD
+		light.shadow_enabled = true
+		light.range_item_cull_mask = VISION_LAYER_MASK
+		light.shadow_item_cull_mask = VISION_LAYER_MASK
+		light.visibility_layer = VISION_LAYER_MASK
+		if light.texture == null:
+			light.texture = _get_or_create_radial_texture()
+
+		var reveal_world := token.global_position
+		if token.has_method("get_fog_reveal_position"):
+			reveal_world = token.call("get_fog_reveal_position") as Vector2
+		var reveal_local := reveal_world
+		if token.get_parent() is Node2D:
+			reveal_local = (token.get_parent() as Node2D).to_local(reveal_world)
+		light.position = reveal_local
+		light.rotation = token.rotation
+
+		var radius_px := _estimate_light_radius_px(light, src)
+		_mark_light_movement_dirty(token_id, reveal_local, radius_px)
+
+	var stale_ids: Array = []
+	for token_id in _live_light_by_token_id.keys():
+		if seen_ids.has(token_id):
+			continue
+		stale_ids.append(token_id)
+	for token_id in stale_ids:
+		var stale = _live_light_by_token_id.get(token_id, null)
+		if stale and is_instance_valid(stale):
+			stale.queue_free()
+		_live_light_by_token_id.erase(token_id)
+		_live_light_state_by_token_id.erase(token_id)
+
+
+func set_wall_polygons(polygons: Array) -> void:
+	if _live_occluder_layer == null:
+		return
+	for child in _live_occluder_layer.get_children():
+		child.queue_free()
+
+	for raw_poly in polygons:
+		if not raw_poly is Array:
+			continue
+		var poly := raw_poly as Array
+		if poly.size() < 3:
+			continue
+		var points := PackedVector2Array()
+		for raw_point in poly:
+			if raw_point is Vector2:
+				points.append(raw_point)
+		if points.size() < 3:
+			continue
+		_live_occluder_layer.add_child(_new_occluder(points))
+
+	# Wall topology changes alter LOS shape across the viewport.
+	_queue_los_full_bake()
+
+
+func set_dm_reveals(_reveals: Array) -> void:
+	# History is now sourced from baked LOS viewport output only.
+	# DM reveal markers are intentionally ignored in this mode.
+	return
+
+
+func _build_nodes() -> void:
+	if _mask_host != null:
+		return
+
+	_mask_host = SubViewportContainer.new()
+	_mask_host.name = "FogSystemMaskHost"
+	_mask_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mask_host.visible = false
+	add_child(_mask_host)
+
+	_live_lights_viewport = SubViewport.new()
+	_live_lights_viewport.name = "LiveLightsViewport"
+	_live_lights_viewport.transparent_bg = false
+	_live_lights_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+	_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_live_lights_viewport.disable_3d = true
+	_live_lights_viewport.handle_input_locally = false
+	_live_lights_viewport.canvas_cull_mask = VISION_LAYER_MASK
+	_mask_host.add_child(_live_lights_viewport)
+
+	_live_base_rect = ColorRect.new()
+	_live_base_rect.name = "LiveBaseBlack"
+	_live_base_rect.color = Color(0.0, 0.0, 0.0, 1.0)
+	_live_base_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_live_base_rect.visibility_layer = VISION_LAYER_MASK
+	_live_lights_viewport.add_child(_live_base_rect)
+
+	_live_light_rect = ColorRect.new()
+	_live_light_rect.name = "LiveLightMask"
+	_live_light_rect.color = Color(1.0, 1.0, 1.0, 1.0)
+	_live_light_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_live_light_rect.visibility_layer = VISION_LAYER_MASK
+	_live_light_rect.light_mask = VISION_LAYER_MASK
+	var light_material := CanvasItemMaterial.new()
+	light_material.light_mode = CanvasItemMaterial.LIGHT_MODE_LIGHT_ONLY
+	_live_light_rect.material = light_material
+	_live_lights_viewport.add_child(_live_light_rect)
+
+	_live_occluder_layer = Node2D.new()
+	_live_occluder_layer.name = "LiveOccluderLayer"
+	_live_occluder_layer.visibility_layer = VISION_LAYER_MASK
+	_live_lights_viewport.add_child(_live_occluder_layer)
+
+	_fog_rect = ColorRect.new()
+	_fog_rect.name = "FogCompositeRect"
+	_fog_rect.color = Color(0.0, 0.0, 0.0, 1.0)
+	_fog_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fog_rect.visible = false
+	add_child(_fog_rect)
+
+	_resize_buffers_and_nodes()
+	reset_history()
+
+
+func _resize_buffers_and_nodes() -> void:
+	var target_size := Vector2i(maxi(1, roundi(_map_size.x)), maxi(1, roundi(_map_size.y)))
+	_ensure_history_storage(_map_size)
+
+	if _live_lights_viewport:
+		_live_lights_viewport.size = target_size
+	if _live_base_rect:
+		_live_base_rect.position = Vector2.ZERO
+		_live_base_rect.size = _map_size
+	if _live_light_rect:
+		_live_light_rect.position = Vector2.ZERO
+		_live_light_rect.size = _map_size
+	if _fog_rect:
+		_fog_rect.position = Vector2.ZERO
+		_fog_rect.size = _map_size
+		_fog_rect.scale = Vector2.ONE
+	if _mask_host:
+		_mask_host.position = Vector2.ZERO
+		_mask_host.scale = Vector2.ONE
+	_queue_los_full_bake()
+
+
+func _ensure_history_storage(size: Vector2) -> void:
+	var target_w := maxi(1, roundi(size.x))
+	var target_h := maxi(1, roundi(size.y))
+	if _history_image == null or _history_image.is_empty() or _history_image.get_width() != target_w or _history_image.get_height() != target_h:
+		_history_image = Image.create(target_w, target_h, false, Image.FORMAT_L8)
+		_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
+		if _history_texture == null:
+			_history_texture = ImageTexture.create_from_image(_history_image)
+		else:
+			_history_texture.set_image(_history_image)
+		_history_dirty = false
+		if DEBUG_FOG_TELEMETRY:
+			print("FogSystem: history buffer resized (%dx%d)" % [target_w, target_h])
+
+
+func _upload_history_texture() -> void:
+	if _history_image == null:
+		return
+	if _history_texture == null:
+		_history_texture = ImageTexture.create_from_image(_history_image)
+	else:
+		_history_texture.update(_history_image)
+	_history_dirty = false
+
+
+func _bake_live_los_into_history() -> void:
+	if not _fog_enabled:
+		return
+	if not _los_bake_pending:
+		return
+	if _history_image == null or _history_texture == null or _live_lights_viewport == null:
+		return
+	var live_tex := _live_lights_viewport.get_texture()
+	if live_tex == null:
+		return
+	var los_image := live_tex.get_image()
+	if los_image == null or los_image.is_empty():
+		return
+	los_image.convert(Image.FORMAT_L8)
+	if los_image.get_width() != _history_image.get_width() or los_image.get_height() != _history_image.get_height():
+		los_image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
+	var prev_los := _prev_los_image
+	var can_use_prev := prev_los != null and not prev_los.is_empty() and prev_los.get_width() == los_image.get_width() and prev_los.get_height() == los_image.get_height()
+
+	var bounds := Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())
+	var bake_rect := bounds
+	if _los_dirty_rect.size.x > 0 and _los_dirty_rect.size.y > 0:
+		bake_rect = _los_dirty_rect.intersection(bounds)
+	if bake_rect.size.x <= 0 or bake_rect.size.y <= 0:
+		_los_bake_pending = false
+		_los_dirty_rect = Rect2i()
+		return
+
+	# Preserve history monotonically: never allow a new frame to hide already
+	# revealed pixels. Merge using max(existing, live_los).
+	var changed := false
+	for y in range(bake_rect.position.y, bake_rect.end.y):
+		for x in range(bake_rect.position.x, bake_rect.end.x):
+			var existing := _history_image.get_pixel(x, y).r
+			var live := los_image.get_pixel(x, y).r
+			if can_use_prev:
+				live = maxf(live, prev_los.get_pixel(x, y).r)
+			live = clampf(live * LOS_BAKE_GAIN, 0.0, 1.0)
+			if live > existing:
+				_history_image.set_pixel(x, y, Color(live, 0.0, 0.0, 1.0))
+				changed = true
+
+	_prev_los_image = los_image.duplicate()
+
+	if changed:
+		_history_texture.update(_history_image)
+	_los_bake_pending = false
+	_los_dirty_rect = Rect2i()
+	_last_los_bake_msec = Time.get_ticks_msec()
+	if DEBUG_FOG_TELEMETRY:
+		_debug_los_bakes_frame += 1
+
+
+func _should_bake_los_now() -> bool:
+	if not _los_bake_pending:
+		return false
+	if LOS_BAKE_INTERVAL_MSEC <= 0:
+		return true
+	var now := Time.get_ticks_msec()
+	if _last_los_bake_msec == 0:
+		return true
+	return (now - _last_los_bake_msec) >= LOS_BAKE_INTERVAL_MSEC
+
+
+func _estimate_light_radius_px(light: PointLight2D, src: PointLight2D) -> float:
+	var light_scale := light.texture_scale if light else 1.0
+	if src:
+		light_scale = src.texture_scale
+	var tex := light.texture if light else null
+	if tex == null:
+		return clampf(light_scale * 128.0, MIN_LIGHT_RADIUS_PX, MAX_LIGHT_RADIUS_PX)
+	var tex_size := tex.get_size()
+	var radius := maxf(tex_size.x, tex_size.y) * 0.5 * light_scale
+	# Pad bounds so dirty-rect capture never clips cone edges/shadow penumbra.
+	radius += 8.0
+	return clampf(radius, MIN_LIGHT_RADIUS_PX, MAX_LIGHT_RADIUS_PX)
+
+
+func _mark_light_movement_dirty(token_id: int, position_px: Vector2, radius_px: float) -> void:
+	var current_rect := _rect_from_circle(position_px, radius_px)
+	var prev_state := _live_light_state_by_token_id.get(token_id, {}) as Dictionary
+	if prev_state.is_empty():
+		_queue_los_dirty_rect(current_rect)
+		_live_light_state_by_token_id[token_id] = {
+			"position": position_px,
+			"radius": radius_px,
+		}
+		return
+
+	var prev_pos := prev_state.get("position", position_px) as Vector2
+	var prev_radius := float(prev_state.get("radius", radius_px))
+	if prev_pos.distance_to(position_px) > LIGHT_MOVE_EPSILON_PX or absf(prev_radius - radius_px) > 0.01:
+		var prev_rect := _rect_from_circle(prev_pos, prev_radius)
+		_queue_los_dirty_rect(prev_rect.merge(current_rect))
+
+	_live_light_state_by_token_id[token_id] = {
+		"position": position_px,
+		"radius": radius_px,
+	}
+
+
+func _rect_from_circle(center_px: Vector2, radius_px: float) -> Rect2i:
+	var safe_radius := maxf(radius_px, MIN_LIGHT_RADIUS_PX)
+	var x0 := floori(center_px.x - safe_radius)
+	var y0 := floori(center_px.y - safe_radius)
+	var x1 := ceili(center_px.x + safe_radius)
+	var y1 := ceili(center_px.y + safe_radius)
+	return Rect2i(x0, y0, maxi(1, x1 - x0 + 1), maxi(1, y1 - y0 + 1))
+
+
+func _queue_los_dirty_rect(rect: Rect2i) -> void:
+	if rect.size.x <= 0 or rect.size.y <= 0:
+		return
+	if _los_dirty_rect.size.x <= 0 or _los_dirty_rect.size.y <= 0:
+		_los_dirty_rect = rect
+	else:
+		_los_dirty_rect = _los_dirty_rect.merge(rect)
+	_los_bake_pending = true
+
+
+func _queue_los_full_bake() -> void:
+	if _history_image and not _history_image.is_empty():
+		_los_dirty_rect = Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())
+	else:
+		_los_dirty_rect = Rect2i()
+	_los_bake_pending = true
+
+
+func _apply_shader_uniforms() -> void:
+	if _fog_rect == null:
+		return
+	var mat := _fog_rect.material as ShaderMaterial
+	if mat == null:
+		var shader := load("res://assets/effects/dm_mask_fog.gdshader") as Shader
+		mat = ShaderMaterial.new()
+		mat.shader = shader
+		_fog_rect.material = mat
+
+	if _history_texture:
+		mat.set_shader_parameter("history_tex", _history_texture)
+	else:
+		mat.set_shader_parameter("history_tex", _get_or_create_fallback_black_texture())
+	if _live_lights_viewport:
+		mat.set_shader_parameter("live_lights_tex", _live_lights_viewport.get_texture())
+	else:
+		mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
+	mat.set_shader_parameter("is_dm", _is_dm)
+	mat.set_shader_parameter("fog_color", Color(0.0, 0.0, 0.0, 1.0))
+	mat.set_shader_parameter("player_alpha_scale", PLAYER_ALPHA_SCALE)
+	mat.set_shader_parameter("dm_history_alpha_scale", DM_HISTORY_ALPHA_SCALE)
+	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
+	_fog_rect.visible = _fog_enabled
+	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+
+func _new_occluder(points: PackedVector2Array) -> LightOccluder2D:
+	var occ_poly := OccluderPolygon2D.new()
+	occ_poly.polygon = points
+	var occluder := LightOccluder2D.new()
+	occluder.occluder = occ_poly
+	occluder.visibility_layer = VISION_LAYER_MASK
+	occluder.occluder_light_mask = VISION_LAYER_MASK
+	return occluder
+
+
+func _get_or_create_radial_texture() -> Texture2D:
+	if _radial_texture != null:
+		return _radial_texture
+	var size := 256
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	var center := Vector2(size * 0.5, size * 0.5)
+	var radius := size * 0.5
+	for y in range(size):
+		for x in range(size):
+			var dist := center.distance_to(Vector2(x, y))
+			if dist > radius:
+				continue
+			var t := 1.0 - (dist / radius)
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, t * t))
+	_radial_texture = ImageTexture.create_from_image(img)
+	return _radial_texture
+
+
+func _get_or_create_fallback_black_texture() -> Texture2D:
+	if _fallback_black_texture != null:
+		return _fallback_black_texture
+	var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 1.0))
+	_fallback_black_texture = ImageTexture.create_from_image(img)
+	return _fallback_black_texture
+
+
+func _verify_live_viewport_no_camera() -> void:
+	if _live_lights_viewport == null:
+		return
+	for child in _live_lights_viewport.get_children():
+		if child is Camera2D:
+			push_warning("FogSystem: Camera2D found in LiveLightsViewport; this can offset LOS cones")
+
+
+func _log_debug_metrics() -> void:
+	var now := Time.get_ticks_msec()
+	if _debug_last_metrics_msec == 0:
+		_debug_last_metrics_msec = now
+		_debug_los_bakes_frame = 0
+		return
+	if now - _debug_last_metrics_msec < 1000:
+		return
+
+	var hist_size := Vector2i.ZERO
+	if _history_image and not _history_image.is_empty():
+		hist_size = Vector2i(_history_image.get_width(), _history_image.get_height())
+	var live_size := Vector2i.ZERO
+	if _live_lights_viewport:
+		live_size = _live_lights_viewport.size
+	var light_count := _live_light_by_token_id.size()
+
+	print("FogSystem metrics: is_dm=%s hist=%s live=%s lights=%d los_bakes_last_sec=%d pending=%s dirty_rect=%s history_dirty=%s" % [
+		str(_is_dm),
+		str(hist_size),
+		str(live_size),
+		light_count,
+		_debug_los_bakes_frame,
+		str(_los_bake_pending),
+		str(_los_dirty_rect),
+		str(_history_dirty),
+	])
+
+	_debug_los_bakes_frame = 0
+	_debug_last_metrics_msec = now

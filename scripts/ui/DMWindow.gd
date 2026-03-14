@@ -20,6 +20,7 @@ extends Node
 # ---------------------------------------------------------------------------
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
+const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
@@ -58,6 +59,11 @@ var _toolbar: Control = null ## HBoxContainer — shown/hidden by View menu
 var _select_btn: Button = null
 var _pan_btn: Button = null
 var _view_menu: PopupMenu = null ## kept for checkmark management
+var _fog_tool_option: OptionButton = null
+var _fog_brush_spin: SpinBox = null
+var _fog_visible_check: CheckBox = null
+var _wall_rect_btn: Button = null
+var _wall_delete_btn: Button = null
 
 # ── Phase 3: player profiles ------------------------------------------------
 var _profiles_dialog: AcceptDialog = null
@@ -67,6 +73,7 @@ var _profile_speed_spin: SpinBox = null
 var _profile_vision_option: OptionButton = null
 var _profile_darkvision_spin: SpinBox = null
 var _profile_perception_spin: SpinBox = null
+var _profile_dash_check: CheckBox = null
 var _profile_input_type_option: OptionButton = null
 var _profile_input_id_edit: LineEdit = null
 var _profile_gamepad_option: OptionButton = null
@@ -89,8 +96,23 @@ var _play_mode: bool = false
 var _play_mode_btn: Button = null
 
 const _BROADCAST_DEBOUNCE: float = 0.05 ## seconds — near-instant feel
+const _PLAYER_STATE_BROADCAST_DEBOUNCE: float = 0.0
+const _FOG_BROADCAST_DEBOUNCE: float = 1.5
+const _FOG_AUTO_SYNC_DEBOUNCE: float = 0.25
+const _FOG_DELTA_MAX_CELLS: int = 1200
+const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
+const DEBUG_FOG_SNAPSHOT: bool = true
+const DEBUG_FOG_TELEMETRY: bool = false
 var _broadcast_dirty: bool = false
 var _broadcast_countdown: float = 0.0
+var _player_state_dirty: bool = false
+var _player_state_countdown: float = 0.0
+var _fog_dirty: bool = false
+var _fog_countdown: float = 0.0
+var _backend: Node = null
+var _dm_override_player_id: String = ""
+var _initial_sync_ack_pending: Dictionary = {}
+var _initial_sync_attempt_by_peer: Dictionary = {}
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +123,9 @@ func _ready() -> void:
 	_build_ui()
 	NetworkManager.display_peer_registered.connect(_on_display_peer_registered)
 	NetworkManager.display_viewport_resized.connect(_on_display_viewport_resized)
+	NetworkManager.client_disconnected.connect(_on_client_disconnected)
+	if NetworkManager.has_signal("display_sync_applied"):
+		NetworkManager.display_sync_applied.connect(_on_display_sync_applied)
 	GameState.profiles_changed.connect(_on_profiles_changed)
 	_apply_profile_bindings()
 	_apply_ui_scale()
@@ -113,13 +138,35 @@ func _notification(what: int) -> void:
 
 
 func _process(delta: float) -> void:
+	if _player_state_countdown > 0.0:
+		_player_state_countdown = maxf(0.0, _player_state_countdown - delta)
+	if _fog_countdown > 0.0:
+		_fog_countdown = maxf(0.0, _fog_countdown - delta)
+	if _fog_dirty and _fog_countdown <= 0.0:
+		_fog_dirty = false
+		_broadcast_fog_state()
+		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
+
+	_update_dm_override_input()
+	if _simulate_player_movement(delta):
+		_player_state_dirty = true
+		if _player_state_countdown <= 0.0:
+			_broadcast_player_state()
+			_player_state_dirty = false
+			_player_state_countdown = _PLAYER_STATE_BROADCAST_DEBOUNCE
+
 	# Broadcast queued player-viewport updates after a short debounce.
 	if not _broadcast_dirty:
-		return
-	_broadcast_countdown -= delta
-	if _broadcast_countdown <= 0.0:
-		_broadcast_dirty = false
-		_broadcast_player_viewport()
+		pass
+	else:
+		_broadcast_countdown -= delta
+		if _broadcast_countdown <= 0.0:
+			_broadcast_dirty = false
+			_broadcast_player_viewport()
+
+	if _player_state_dirty and _player_state_countdown <= 0.0:
+		_player_state_dirty = false
+		_broadcast_player_state()
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +178,16 @@ func _build_ui() -> void:
 	_map_view = MapViewScene.instantiate()
 	_map_view.name = "MapView"
 	add_child(_map_view)
+	_map_view.allow_keyboard_pan = false
+	_map_view.set_dm_view(true)
+	_map_view.fog_changed.connect(_on_map_fog_changed)
+	_map_view.fog_delta.connect(_on_map_fog_delta)
+	_map_view.walls_changed.connect(_on_map_walls_changed)
+	_backend = BackendRuntimeScript.new()
+	_backend.name = "BackendRuntime"
+	add_child(_backend)
+	if _backend.has_method("configure"):
+		_backend.configure(_map_view)
 
 	# CalibrationTool lives inside MapView's world-space so its drawn overlay
 	# follows the camera correctly.
@@ -218,21 +275,25 @@ func _build_ui() -> void:
 	var tool_group := ButtonGroup.new()
 
 	_select_btn = Button.new()
-	_select_btn.text = "↖  Select"
+	_select_btn.text = "↖"
 	_select_btn.toggle_mode = true
 	_select_btn.button_pressed = true
 	_select_btn.button_group = tool_group
 	_select_btn.focus_mode = Control.FOCUS_NONE
 	_select_btn.tooltip_text = "Select tool"
+	_select_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_select_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
 	_select_btn.pressed.connect(func(): _on_tool_changed(0))
 	toolbar_hbox.add_child(_select_btn)
 
 	_pan_btn = Button.new()
-	_pan_btn.text = "✋ Pan"
+	_pan_btn.text = "✋"
 	_pan_btn.toggle_mode = true
 	_pan_btn.button_group = tool_group
 	_pan_btn.focus_mode = Control.FOCUS_NONE
 	_pan_btn.tooltip_text = "Pan tool — left-drag to pan"
+	_pan_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_pan_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
 	_pan_btn.pressed.connect(func(): _on_tool_changed(1))
 	toolbar_hbox.add_child(_pan_btn)
 
@@ -240,15 +301,15 @@ func _build_ui() -> void:
 	toolbar_hbox.add_child(sep1)
 
 	# Zoom controls
-	var zoom_in_btn := _make_toolbar_btn("Zoom +", "Zoom in (scroll up)")
+	var zoom_in_btn := _make_toolbar_btn("+", "Zoom in (scroll up)")
 	zoom_in_btn.pressed.connect(func(): if _map_view: _map_view.zoom_in())
 	toolbar_hbox.add_child(zoom_in_btn)
 
-	var zoom_out_btn := _make_toolbar_btn("Zoom −", "Zoom out (scroll down)")
+	var zoom_out_btn := _make_toolbar_btn("-", "Zoom out (scroll down)")
 	zoom_out_btn.pressed.connect(func(): if _map_view: _map_view.zoom_out())
 	toolbar_hbox.add_child(zoom_out_btn)
 
-	var reset_btn := _make_toolbar_btn("Reset View", "Fit map to window")
+	var reset_btn := _make_toolbar_btn("⌂", "Reset view")
 	reset_btn.pressed.connect(func(): if _map_view: _map_view._reset_camera())
 	toolbar_hbox.add_child(reset_btn)
 
@@ -256,64 +317,100 @@ func _build_ui() -> void:
 	toolbar_hbox.add_child(sep2)
 
 	# Grid type selector
-	var grid_label := Label.new()
-	grid_label.text = "Grid:"
-	grid_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	toolbar_hbox.add_child(grid_label)
-
 	_grid_option = OptionButton.new()
-	_grid_option.add_item("Square", MapData.GridType.SQUARE)
-	_grid_option.add_item("Hex (flat)", MapData.GridType.HEX_FLAT)
-	_grid_option.add_item("Hex (pointy)", MapData.GridType.HEX_POINTY)
+	_grid_option.add_item("□", MapData.GridType.SQUARE)
+	_grid_option.add_item("⬢", MapData.GridType.HEX_FLAT)
+	_grid_option.add_item("⬣", MapData.GridType.HEX_POINTY)
 	_grid_option.disabled = true
 	_grid_option.focus_mode = Control.FOCUS_NONE
+	_grid_option.custom_minimum_size = Vector2(roundi(44.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_grid_option.add_theme_font_size_override("font_size", roundi(22.0 * _ui_scale()))
+	_grid_option.tooltip_text = "Grid type: square, hex flat-top, hex pointy-top"
 	_grid_option.item_selected.connect(_on_grid_type_selected)
 	toolbar_hbox.add_child(_grid_option)
 
 	var sep3 := VSeparator.new()
 	toolbar_hbox.add_child(sep3)
 
-	var pv_label := Label.new()
-	pv_label.text = "Player View:"
-	pv_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	toolbar_hbox.add_child(pv_label)
-
-	var pv_zoom_in_btn := _make_toolbar_btn("Zoom +", "Zoom player viewport in")
+	var pv_zoom_in_btn := _make_toolbar_btn("▣+", "Zoom player viewport in")
 	pv_zoom_in_btn.pressed.connect(func(): _change_player_zoom(0.15))
 	toolbar_hbox.add_child(pv_zoom_in_btn)
 
-	var pv_zoom_out_btn := _make_toolbar_btn("Zoom \u2212", "Zoom player viewport out")
+	var pv_zoom_out_btn := _make_toolbar_btn("▣-", "Zoom player viewport out")
 	pv_zoom_out_btn.pressed.connect(func(): _change_player_zoom(-0.15))
 	toolbar_hbox.add_child(pv_zoom_out_btn)
 
-	var pv_sync_btn := _make_toolbar_btn("Sync to DM", "Snap player view to match your current view")
+	var pv_sync_btn := _make_toolbar_btn("◎", "Sync player view to DM")
 	pv_sync_btn.pressed.connect(_sync_player_to_dm_view)
 	toolbar_hbox.add_child(pv_sync_btn)
 
 	var sep4 := VSeparator.new()
 	toolbar_hbox.add_child(sep4)
 
+	_fog_tool_option = OptionButton.new()
+	_fog_tool_option.focus_mode = Control.FOCUS_NONE
+	_fog_tool_option.add_item("☁ Off", 0)
+	_fog_tool_option.add_item("☁ R◯", 1)
+	_fog_tool_option.add_item("☁ H◯", 2)
+	_fog_tool_option.add_item("☁ R▭", 3)
+	_fog_tool_option.add_item("☁ H▭", 4)
+	_fog_tool_option.custom_minimum_size = Vector2(roundi(70.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_tool_option.add_theme_font_size_override("font_size", roundi(12.0 * _ui_scale()))
+	_fog_tool_option.tooltip_text = "Fog tools: Reveal/Hide brush and rectangle"
+	_fog_tool_option.item_selected.connect(_on_fog_tool_selected)
+	toolbar_hbox.add_child(_fog_tool_option)
+
+	_fog_brush_spin = SpinBox.new()
+	_fog_brush_spin.min_value = 8
+	_fog_brush_spin.max_value = 512
+	_fog_brush_spin.step = 8
+	_fog_brush_spin.value = 64
+	_fog_brush_spin.suffix = " px"
+	_fog_brush_spin.custom_minimum_size = Vector2(roundi(74.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_brush_spin.add_theme_font_size_override("font_size", roundi(15.0 * _ui_scale()))
+	_fog_brush_spin.value_changed.connect(_on_fog_brush_size_changed)
+	toolbar_hbox.add_child(_fog_brush_spin)
+
+	_fog_visible_check = CheckBox.new()
+	_fog_visible_check.text = "🔦"
+	_fog_visible_check.button_pressed = true
+	_fog_visible_check.focus_mode = Control.FOCUS_NONE
+	_fog_visible_check.tooltip_text = "Show/hide DM fog overlay"
+	_fog_visible_check.custom_minimum_size = Vector2(roundi(38.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_visible_check.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
+	_fog_visible_check.toggled.connect(_on_dm_fog_visible_toggled)
+	toolbar_hbox.add_child(_fog_visible_check)
+
+	_wall_rect_btn = Button.new()
+	_wall_rect_btn.text = "▭"
+	_wall_rect_btn.toggle_mode = true
+	_wall_rect_btn.focus_mode = Control.FOCUS_NONE
+	_wall_rect_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_wall_rect_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
+	_wall_rect_btn.toggled.connect(_on_wall_rect_toggled)
+	toolbar_hbox.add_child(_wall_rect_btn)
+
+	_wall_delete_btn = _make_toolbar_btn("⌫", "Delete selected wall (or press Delete)")
+	_wall_delete_btn.pressed.connect(_on_delete_wall_pressed)
+	toolbar_hbox.add_child(_wall_delete_btn)
+
+	var sep5 := VSeparator.new()
+	toolbar_hbox.add_child(sep5)
+
 	_play_mode_btn = Button.new()
-	_play_mode_btn.text = "\u25b6 Play Mode"
+	_play_mode_btn.text = "▶"
 	_play_mode_btn.toggle_mode = true
 	_play_mode_btn.focus_mode = Control.FOCUS_NONE
 	_play_mode_btn.tooltip_text = "Launch the Player display window"
+	_play_mode_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_play_mode_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
 	_play_mode_btn.pressed.connect(_on_play_mode_pressed)
 	toolbar_hbox.add_child(_play_mode_btn)
-
-	# Spacer pushes status label to the right
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	toolbar_hbox.add_child(spacer)
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
 	_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	toolbar_hbox.add_child(_status_label)
-
-	var pad_right := Control.new()
-	pad_right.custom_minimum_size = Vector2(8, 0)
-	toolbar_hbox.add_child(pad_right)
+	_ui_root.add_child(_status_label)
 
 	# ── FileDialog (image selection for New Map) ─────────────────────────────
 	_file_dialog = FileDialog.new()
@@ -511,12 +608,90 @@ func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 	## Keep the existing world-space viewport footprint stable by adjusting zoom
 	## when the real player window size differs from our current assumption.
 	_update_player_window_size_preserve_world(viewport_size)
+	_initial_sync_ack_pending[_peer_id] = true
+	_initial_sync_attempt_by_peer[_peer_id] = 0
+	_queue_initial_display_sync(_peer_id, 0.20)
+
+
+func _queue_initial_display_sync(peer_id: int, delay_sec: float) -> void:
+	if delay_sec <= 0.0:
+		_send_initial_display_sync(peer_id)
+		return
+	var timer := get_tree().create_timer(delay_sec)
+	timer.timeout.connect(func() -> void:
+		_send_initial_display_sync(peer_id)
+	)
+
+
+func _send_initial_display_sync(peer_id: int) -> void:
 	var map: MapData = _map_view.get_map() if _map_view else null
 	if map == null:
 		return
 	_update_viewport_indicator()
-	NetworkManager.broadcast_map(map)
+	var fog_snapshot := await _build_fog_state_snapshot(map)
+	var attempt := int(_initial_sync_attempt_by_peer.get(peer_id, 0)) + 1
+	_initial_sync_attempt_by_peer[peer_id] = attempt
+	print("DMWindow: initial sync send attempt %d to peer %d" % [attempt, peer_id])
+	if NetworkManager.has_method("send_map_to_display"):
+		NetworkManager.send_map_to_display(peer_id, map, false, fog_snapshot)
+	else:
+		NetworkManager.broadcast_map(map)
 	_broadcast_player_viewport()
+	_broadcast_player_state()
+
+	# Retry if no ack and peer is still connected.
+	var retry_timer := get_tree().create_timer(1.0)
+	retry_timer.timeout.connect(func() -> void:
+		if not bool(_initial_sync_ack_pending.get(peer_id, false)):
+			return
+		if NetworkManager.has_method("is_display_peer_connected") and not NetworkManager.is_display_peer_connected(peer_id):
+			return
+		var retries := int(_initial_sync_attempt_by_peer.get(peer_id, 1))
+		if retries >= 3:
+			push_warning("DMWindow: initial sync ack missing after %d attempts for peer %d" % [retries, peer_id])
+			return
+		_send_initial_display_sync(peer_id)
+	)
+
+
+func _on_display_sync_applied(peer_id: int, payload: Dictionary) -> void:
+	if not bool(_initial_sync_ack_pending.get(peer_id, false)):
+		return
+	_initial_sync_ack_pending.erase(peer_id)
+	print("DMWindow: initial sync ack from peer %d (stamp_bytes=%d stamp_hash=%d)" % [
+		peer_id,
+		int(payload.get("snapshot_bytes", -1)),
+		int(payload.get("snapshot_hash", -1)),
+	])
+
+
+func _on_client_disconnected(peer_id: int) -> void:
+	_initial_sync_ack_pending.erase(peer_id)
+	_initial_sync_attempt_by_peer.erase(peer_id)
+
+
+func _build_fog_state_snapshot(_map: MapData) -> Dictionary:
+	var fog_state_png: PackedByteArray = PackedByteArray()
+	if _map_view and _map_view.has_method("get_fog_state"):
+		fog_state_png = await _map_view.get_fog_state()
+	var fog_manager := get_node_or_null("/root/FogManager")
+	if not fog_state_png.is_empty() and fog_manager and fog_manager.has_method("set_fog_state"):
+		fog_manager.set_fog_state(fog_state_png)
+	var snapshot_hash := hash(fog_state_png)
+	if DEBUG_FOG_SNAPSHOT:
+		print("DMWindow: fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [
+			fog_state_png.size(),
+			snapshot_hash,
+		])
+
+	var snapshot := {
+		"msg": "fog_state_snapshot",
+		"snapshot_bytes": fog_state_png.size(),
+		"snapshot_hash": snapshot_hash,
+	}
+	if not fog_state_png.is_empty():
+		snapshot["fog_state_png_b64"] = Marshalls.raw_to_base64(fog_state_png)
+	return snapshot
 
 
 func _on_display_viewport_resized(_peer_id: int, viewport_size: Vector2) -> void:
@@ -618,6 +793,8 @@ func _make_toolbar_btn(label: String, tip: String) -> Button:
 	b.text = label
 	b.tooltip_text = tip
 	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	b.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
 	return b
 
 
@@ -670,6 +847,45 @@ func _on_tool_changed(tool: int) -> void:
 	match tool:
 		0: _set_status("Tool: Select")
 		1: _set_status("Tool: Pan  (left-drag to pan)")
+
+
+func _on_fog_tool_selected(index: int) -> void:
+	if _map_view == null or _fog_tool_option == null:
+		return
+	var tool_id := _fog_tool_option.get_item_id(index)
+	_map_view.set_fog_tool(tool_id, _fog_brush_spin.value if _fog_brush_spin else 64.0)
+	_set_status("Fog tool: %s" % _fog_tool_option.get_item_text(index))
+
+
+func _on_fog_brush_size_changed(value: float) -> void:
+	if _map_view == null or _fog_tool_option == null:
+		return
+	_map_view.set_fog_tool(_fog_tool_option.get_item_id(_fog_tool_option.selected), value)
+
+
+func _on_dm_fog_visible_toggled(enabled: bool) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_dm_fog_visible(enabled)
+
+
+func _on_wall_rect_toggled(enabled: bool) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_wall_rect_mode(enabled)
+	if enabled:
+		_set_status("Wall Rect: drag on map to place wall occluder rectangle")
+	else:
+		_set_status("Wall Rect: off")
+
+
+func _on_delete_wall_pressed() -> void:
+	if _map_view == null:
+		return
+	if _map_view.delete_selected_wall():
+		_set_status("Wall deleted.")
+	else:
+		_set_status("No wall selected. Use Select tool and click a wall first.")
 
 
 # ---------------------------------------------------------------------------
@@ -882,6 +1098,12 @@ func _build_profiles_dialog() -> void:
 	_profile_passive_label.text = "10"
 	form.add_child(_profile_passive_label)
 
+	var dash_lbl := Label.new(); dash_lbl.text = "Dashing:"; form.add_child(dash_lbl)
+	_profile_dash_check = CheckBox.new()
+	_profile_dash_check.text = "Speed +50%, Vision -50%"
+	_profile_dash_check.button_pressed = false
+	form.add_child(_profile_dash_check)
+
 	var it_lbl := Label.new(); it_lbl.text = "Input Type:"; form.add_child(it_lbl)
 	_profile_input_type_option = OptionButton.new()
 	_profile_input_type_option.add_item("None", PlayerProfile.InputType.NONE)
@@ -1013,6 +1235,8 @@ func _clear_profile_form() -> void:
 	_profile_darkvision_spin.value = 60
 	_profile_perception_spin.value = 0
 	_profile_passive_label.text = "10"
+	if _profile_dash_check:
+		_profile_dash_check.button_pressed = false
 	_profile_input_type_option.select(0)
 	_profile_input_id_edit.text = ""
 	_profile_extras_edit.text = "{}"
@@ -1040,6 +1264,8 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_darkvision_spin.value = p.darkvision_range
 	_profile_perception_spin.value = p.perception_mod
 	_profile_passive_label.text = str(p.get_passive_perception())
+	if _profile_dash_check:
+		_profile_dash_check.button_pressed = bool(p.extras.get("is_dashing", false))
 	_profile_input_type_option.select(_profile_input_type_option.get_item_index(p.input_type))
 	_profile_input_id_edit.text = p.input_id
 	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
@@ -1050,6 +1276,7 @@ func _on_profile_add_pressed() -> void:
 	var profile := PlayerProfile.new()
 	profile.ensure_id()
 	profile.player_name = "Player %d" % (GameState.profiles.size() + 1)
+	profile.extras["is_dashing"] = false
 	GameState.profiles.append(profile)
 	GameState.save_profiles()
 	GameState.load_profiles()
@@ -1109,6 +1336,7 @@ func _on_profile_save_pressed() -> void:
 			_set_status("Extras must be valid JSON object; profile not saved.")
 			return
 		p.extras = (parsed as Dictionary).duplicate(true)
+	p.extras["is_dashing"] = _profile_dash_check.button_pressed if _profile_dash_check else false
 
 	p.ensure_id()
 	GameState.save_profiles()
@@ -1182,10 +1410,15 @@ func _apply_profile_bindings() -> void:
 			PlayerProfile.InputType.WEBSOCKET:
 				if p.input_id.is_valid_int():
 					NetworkManager.bind_peer(int(p.input_id), p.id)
+	_player_state_dirty = true
+	_player_state_countdown = 0.0
 
 
 func _on_profiles_changed() -> void:
 	_apply_profile_bindings()
+	if _backend and _backend.has_method("sync_profiles"):
+		_backend.sync_profiles()
+	_broadcast_player_state()
 	if _profiles_dialog and _profiles_dialog.visible:
 		_refresh_profiles_list()
 
@@ -1352,6 +1585,8 @@ func _on_save_map_pressed() -> void:
 	if _active_map_bundle_path.is_empty():
 		_on_save_map_as_pressed()
 		return
+	if _map_view and _map_view.has_method("force_fog_sync"):
+		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
 	_save_map_data(map)
 	NetworkManager.broadcast_map_update(map)
@@ -1386,6 +1621,8 @@ func _save_map_as_path(bundle_path: String) -> void:
 			_set_status("Error: could not duplicate image.")
 			return
 
+	if _map_view and _map_view.has_method("force_fog_sync"):
+		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = new_img_abs
@@ -1406,8 +1643,156 @@ func _apply_map(map: MapData) -> void:
 		return
 	# Player cam is initialised to the DM's initial view once the camera settles.
 	call_deferred("_init_player_cam_from_dm")
+	if _backend and _backend.has_method("reset_for_new_map"):
+		_backend.reset_for_new_map()
+	_broadcast_fog_state()
+	_broadcast_player_state()
 	_grid_option.disabled = false
 	_grid_option.select(_grid_option.get_item_index(map.grid_type))
+
+
+func _simulate_player_movement(delta: float) -> bool:
+	if _backend == null:
+		return false
+	if not _backend.has_method("step"):
+		return false
+	return bool(_backend.step(delta))
+
+
+func _keyboard_temp_vector() -> Vector2:
+	var vec := Vector2.ZERO
+	if Input.is_key_pressed(KEY_LEFT):
+		vec.x -= 1.0
+	if Input.is_key_pressed(KEY_RIGHT):
+		vec.x += 1.0
+	if Input.is_key_pressed(KEY_UP):
+		vec.y -= 1.0
+	if Input.is_key_pressed(KEY_DOWN):
+		vec.y += 1.0
+	if vec == Vector2.ZERO:
+		return vec
+	return vec.normalized()
+
+
+func _broadcast_player_state() -> void:
+	var players: Array = []
+	if _backend and _backend.has_method("build_player_state_payload"):
+		players = _backend.build_player_state_payload()
+	NetworkManager.broadcast_to_displays({"msg": "state", "players": players})
+
+
+func _update_dm_override_input() -> void:
+	var primary_player_id := ""
+	for profile in GameState.profiles:
+		if profile is PlayerProfile:
+			primary_player_id = (profile as PlayerProfile).id
+			break
+
+	if _dm_override_player_id != "" and _dm_override_player_id != primary_player_id:
+		InputManager.clear_dm_vector(_dm_override_player_id)
+
+	_dm_override_player_id = primary_player_id
+	if _dm_override_player_id == "":
+		return
+
+	InputManager.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
+
+
+func _on_map_fog_changed(_map: MapData) -> void:
+	if not _ENABLE_CONTINUOUS_FOG_SYNC:
+		return
+	_fog_dirty = true
+	if _fog_countdown <= 0.0:
+		_fog_dirty = false
+		_broadcast_fog_state()
+		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
+
+
+func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:
+	if not _ENABLE_CONTINUOUS_FOG_SYNC:
+		return
+	if revealed_cells.is_empty() and hidden_cells.is_empty():
+		return
+	if revealed_cells.size() + hidden_cells.size() > (_FOG_DELTA_MAX_CELLS * 4):
+		_fog_dirty = true
+		if _fog_countdown <= 0.0:
+			_fog_countdown = _FOG_AUTO_SYNC_DEBOUNCE
+		return
+
+	_broadcast_fog_delta_chunked(cell_px, revealed_cells, hidden_cells)
+
+
+func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:
+	var max_cells := maxi(1, _FOG_DELTA_MAX_CELLS)
+	var revealed_index := 0
+	var hidden_index := 0
+
+	while revealed_index < revealed_cells.size() or hidden_index < hidden_cells.size():
+		var budget := max_cells
+		var revealed_chunk: Array = []
+		var hidden_chunk: Array = []
+
+		if revealed_index < revealed_cells.size():
+			var take_revealed := mini(budget, revealed_cells.size() - revealed_index)
+			if take_revealed > 0:
+				revealed_chunk = revealed_cells.slice(revealed_index, revealed_index + take_revealed)
+				revealed_index += take_revealed
+				budget -= take_revealed
+
+		if budget > 0 and hidden_index < hidden_cells.size():
+			var take_hidden := mini(budget, hidden_cells.size() - hidden_index)
+			if take_hidden > 0:
+				hidden_chunk = hidden_cells.slice(hidden_index, hidden_index + take_hidden)
+				hidden_index += take_hidden
+				budget -= take_hidden
+
+		if revealed_chunk.is_empty() and hidden_chunk.is_empty():
+			break
+
+		NetworkManager.broadcast_to_displays({
+			"msg": "fog_delta",
+			"fog_cell_px": cell_px,
+			"revealed_cells": _serialise_fog_cells(revealed_chunk),
+			"hidden_cells": _serialise_fog_cells(hidden_chunk),
+		})
+
+
+func _on_map_walls_changed(map: MapData) -> void:
+	NetworkManager.broadcast_map_update(map)
+	_set_status("Wall added. Save map to persist wall/fog edits.")
+
+
+func _broadcast_fog_state() -> void:
+	if _map_view == null:
+		return
+	if _map_view.has_method("force_fog_sync"):
+		_map_view.force_fog_sync()
+	_broadcast_fog_state_after_frame()
+
+
+func _broadcast_fog_state_after_frame() -> void:
+	await get_tree().process_frame
+	if _map_view == null:
+		return
+	var map: MapData = _map_view.get_map()
+	if map == null:
+		return
+	NetworkManager.broadcast_to_displays(await _build_fog_state_snapshot(map))
+
+
+func _serialise_fog_cells(cells: Array) -> Array:
+	var out: Array = []
+	for c in cells:
+		if c is Vector2i:
+			out.append({"x": c.x, "y": c.y})
+		elif c is Vector2:
+			out.append({"x": int((c as Vector2).x), "y": int((c as Vector2).y)})
+		elif c is Dictionary:
+			out.append({"x": int(c.get("x", 0)), "y": int(c.get("y", 0))})
+		elif c is Array and (c as Array).size() >= 2:
+			var arr := c as Array
+			out.append({"x": int(arr[0]), "y": int(arr[1])})
+	return out
 
 
 func _init_player_cam_from_dm() -> void:

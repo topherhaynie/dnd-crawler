@@ -12,6 +12,9 @@ extends Node
 
 const WS_PORT: int = 9090
 const MAX_PENDING_CONNECTIONS: int = 8
+const DEBUG_FOG_TELEMETRY: bool = false
+const OUTBOUND_PRESSURE_WARN_BYTES: int = 262144
+const FOG_SNAPSHOT_B64_CHUNK_CHARS: int = 12000
 
 var _server: WebSocketMultiplayerPeer = null
 
@@ -22,6 +25,9 @@ var ws_bindings: Dictionary = {}
 # Peer IDs of connected Player display processes (sent render state, not input)
 var _display_peers: Array[int] = []
 var _input_peers: Array[int] = []
+var _fog_packet_bytes_by_type: Dictionary = {"fog_updated": 0, "fog_delta": 0}
+var _fog_packet_count_by_type: Dictionary = {"fog_updated": 0, "fog_delta": 0}
+var _last_fog_metrics_log_msec: int = 0
 
 
 func _game_state() -> Node:
@@ -35,6 +41,7 @@ signal client_connected(peer_id: int)
 signal client_disconnected(peer_id: int)
 signal display_peer_registered(peer_id: int, viewport_size: Vector2)
 signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
+signal display_sync_applied(peer_id: int, payload: Dictionary)
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -103,6 +110,11 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 		emit_signal("display_viewport_resized", peer_id, vp)
 		return
 
+	# Display confirms it received + applied initial fog/map snapshot.
+	if data.get("type", "") == "display_sync_applied" and peer_id in _display_peers:
+		emit_signal("display_sync_applied", peer_id, data)
+		return
+
 	# Ignore all other packets from display peers (they only receive, never send input)
 	if peer_id in _display_peers:
 		return
@@ -119,7 +131,7 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 	if player_id == "" or not _game_state().player_locked.has(player_id):
 		return
 
-	_input_manager().set_vector(player_id, Vector2(x, y))
+	_input_manager().set_network_vector(player_id, Vector2(x, y))
 
 # ---------------------------------------------------------------------------
 # Connection events
@@ -153,6 +165,10 @@ func clear_all_peer_bindings() -> void:
 func get_connected_input_peers() -> Array[int]:
 	return _input_peers.duplicate()
 
+
+func is_display_peer_connected(peer_id: int) -> bool:
+	return peer_id in _display_peers
+
 # ---------------------------------------------------------------------------
 # Display peer management
 # ---------------------------------------------------------------------------
@@ -167,7 +183,7 @@ func _register_display_peer(peer_id: int, viewport_size: Vector2) -> void:
 	emit_signal("display_peer_registered", peer_id, viewport_size)
 	# Send an initial ping so the Player window confirms connectivity
 	var ws_peer := _server.get_peer(peer_id)
-	if ws_peer:
+	if ws_peer and ws_peer.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		ws_peer.send_text(JSON.stringify({"msg": "ping"}))
 
 func broadcast_to_displays(data: Dictionary) -> void:
@@ -176,17 +192,117 @@ func broadcast_to_displays(data: Dictionary) -> void:
 	if _display_peers.is_empty() or _server == null:
 		return
 	var payload := JSON.stringify(data).to_utf8_buffer()
+	var msg_type := str(data.get("msg", ""))
+	if msg_type == "fog_updated" or msg_type == "fog_delta":
+		_track_fog_packet_metrics(msg_type, payload.size())
 	for peer_id: int in _display_peers:
 		var ws_peer := _server.get_peer(peer_id)
 		if ws_peer:
+			if ws_peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+				continue
+			if DEBUG_FOG_TELEMETRY and OS.is_debug_build() and payload.size() >= OUTBOUND_PRESSURE_WARN_BYTES:
+				print("NetworkManager: outbound pressure event (msg=%s, peer=%d, bytes=%d)" % [msg_type, peer_id, payload.size()])
 			ws_peer.send(payload)
+
+
+func send_to_display(peer_id: int, data: Dictionary) -> void:
+	if _server == null:
+		return
+	if not peer_id in _display_peers:
+		return
+	var ws_peer := _server.get_peer(peer_id)
+	if ws_peer == null:
+		return
+	if ws_peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	var payload := JSON.stringify(data).to_utf8_buffer()
+	var err := ws_peer.send(payload)
+	if err != OK:
+		push_warning("NetworkManager: send_to_display failed peer=%d err=%d msg=%s" % [peer_id, err, str(data.get("msg", data.get("type", "?")))])
+
+
+func send_map_to_display(peer_id: int, map: MapData, is_update: bool = false, fog_snapshot: Dictionary = {}) -> void:
+	if map == null:
+		return
+	var map_payload: Dictionary = map.to_dict()
+	map_payload["fog_hidden_cells"] = []
+	send_to_display(peer_id, {
+		"msg": "map_updated" if is_update else "map_loaded",
+		"map": map_payload,
+	})
+	if not fog_snapshot.is_empty():
+		_send_fog_snapshot_to_display(peer_id, fog_snapshot)
+
+
+func _send_fog_snapshot_to_display(peer_id: int, fog_snapshot: Dictionary) -> void:
+	var b64 := str(fog_snapshot.get("fog_state_png_b64", ""))
+	if b64.is_empty():
+		send_to_display(peer_id, fog_snapshot)
+		return
+
+	var snapshot_bytes := int(fog_snapshot.get("snapshot_bytes", -1))
+	var snapshot_hash := int(fog_snapshot.get("snapshot_hash", -1))
+	var total_chunks := int(ceil(float(b64.length()) / float(FOG_SNAPSHOT_B64_CHUNK_CHARS)))
+	total_chunks = maxi(1, total_chunks)
+
+	send_to_display(peer_id, {
+		"msg": "fog_state_snapshot_begin",
+		"snapshot_bytes": snapshot_bytes,
+		"snapshot_hash": snapshot_hash,
+		"chunks": total_chunks,
+	})
+
+	for i in range(total_chunks):
+		var start := i * FOG_SNAPSHOT_B64_CHUNK_CHARS
+		var count := mini(FOG_SNAPSHOT_B64_CHUNK_CHARS, b64.length() - start)
+		var part := b64.substr(start, count)
+		send_to_display(peer_id, {
+			"msg": "fog_state_snapshot_chunk",
+			"snapshot_hash": snapshot_hash,
+			"index": i,
+			"chunks": total_chunks,
+			"fog_state_png_b64_chunk": part,
+		})
+
+	send_to_display(peer_id, {
+		"msg": "fog_state_snapshot_end",
+		"snapshot_bytes": snapshot_bytes,
+		"snapshot_hash": snapshot_hash,
+		"chunks": total_chunks,
+	})
+
+
+func _track_fog_packet_metrics(msg_type: String, payload_bytes: int) -> void:
+	if not DEBUG_FOG_TELEMETRY or not OS.is_debug_build():
+		return
+	_fog_packet_bytes_by_type[msg_type] = int(_fog_packet_bytes_by_type.get(msg_type, 0)) + payload_bytes
+	_fog_packet_count_by_type[msg_type] = int(_fog_packet_count_by_type.get(msg_type, 0)) + 1
+
+	var now := Time.get_ticks_msec()
+	if _last_fog_metrics_log_msec == 0:
+		_last_fog_metrics_log_msec = now
+		return
+	if now - _last_fog_metrics_log_msec < 2000:
+		return
+
+	print("NetworkManager: fog metrics updated bytes=%d count=%d delta bytes=%d count=%d" % [
+		int(_fog_packet_bytes_by_type.get("fog_updated", 0)),
+		int(_fog_packet_count_by_type.get("fog_updated", 0)),
+		int(_fog_packet_bytes_by_type.get("fog_delta", 0)),
+		int(_fog_packet_count_by_type.get("fog_delta", 0)),
+	])
+	_last_fog_metrics_log_msec = now
 
 func broadcast_map(map: MapData) -> void:
 	## Full map broadcast — player reloads the image and resets its camera.
 	## Use only for initial file load and late-joining peers.
-	broadcast_to_displays({"msg": "map_loaded", "map": map.to_dict()})
+	var map_payload: Dictionary = map.to_dict()
+	map_payload["fog_hidden_cells"] = []
+	broadcast_to_displays({"msg": "map_loaded", "map": map_payload})
 
 func broadcast_map_update(map: MapData) -> void:
 	## Lightweight update — sends grid/scale changes without triggering a
 	## camera reset on the player side.
-	broadcast_to_displays({"msg": "map_updated", "map": map.to_dict()})
+	var map_payload: Dictionary = map.to_dict()
+	map_payload["fog_hidden_cells"] = []
+	broadcast_to_displays({"msg": "map_updated", "map": map_payload})

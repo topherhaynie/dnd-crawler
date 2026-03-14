@@ -19,6 +19,8 @@ func _ready() -> void:
 	_player_window = PlayerWindowScene.instantiate()
 	_player_window.name = "PlayerWindow"
 	add_child(_player_window)
+	if _player_window.has_signal("fog_snapshot_applied"):
+		_player_window.fog_snapshot_applied.connect(_on_fog_snapshot_applied)
 
 	# WebSocket client — connect to DM host
 	_client = load("res://scripts/network/PlayerClient.gd").new()
@@ -34,7 +36,11 @@ func _ready() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_state_received(data: Dictionary) -> void:
-	var msg_type: String = data.get("msg", "unknown")
 	if _player_window and _player_window.has_method("on_state"):
 		_player_window.on_state(data)
-	print("PlayerMain: received state packet (msg=%s)" % msg_type)
+
+
+func _on_fog_snapshot_applied(payload: Dictionary) -> void:
+	if _client and _client.has_method("send_display_sync_applied"):
+		print("PlayerMain: sending display_sync_applied (stamp_bytes=%d stamp_hash=%d)" % [int(payload.get("snapshot_bytes", -1)), int(payload.get("snapshot_hash", -1))])
+		_client.send_display_sync_applied(payload)

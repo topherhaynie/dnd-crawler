@@ -40,10 +40,19 @@ This file is a quick navigation and workflow guide for future coding agents.
 ## Network Message Flow
 - Display client handshake: `{"type":"display", ...}`
 - Display viewport resize: `{"type":"viewport_resize", ...}`
-- DM -> display map and camera messages:
+- DM -> display map, fog, camera, and state messages:
   - `map_loaded`
   - `map_updated`
+  - `fog_updated`
   - `camera_update`
+  - `state`
+  - `delta`
+
+## Visibility Authority
+- DM process is authoritative for LOS/fog reveal and gameplay visibility logic.
+- Player process is render-only for visibility and should consume DM packets.
+- DM/player fog-opacity differences are visual-only (same underlying revealed/hidden state).
+- Prefer `fog_updated` over `map_updated` for frequent fog changes to avoid player map reload churn.
 
 ## Recent Stability Notes
 - Map open flow accepts native dialog path variants and resolves nearest `.map` bundle.

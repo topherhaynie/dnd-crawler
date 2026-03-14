@@ -1,0 +1,18 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/player/PlayerSprite.gd" id="1_player_sprite_script"]
+
+[sub_resource type="CircleShape2D" id="1_circle_shape"]
+radius = 16.0
+
+[node name="PlayerSprite" type="CharacterBody2D"]
+script = ExtResource("1_player_sprite_script")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+centered = true
+
+[node name="PointLight2D" type="PointLight2D" parent="."]
+texture_scale = 2.0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("1_circle_shape")

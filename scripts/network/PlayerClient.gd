@@ -100,6 +100,17 @@ func _on_viewport_size_changed() -> void:
 	}))
 
 
+func send_display_sync_applied(payload: Dictionary) -> void:
+	if not _connected:
+		return
+	var packet := {
+		"type": "display_sync_applied",
+		"snapshot_bytes": int(payload.get("snapshot_bytes", -1)),
+		"snapshot_hash": int(payload.get("snapshot_hash", -1)),
+	}
+	_socket.send_text(JSON.stringify(packet))
+
+
 # ---------------------------------------------------------------------------
 # Packet handling
 # ---------------------------------------------------------------------------
@@ -131,6 +142,24 @@ func _handle_packet(raw: String) -> void:
 			state_received.emit(data)
 		"map_updated":
 			# Grid/scale change — forward without triggering camera reset
+			state_received.emit(data)
+		"fog_updated":
+			# Fog-only update — lightweight DM-authoritative reveal state
+			state_received.emit(data)
+		"fog_delta":
+			# Fog delta update — highest-frequency visibility channel
+			state_received.emit(data)
+		"fog_state_snapshot":
+			# Atomic fog gamestate snapshot (initial sync / manual resync)
+			state_received.emit(data)
+		"fog_state_snapshot_begin":
+			# Chunked fog snapshot start marker
+			state_received.emit(data)
+		"fog_state_snapshot_chunk":
+			# Chunked fog snapshot payload
+			state_received.emit(data)
+		"fog_state_snapshot_end":
+			# Chunked fog snapshot completion marker
 			state_received.emit(data)
 		"camera_update":
 			# DM moved the player view — apply immediately

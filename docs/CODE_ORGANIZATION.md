@@ -6,7 +6,7 @@ This document defines where code belongs after Phase 3.5 cleanup.
 
 - `scripts/core/`
   - App entry and process bootstrap logic.
-  - Current: `Main.gd`
+  - Current: `Main.gd`, `BackendRuntime.gd`
 
 - `scripts/ui/`
   - DM and player-facing window controllers and runtime UI composition.
@@ -14,7 +14,7 @@ This document defines where code belongs after Phase 3.5 cleanup.
 
 - `scripts/render/`
   - Shared map rendering and visual overlays.
-  - Current: `MapView.gd`, `GridOverlay.gd`, `IndicatorOverlay.gd`
+  - Current: `MapView.gd`, `GridOverlay.gd`, `FogOverlay.gd`, `IndicatorOverlay.gd`
 
 - `scripts/data/`
   - Serializable game data/resources and persistence-oriented models.
@@ -22,7 +22,7 @@ This document defines where code belongs after Phase 3.5 cleanup.
 
 - `scripts/player/`
   - Player runtime root/process orchestration.
-  - Current: `PlayerMain.gd`
+  - Current: `PlayerMain.gd`, `PlayerSprite.gd`
 
 - `scripts/network/`
   - Client-side network connection logic (player display side).

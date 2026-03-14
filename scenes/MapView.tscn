@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://mapView"]
+[gd_scene load_steps=4 format=3 uid="uid://mapView"]
 
 [ext_resource type="Script" path="res://scripts/render/MapView.gd" id="1_MapView"]
 [ext_resource type="Script" path="res://scripts/render/GridOverlay.gd" id="2_GridOverlay"]
+[ext_resource type="Script" path="res://scripts/fog/FogSystem.gd" id="3_FogOverlay"]
 
 [node name="MapView" type="Node2D"]
 script = ExtResource("1_MapView")
@@ -16,5 +17,12 @@ mouse_filter = 2
 script = ExtResource("2_GridOverlay")
 
 [node name="WallLayer" type="Node2D" parent="."]
+
+[node name="WallVisualLayer" type="Node2D" parent="."]
+
+[node name="ObjectLayer" type="Node2D" parent="."]
+
+[node name="FogOverlay" type="Node2D" parent="."]
+script = ExtResource("3_FogOverlay")
 
 [node name="TokenLayer" type="Node2D" parent="."]
