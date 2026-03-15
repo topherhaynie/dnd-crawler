@@ -1190,9 +1190,7 @@ func _build_profiles_dialog() -> void:
 	_profile_orientation_spin.min_value = 0
 	_profile_orientation_spin.max_value = 359
 	_profile_orientation_spin.step = 1
-	_profile_orientation_spin.value = 0
-	_profile_orientation_spin.suffix = "°"
-	form.add_child(_profile_orientation_spin)
+	# ...existing code...
 	_profile_orientation_spin.value = 0
 	_profile_orientation_spin.suffix = "°"
 	form.add_child(_profile_orientation_spin)
@@ -1478,7 +1476,23 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	p.darkvision_range = _profile_darkvision_spin.value
 	p.perception_mod = int(_profile_perception_spin.value)
 	p.input_type = _profile_input_type_option.get_item_id(_profile_input_type_option.selected)
-	p.input_id = _profile_input_id_edit.text.strip_edges()
+	# Prefer saving a stable player token rather than a numeric ephemeral peer id.
+	var raw_input_id := _profile_input_id_edit.text.strip_edges()
+	if raw_input_id.is_valid_int():
+		# If this numeric id corresponds to a live WS peer that has a seen
+		# token, prefer storing that token so profiles remain stable across
+		# reconnects. Falls back to numeric id if no token available.
+		var peer_id := int(raw_input_id)
+		var seen_raw = NetworkManager.get_peer_bound_player(peer_id)
+		var seen: String = ""
+		if seen_raw != null and str(seen_raw) != "":
+			seen = str(seen_raw)
+		if seen != "":
+			p.input_id = seen
+		else:
+			p.input_id = raw_input_id
+	else:
+		p.input_id = raw_input_id
 	if _profile_orientation_spin:
 		p.table_orientation = int(_profile_orientation_spin.value)
 

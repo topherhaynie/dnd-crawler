@@ -99,6 +99,8 @@ func step(delta: float) -> bool:
 		if token.has_method("set_vision_radius_px"):
 			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = _input_manager().get_vector(p.id)
+		if vec != Vector2.ZERO:
+			print("BackendRuntime: input for %s => %s" % [p.id, str(vec)])
 		token.set_movement_input(vec)
 		var prev_pos: Vector2 = token.global_position
 		token.step_authoritative_motion(delta, _profile_speed_px_per_second(p, map), max_bounds)

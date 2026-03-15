@@ -303,6 +303,14 @@
 
             ws.addEventListener("open", () => {
                 setStatus("Connected", "ok");
+                // Inform the server which player_id this peer represents so it
+                // can bind incoming input to the correct profile.
+                try {
+                    const pid = playerIdEl.value.trim();
+                    if (pid) {
+                        ws.send(JSON.stringify({ type: "bind", player_id: pid }));
+                    }
+                } catch (e) { }
                 startSendLoop();
             });
 
@@ -325,6 +333,14 @@
                 try { ws.close(); } catch (_) { }
             }
         });
+
+        // If this page is served by the game, default the host field
+        // to the page's hostname so mobile devices auto-connect to the server.
+        try {
+            if (location.protocol && location.protocol.startsWith("http") && location.hostname) {
+                hostEl.value = location.hostname;
+            }
+        } catch (e) { }
 
         applyKnobFromVector();
     </script>

@@ -22,6 +22,9 @@ var _server: WebSocketMultiplayerPeer = null
 # Maps WebSocket peer_id → player_id (set via DM profile bindings)
 # { peer_id (int): player_id (Variant) }
 var ws_bindings: Dictionary = {}
+## Last-seen player token (player_id field) per WS peer_id — helps the DM UI
+## show mobile Player IDs even when clients don't send an explicit 'bind'.
+var ws_last_seen_token: Dictionary = {}
 
 # Peer IDs of connected Player display processes (sent render state, not input)
 var _display_peers: Array[int] = []
@@ -91,9 +94,16 @@ func _drain_packets() -> void:
 
 func _handle_packet(raw: String, _peer_id: int) -> void:
 	var peer_id: int = _peer_id
+	# print("NetworkManager: raw packet from %d => %s" % [peer_id, raw])
 	var data = JSON.parse_string(raw)
 	if data == null or not data is Dictionary:
 		return # Silently discard malformed packets
+
+	# Record last-seen player_id token so UI can display it even without a bind
+	if data.has("player_id"):
+		var seen_token: String = str(data.get("player_id", "")).strip_edges()
+		if seen_token != "":
+			ws_last_seen_token[peer_id] = seen_token
 
 	# Route display-client handshake before applying input validation
 	if data.get("type", "") == "display":
@@ -101,6 +111,15 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			float(data.get("viewport_width", 1920)),
 			float(data.get("viewport_height", 1080)))
 		_register_display_peer(peer_id, vp)
+		return
+
+	# Allow mobile clients to bind their WebSocket peer to a player_id
+	if data.get("type", "") == "bind":
+		if data.has("player_id"):
+			var pid = str(data.get("player_id", "")).strip_edges()
+			if pid != "":
+				bind_peer(peer_id, pid)
+				print("NetworkManager: bound peer %d to player_id %s" % [peer_id, pid])
 		return
 
 	# Viewport resize report from an already-registered display peer
@@ -145,15 +164,82 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 func _resolve_packet_player_id(peer_id: int, data: Dictionary) -> String:
 	var bound: Variant = ws_bindings.get(peer_id, "")
 	if bound != null and str(bound) != "":
-		return str(bound)
+		# If the stored binding is already a canonical profile id, return it.
+		if _is_known_player_id(str(bound)):
+			return str(bound)
+		# Attempt to resolve a previously-bound token to a profile id in case
+		# the DM saved the profile after the client first connected.
+		var resolved_late := _lookup_profile_id(str(bound))
+		if resolved_late != "":
+			ws_bindings[peer_id] = resolved_late
+			print("NetworkManager: upgraded binding for peer %d -> profile %s (was %s)" % [peer_id, resolved_late, str(bound)])
+			return resolved_late
+		# Otherwise fall through to inspect the packet payload
 
 	if not data.has("player_id"):
 		return ""
 
-	var raw: Variant = data["player_id"]
-	if raw == null:
+	var raw: String = str(data.get("player_id", "")).strip_edges()
+	if raw == "":
 		return ""
-	return str(raw).strip_edges()
+
+	# If the incoming value is already a canonical profile id, accept it.
+	var profile: PlayerProfile = _game_state().get_profile_by_id(raw) as PlayerProfile
+	if profile != null:
+		return raw
+
+	# Otherwise attempt to match by profile.input_id or profile.player_name
+	for p in _game_state().profiles:
+		if not p is PlayerProfile:
+			continue
+		var pp := p as PlayerProfile
+		if str(pp.input_id) == raw or str(pp.player_name) == raw:
+			return pp.id
+
+	# No match found
+	return ""
+
+
+func _lookup_profile_id(token: String) -> String:
+	if token.is_empty():
+		return ""
+	# Direct id
+	var profile: PlayerProfile = _game_state().get_profile_by_id(token) as PlayerProfile
+	if profile != null:
+		return token
+	# Match input_id or player_name
+	for p in _game_state().profiles:
+		if not p is PlayerProfile:
+			continue
+		var pp := p as PlayerProfile
+		if str(pp.input_id) == token or str(pp.player_name) == token:
+			return pp.id
+	return ""
+
+
+func get_peer_bound_player(peer_id: int) -> String:
+	var v: String = str(ws_bindings.get(peer_id, ""))
+	if v != "":
+		return v
+	var seen: String = str(ws_last_seen_token.get(peer_id, ""))
+	if seen != "":
+		return seen
+	return ""
+
+
+func get_peer_for_token(token: String) -> int:
+	if token.is_empty():
+		return -1
+	# First look for explicit binding
+	for key in ws_bindings.keys():
+		var val: String = str(ws_bindings.get(key, ""))
+		if val != "" and val == token:
+			return int(key)
+	# Then look for last-seen tokens
+	for key in ws_last_seen_token.keys():
+		if str(ws_last_seen_token.get(key, "")) == token:
+			return int(key)
+	return -1
 
 
 func _is_valid_axis_value(value: Variant) -> bool:

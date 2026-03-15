@@ -12,7 +12,7 @@ config_version=5
 
 config/name="DnD Crawler"
 run/main_scene="res://scenes/Main.tscn"
-config/features=PackedStringArray("4.5", "Forward Plus")
+config/features=PackedStringArray("4.5", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 config/main_scene="res://scenes/Main.tscn"
 
@@ -22,6 +22,7 @@ GameState="*res://scripts/autoloads/GameState.gd"
 InputManager="*res://scripts/autoloads/InputManager.gd"
 NetworkManager="*res://scripts/autoloads/NetworkManager.gd"
 FogManager="*res://scripts/autoloads/FogManager.gd"
+HttpServer="*res://scripts/autoloads/HttpServer.cs"
 
 [display]
 

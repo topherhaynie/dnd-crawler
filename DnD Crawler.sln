@@ -1,0 +1,19 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnD Crawler", "DnD Crawler.csproj", "{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+	Debug|Any CPU = Debug|Any CPU
+	ExportDebug|Any CPU = ExportDebug|Any CPU
+	ExportRelease|Any CPU = ExportRelease|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.ExportDebug|Any CPU.ActiveCfg = ExportDebug|Any CPU
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.ExportDebug|Any CPU.Build.0 = ExportDebug|Any CPU
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.ExportRelease|Any CPU.ActiveCfg = ExportRelease|Any CPU
+		{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}.ExportRelease|Any CPU.Build.0 = ExportRelease|Any CPU
+	EndGlobalSection
+EndGlobal
