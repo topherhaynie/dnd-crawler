@@ -24,21 +24,27 @@ const PlayerMainScene: PackedScene = preload("res://scenes/PlayerMain.tscn")
 func _game_state() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("GameState") as Node
+		var svc: Object = registry.get_service("GameState")
 		if svc == null:
-			svc = registry.get_service("GameStateAdapter") as Node
-		return svc
+			var adapter: Object = registry.get_service("GameStateAdapter")
+			if adapter != null:
+				push_warning("Main: 'GameState' service missing — falling back to 'GameStateAdapter'")
+				svc = adapter
+		return svc as Node
 	return null
 
 
 func _network_manager() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Network") as Node
+		var svc: Object = registry.get_service("Network")
 		if svc == null:
-			svc = registry.get_service("NetworkAdapter") as Node
+			var adapter: Object = registry.get_service("NetworkAdapter")
+			if adapter != null:
+				push_warning("Main: 'Network' service missing — falling back to 'NetworkAdapter'")
+				svc = adapter
 		if svc != null:
-			return svc
+			return svc as Node
 	return null
 
 

@@ -412,6 +412,24 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
   - `MapService` currently focuses on metadata, serialization, and signaling. Fog and visibility remain owned by `FogService` and `FogAdapter` as before.
   - Consumer migration should be done incrementally (start with `DMWindow` map open flow) to avoid accidental behavioral changes; the `MapAdapter` shim preserves legacy method names for safe migration.
 
+### PlayerWindow migration (2026-03-16)
+
+- **Actions performed:**
+  - Updated `scripts/ui/PlayerWindow.gd` map handlers to notify the registered `Map` service (`MapService` / `MapAdapter`) when receiving `map_loaded` and `map_updated` packets from the DM.
+  - Kept local `MapView` behaviour unchanged (still calls `_map_view.load_map()`), ensuring display parity while centralising Map state in the service.
+
+- **Status:** completed — PlayerWindow now informs the Map service on load/update; fallback to original behaviour remains if the service is not present.
+
+### BackendRuntime migration (2026-03-16)
+
+- **Actions performed:**
+  - Added a `_map()` helper to `scripts/core/BackendRuntime.gd` that returns the current `MapData` by preferring the registered `Map` service (`MapService` / `MapAdapter`) and falling back to the local `_map_view.get_map()`.
+  - Replaced direct `_map_view.get_map()` usages with `_map()` in key code paths: `reset_for_new_map()`, `step()`, `build_player_state_payload()`, `_ensure_spawn_positions()`, and token state application.
+
+- **Status:** completed — BackendRuntime now reads map state from the Map service when present, keeping behaviour identical when the service is not registered.
+
+
+
 
 - Action: Centralised Network access in `DMWindow.gd` behind helper wrappers (`_nm_*`) that prefer the `ServiceRegistry` and fall back to the legacy `NetworkManager` autoload when present.
 - Files changed: `scripts/ui/DMWindow.gd` — added `_nm_*` wrappers and migrated broadcast/send/bind call sites to use the wrappers.

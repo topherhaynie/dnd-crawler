@@ -170,17 +170,20 @@ func _ready() -> void:
 		gs_node.profiles_changed.connect(_on_profiles_changed)
 	_apply_profile_bindings()
 	_apply_ui_scale()
-	print("DMWindow: ready (Phase 2 complete — map CRUD, calibration offset)")
+	print("DMWindow: ready")
 
 
 func _network() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Network") as Node
+		var svc: Object = registry.get_service("Network")
 		if svc == null:
-			svc = registry.get_service("NetworkAdapter") as Node
+			var adapter: Object = registry.get_service("NetworkAdapter")
+			if adapter != null:
+				push_warning("DMWindow: 'Network' service missing — falling back to 'NetworkAdapter'")
+				svc = adapter
 		if svc != null:
-			return svc
+			return svc as Node
 	return null
 
 
@@ -250,20 +253,41 @@ func _nm_is_display_peer_connected(peer_id: int) -> bool:
 func _game_state() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("GameState") as Node
+		var svc: Object = registry.get_service("GameState")
 		if svc == null:
-			svc = registry.get_service("GameStateAdapter") as Node
-		return svc
+			var adapter: Object = registry.get_service("GameStateAdapter")
+			if adapter != null:
+				push_warning("DMWindow: 'GameState' service missing — falling back to 'GameStateAdapter'")
+				svc = adapter
+		return svc as Node
 	return null
 
 
 func _map_service() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Map") as Node
+		var svc: Object = registry.get_service("Map")
 		if svc == null:
-			svc = registry.get_service("MapAdapter") as Node
-		return svc
+			var adapter: Object = registry.get_service("MapAdapter")
+			if adapter != null:
+				push_warning("DMWindow: 'Map' service missing — falling back to 'MapAdapter'")
+				svc = adapter
+		return svc as Node
+	return null
+
+
+func _map() -> MapData:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var ms: Object = registry.get_service("Map")
+		if ms == null:
+			ms = registry.get_service("MapAdapter")
+		if ms != null and ms.has_method("get_map"):
+			var m: MapData = ms.get_map() as MapData
+			if m != null:
+				return m
+	if _map_view != null and _map_view.has_method("get_map"):
+		return _map_view.get_map() as MapData
 	return null
 
 
@@ -800,7 +824,7 @@ func _queue_initial_display_sync(peer_id: int, delay_sec: float) -> void:
 
 
 func _send_initial_display_sync(peer_id: int) -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		return
 	_update_viewport_indicator()
@@ -843,7 +867,7 @@ func _on_client_disconnected(peer_id: int) -> void:
 	_initial_sync_attempt_by_peer.erase(peer_id)
 
 
-func _build_fog_state_snapshot(_map: MapData) -> Dictionary:
+func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 	var fog_state_png: PackedByteArray = PackedByteArray()
 	if _map_view and _map_view.has_method("get_fog_state"):
 		fog_state_png = await _map_view.get_fog_state()
@@ -852,7 +876,10 @@ func _build_fog_state_snapshot(_map: MapData) -> Dictionary:
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
 		if fog_manager == null:
-			fog_manager = registry.get_service("FogAdapter")
+			var fog_adapter: Object = registry.get_service("FogAdapter")
+			if fog_adapter != null:
+				push_warning("DMWindow: 'Fog' service missing — falling back to 'FogAdapter'")
+				fog_manager = fog_adapter
 	if not fog_state_png.is_empty() and fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
@@ -1076,7 +1103,7 @@ func _on_delete_wall_pressed() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_grid_type_selected(index: int) -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		return
 	map.grid_type = _grid_option.get_item_id(index)
@@ -1091,7 +1118,7 @@ func _on_grid_type_selected(index: int) -> void:
 # ---------------------------------------------------------------------------
 
 func _on_calibrate_pressed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		_set_status("Load a map first.")
 		return
@@ -1124,7 +1151,7 @@ func _on_calibration_done(map: MapData) -> void:
 # ---------------------------------------------------------------------------
 
 func _on_manual_scale_pressed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		_set_status("Load a map first.")
 		return
@@ -1139,7 +1166,7 @@ func _on_manual_scale_pressed() -> void:
 
 
 func _on_manual_scale_confirmed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		return
 	var px_per_cell := _scale_px_spin.value
@@ -1162,7 +1189,7 @@ func _on_manual_scale_confirmed() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_set_offset_pressed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		_set_status("Load a map first.")
 		return
@@ -1172,7 +1199,7 @@ func _on_set_offset_pressed() -> void:
 
 
 func _on_offset_confirmed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		return
 	map.grid_offset = Vector2(_solo_offset_x_spin.value, _solo_offset_y_spin.value)
@@ -1969,7 +1996,7 @@ func _on_map_bundle_selected(path: String) -> void:
 
 
 func _on_save_map_pressed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		_set_status("Nothing to save.")
 		return
@@ -1991,7 +2018,7 @@ func _on_save_map_pressed() -> void:
 
 
 func _on_save_map_as_pressed() -> void:
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		_set_status("Nothing to save.")
 		return
@@ -2003,7 +2030,7 @@ func _on_save_map_as_pressed() -> void:
 
 func _save_map_as_path(bundle_path: String) -> void:
 	## Copy the current map into a new .map bundle and switch to it.
-	var map: MapData = _map_view.get_map()
+	var map: MapData = _map()
 	if map == null:
 		return
 	_ensure_bundle_dir(bundle_path)
@@ -2105,7 +2132,7 @@ func _update_dm_override_input() -> void:
 	InputManager.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
 
 
-func _on_map_fog_changed(_map: MapData) -> void:
+func _on_map_fog_changed(_map_data: MapData) -> void:
 	if not _ENABLE_CONTINUOUS_FOG_SYNC:
 		_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 		return
@@ -2211,7 +2238,7 @@ func _broadcast_fog_state_after_frame() -> void:
 	if _map_view == null:
 		_fog_snapshot_in_flight = false
 		return
-	var map: MapData = _map_view.get_map()
+	var map: MapData = _map()
 	if map == null:
 		_fog_snapshot_in_flight = false
 		return
@@ -2232,7 +2259,7 @@ func _broadcast_fog_truth_state() -> void:
 	if _nm_displays_under_backpressure():
 		_queue_fog_snapshot_sync(0.5)
 		return
-	var map: MapData = _map_view.get_map()
+	var map: MapData = _map()
 	if map == null:
 		return
 	_queue_fog_truth_chunked(map)

@@ -35,6 +35,21 @@ func _ready() -> void:
 	print("PlayerWindow: ready — awaiting map from DM")
 
 
+func _map() -> MapData:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var ms: Object = registry.get_service("Map")
+		if ms == null:
+			ms = registry.get_service("MapAdapter")
+		if ms != null and ms.has_method("get_map"):
+			var m: MapData = ms.get_map() as MapData
+			if m != null:
+				return m
+	if _map_view != null and _map_view.has_method("get_map"):
+		return _map_view.get_map() as MapData
+	return null
+
+
 # ---------------------------------------------------------------------------
 # Called by PlayerMain when a state packet arrives from the DM
 # ---------------------------------------------------------------------------
@@ -81,6 +96,18 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 		push_warning("PlayerWindow: received empty map dict")
 		return
 	var map: MapData = MapData.from_dict(map_dict)
+	# Keep Map service in sync if available
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var ms: Object = registry.get_service("Map")
+		if ms == null:
+			var map_adapter: Object = registry.get_service("MapAdapter")
+			if map_adapter != null:
+				push_warning("PlayerWindow: 'Map' service missing — falling back to 'MapAdapter'")
+				ms = map_adapter
+		if ms != null and ms.has_method("load_map"):
+			ms.load_map(map)
+
 	_map_view.load_map(map)
 	_has_loaded_map = true
 	_apply_cached_fog_stamp()
@@ -99,6 +126,18 @@ func _handle_map_updated(map_dict: Dictionary) -> void:
 		return
 	var cam_state: Dictionary = _map_view.get_camera_state()
 	var map: MapData = MapData.from_dict(map_dict)
+	# Inform Map service of updates when available
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var ms: Object = registry.get_service("Map")
+		if ms == null:
+			var map_adapter: Object = registry.get_service("MapAdapter")
+			if map_adapter != null:
+				push_warning("PlayerWindow: 'Map' service missing — falling back to 'MapAdapter'")
+				ms = map_adapter
+		if ms != null and ms.has_method("update_map"):
+			ms.update_map(map)
+
 	_map_view.load_map(map)
 	_has_loaded_map = true
 	_apply_cached_fog_stamp()
@@ -126,7 +165,7 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 	if not _has_loaded_map:
 		_pending_fog_snapshot = data.duplicate(true)
 		return
-	if _map_view == null or _map_view.get_map() == null:
+	if _map_view == null or _map() == null:
 		_pending_fog_snapshot = data.duplicate(true)
 		return
 	var fog_state_b64 := str(data.get("fog_state_png_b64", ""))
@@ -135,7 +174,10 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
 		if fog_manager == null:
-			fog_manager = registry.get_service("FogAdapter")
+			var fog_adapter: Object = registry.get_service("FogAdapter")
+			if fog_adapter != null:
+				push_warning("PlayerWindow: 'Fog' service missing — falling back to 'FogAdapter'")
+				fog_manager = fog_adapter
 	if fog_state_b64.is_empty():
 		push_warning("PlayerWindow: fog_state_snapshot missing fog_state_png_b64")
 		return
@@ -271,7 +313,7 @@ func _handle_fog_truth_end(data: Dictionary) -> void:
 
 
 func _handle_fog_updated(data: Dictionary) -> void:
-	if not _has_loaded_map or _map_view == null or _map_view.get_map() == null:
+	if not _has_loaded_map or _map() == null:
 		_pending_fog_deltas.append(data.duplicate(true))
 		return
 	if not _map_view.has_method("apply_fog_state"):
@@ -282,7 +324,7 @@ func _handle_fog_updated(data: Dictionary) -> void:
 
 
 func _handle_fog_delta(data: Dictionary) -> void:
-	if not _has_loaded_map or _map_view == null or _map_view.get_map() == null:
+	if not _has_loaded_map or _map() == null:
 		_pending_fog_deltas.append(data.duplicate(true))
 		return
 	if not _map_view.has_method("apply_fog_delta"):
@@ -383,7 +425,7 @@ func _apply_token_size_from_map(map: MapData) -> void:
 func _apply_pending_fog_packets() -> void:
 	if _map_view == null:
 		return
-	if _map_view.get_map() == null:
+	if _map() == null:
 		return
 	if not _pending_fog_snapshot.is_empty():
 		var snapshot_packet := _pending_fog_snapshot

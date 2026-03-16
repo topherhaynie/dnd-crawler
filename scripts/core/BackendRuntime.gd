@@ -40,6 +40,21 @@ func _input_manager() -> Node:
 	return get_node("/root/InputManager")
 
 
+func _map() -> MapData:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var ms: Object = registry.get_service("Map")
+		if ms == null:
+			ms = registry.get_service("MapAdapter")
+		if ms != null and ms.has_method("get_map"):
+			var m: MapData = ms.get_map() as MapData
+			if m != null:
+				return m
+	if _map_view != null and _map_view.has_method("get_map"):
+		return _map_view.get_map() as MapData
+	return null
+
+
 func configure(map_view: Node2D) -> void:
 	_map_view = map_view
 
@@ -48,7 +63,7 @@ func reset_for_new_map() -> void:
 	_spawn_initialized = false
 	_force_los_reveal = true
 	_los_prev_origin_by_token.clear()
-	_rebuild_cached_wall_edges(_map_view.get_map() if _map_view else null)
+	_rebuild_cached_wall_edges(_map())
 	sync_profiles()
 	_ensure_spawn_positions()
 
@@ -77,7 +92,7 @@ func sync_profiles() -> void:
 func step(delta: float) -> bool:
 	if _map_view == null:
 		return false
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	if map == null:
 		return false
 	var wall_sig := _wall_signature(map)
@@ -158,7 +173,7 @@ func build_player_state_payload() -> Array:
 	var players: Array = []
 	if _map_view == null:
 		return players
-	var map: MapData = _map_view.get_map() if _map_view else null
+	var map: MapData = _map()
 	var token_diameter_px := _token_diameter_px_for_map(map) if map else 48.0
 	for profile in _game_state().profiles:
 		if not profile is PlayerProfile:
@@ -188,7 +203,7 @@ func build_player_state_payload() -> Array:
 func _ensure_spawn_positions() -> void:
 	if _spawn_initialized or _map_view == null:
 		return
-	var map: MapData = _map_view.get_map()
+	var map: MapData = _map()
 	if map == null:
 		return
 	var map_size: Vector2 = _map_view.map_image.texture.get_size() if _map_view.map_image and _map_view.map_image.texture else Vector2(1920, 1080)
@@ -219,7 +234,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 				"base_speed": profile.base_speed,
 				"vision_type": profile.vision_type,
 				"darkvision_range": profile.darkvision_range,
-				"vision_radius_px": _profile_vision_radius_px(profile, _map_view.get_map() if _map_view else null),
+				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 				"perception_mod": profile.perception_mod,
 				"is_dashing": bool(profile.extras.get("is_dashing", false)),
 				"vision_scale": _vision_scale_for_profile(profile),
@@ -246,7 +261,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 		"base_speed": profile.base_speed,
 		"vision_type": profile.vision_type,
 		"darkvision_range": profile.darkvision_range,
-		"vision_radius_px": _profile_vision_radius_px(profile, _map_view.get_map() if _map_view else null),
+			"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 		"perception_mod": profile.perception_mod,
 		"is_dashing": bool(profile.extras.get("is_dashing", false)),
 		"vision_scale": _vision_scale_for_profile(profile),
@@ -288,7 +303,10 @@ func _vision_scale_for_profile(profile: PlayerProfile) -> float:
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
 		if fog_manager == null:
-			fog_manager = registry.get_service("FogAdapter")
+			var fog_adapter: Object = registry.get_service("FogAdapter")
+			if fog_adapter != null:
+				push_warning("BackendRuntime: 'Fog' service missing — falling back to 'FogAdapter'")
+				fog_manager = fog_adapter
 	if fog_manager and fog_manager.has_method("compute_dash_vision_scale"):
 		scale = float(fog_manager.compute_dash_vision_scale(dash))
 	if fog_manager and fog_manager.has_method("set_vision_scale"):

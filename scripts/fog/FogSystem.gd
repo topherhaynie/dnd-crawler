@@ -54,6 +54,19 @@ var _last_los_bake_msec: int = 0
 var _los_dirty_regions: Array = []
 
 
+func _fog_service() -> Object:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc: Object = registry.get_service("Fog")
+		if svc == null:
+			var adapter: Object = registry.get_service("FogAdapter")
+			if adapter != null:
+				push_warning("FogSystem: 'Fog' service missing — falling back to 'FogAdapter'")
+				return adapter
+		return svc
+	return null
+
+
 func _ready() -> void:
 	_build_nodes()
 	if _live_lights_viewport:
@@ -157,12 +170,7 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 	_prev_los_width = 0
 	_prev_los_height = 0
 
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			fog_manager = registry.get_service("FogAdapter")
+	var fog_manager: Object = _fog_service()
 	if fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(buffer)
 	return true
@@ -188,10 +196,8 @@ func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> voi
 	if _history_image == null or _history_image.is_empty():
 		return
 
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
-		if svc != null and svc.has_method("set_history_seed_from_hidden"):
+	var svc := _fog_service()
+	if svc != null and svc.has_method("set_history_seed_from_hidden"):
 			var res := svc.set_history_seed_from_hidden(_history_image, cell_px, hidden_cells) as Dictionary
 			if res != null:
 				_history_image = res.get("history_image", _history_image) as Image
@@ -234,14 +240,12 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 
 	var safe_cell_px := maxi(1, cell_px if cell_px > 0 else _history_seed_cell_px)
 	var changed := false
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
-		if svc != null and svc.has_method("apply_history_seed_delta"):
-			changed = svc.apply_history_seed_delta(_history_image, revealed_cells, hidden_cells, safe_cell_px)
-			if changed:
-				_history_dirty = true
-			return
+	var svc := _fog_service()
+	if svc != null and svc.has_method("apply_history_seed_delta"):
+		changed = svc.apply_history_seed_delta(_history_image, revealed_cells, hidden_cells, safe_cell_px)
+		if changed:
+			_history_dirty = true
+		return
 
 	# Fallback: original implementation
 
@@ -270,7 +274,7 @@ func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> 
 
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("apply_history_brush"):
 			return svc.apply_history_brush(_history_image, world_pos, radius_px, reveal)
 
@@ -303,7 +307,7 @@ func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	var changed := false
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("apply_history_rect"):
 			changed = svc.apply_history_rect(_history_image, a, b, reveal)
 			if changed:
@@ -345,7 +349,7 @@ func export_hidden_cells_from_runtime(_cell_px: int) -> Array:
 func export_hidden_cells_for_sync(_cell_px: int) -> Array:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("export_hidden_cells_for_sync"):
 			return svc.export_hidden_cells_for_sync(_history_image, _cell_px)
 	# Fallback: no-op
@@ -355,7 +359,7 @@ func export_hidden_cells_for_sync(_cell_px: int) -> Array:
 func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("commit_runtime_history_to_seed"):
 			var res := svc.commit_runtime_history_to_seed(_history_image, _cell_px) as Dictionary
 			if res != null:
@@ -592,7 +596,7 @@ func _get_active_history_texture() -> Texture2D:
 func _seed_gpu_history_from_image(image: Image) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("seed_gpu_history_from_image"):
 			var res := svc.seed_gpu_history_from_image(_history_viewports, _history_merge_rects, image, _history_seed_texture, LOS_BAKE_GAIN)
 			if res != null and res.get("ok", false):
@@ -700,7 +704,7 @@ func _ensure_history_storage(size: Vector2) -> void:
 func _upload_history_texture() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("upload_history_texture"):
 			var res := svc.upload_history_texture(_history_image, _history_gpu_ready, _history_texture as ImageTexture, _history_viewports, _history_merge_rects)
 			if res != null and res.get("ok", false):
@@ -768,7 +772,7 @@ func _bake_live_los_into_history() -> void:
 	# into the service while preserving the existing FogSystem fallback.
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("merge_live_los_into_history"):
 			var result := svc.merge_live_los_into_history(_history_image, _live_lights_viewport, _prev_los_data, _prev_los_width, _prev_los_height, _los_dirty_regions, LOS_BAKE_GAIN) as Dictionary
 			if result != null:
@@ -858,7 +862,7 @@ func _bake_live_los_into_history() -> void:
 func _should_bake_los_now() -> bool:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
+		var svc := _fog_service() as FogService
 		if svc != null and svc.has_method("should_bake_los_now"):
 			return svc.should_bake_los_now(_los_bake_pending, _last_los_bake_msec, LOS_BAKE_INTERVAL_MSEC)
 
