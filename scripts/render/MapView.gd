@@ -114,6 +114,18 @@ var _panning: bool = false
 var _pan_start_mouse: Vector2 = Vector2.ZERO
 var _pan_start_cam: Vector2 = Vector2.ZERO
 
+
+func _set_active_tool(tool: Tool) -> void:
+	# Clear transient input state when switching tools to avoid "stuck" drags
+	active_tool = tool
+	_panning = false
+	_dragging_indicator = false
+	_wall_rect_dragging = false
+	_fog_rect_dragging = false
+	_wall_dragging_handle = -1
+	if typeof(_wall_drag_start_points) == TYPE_ARRAY:
+		_wall_drag_start_points.clear()
+
 signal viewport_indicator_moved(new_center: Vector2)
 signal fog_changed(map: MapData)
 @warning_ignore("unused_signal")
@@ -245,7 +257,7 @@ func force_fog_sync() -> void:
 
 func set_wall_rect_mode(enabled: bool) -> void:
 	if enabled:
-		active_tool = Tool.WALL
+		_set_active_tool(Tool.WALL)
 		wall_subtool = "rect"
 		_clear_wall_rect_preview()
 		_clear_wall_polygon_preview()
@@ -253,7 +265,7 @@ func set_wall_rect_mode(enabled: bool) -> void:
 		_set_selected_wall(-1)
 	else:
 		if active_tool == Tool.WALL:
-			active_tool = Tool.SELECT
+			_set_active_tool(Tool.SELECT)
 		wall_subtool = "none"
 		_clear_wall_rect_preview()
 		_clear_wall_polygon_preview()
@@ -262,7 +274,7 @@ func set_wall_rect_mode(enabled: bool) -> void:
 
 func set_wall_polygon_mode(enabled: bool) -> void:
 	if enabled:
-		active_tool = Tool.WALL
+		_set_active_tool(Tool.WALL)
 		wall_subtool = "polygon"
 		_clear_wall_polygon_preview()
 		_clear_wall_rect_preview()
@@ -270,7 +282,7 @@ func set_wall_polygon_mode(enabled: bool) -> void:
 		_set_selected_wall(-1)
 	else:
 		if active_tool == Tool.WALL:
-			active_tool = Tool.SELECT
+			_set_active_tool(Tool.SELECT)
 		wall_subtool = "none"
 		_clear_wall_polygon_preview()
 		_clear_wall_rect_preview()
@@ -544,11 +556,20 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 					return true
 				_set_selected_wall(-1)
 				return false
+			# On mouse release: only consume the event if we actually performed a wall drag/move
+			var prev_handle := _wall_dragging_handle
 			_wall_dragging_handle = -1
+			var handled_release: bool = false
+			if prev_handle >= 0:
+				handled_release = true
 			if not _wall_drag_start_points.is_empty():
 				walls_changed.emit(_map)
 				_wall_drag_start_points.clear()
-			return true
+				handled_release = true
+			if handled_release:
+				return true
+			# Not related to wall drag — allow outer handler to process (e.g., indicator/pan release)
+			return false
 		if event is InputEventMouseMotion:
 			var mm := event as InputEventMouseMotion
 			if _wall_dragging_handle >= 0:

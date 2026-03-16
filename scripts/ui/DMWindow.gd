@@ -903,10 +903,10 @@ func _on_tool_changed(tool: int) -> void:
 	if _map_view:
 		match tool:
 			0:
-				_map_view.active_tool = _map_view.Tool.SELECT
+				_map_view._set_active_tool(_map_view.Tool.SELECT)
 				_set_status("Tool: Select")
 			1:
-				_map_view.active_tool = _map_view.Tool.PAN
+				_map_view._set_active_tool(_map_view.Tool.PAN)
 				_set_status("Tool: Pan  (left-drag to pan)")
 
 
@@ -975,7 +975,7 @@ func _on_calibrate_pressed() -> void:
 		_set_status("Load a map first.")
 		return
 	# Ensure we're in Select mode during calibration (no accidental drag pan)
-	_map_view.active_tool = 0 # Tool.SELECT
+	_map_view._set_active_tool(0) # Tool.SELECT
 	_select_btn.button_pressed = true
 	# Pre-fill offset spinboxes from current map data
 	_offset_x_spin.value = map.grid_offset.x
