@@ -157,7 +157,12 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 	_prev_los_width = 0
 	_prev_los_height = 0
 
-	var fog_manager := get_node_or_null("/root/FogManager")
+	var fog_manager: Object = null
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		fog_manager = registry.get_service("Fog")
+	if fog_manager == null:
+		fog_manager = get_node_or_null("/root/FogManager")
 	if fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(buffer)
 	return true

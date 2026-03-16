@@ -23,6 +23,7 @@ InputManager="*res://scripts/autoloads/InputManager.gd"
 NetworkManager="*res://scripts/autoloads/NetworkManager.gd"
 FogManager="*res://scripts/autoloads/FogManager.gd"
 HttpServer="*res://scripts/autoloads/HttpServer.cs"
+ServiceBootstrap="*res://scripts/autoloads/ServiceBootstrap.gd"
 
 [display]
 

@@ -130,7 +130,12 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 		_pending_fog_snapshot = data.duplicate(true)
 		return
 	var fog_state_b64 := str(data.get("fog_state_png_b64", ""))
-	var fog_manager := get_node_or_null("/root/FogManager")
+	var fog_manager: Object = null
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		fog_manager = registry.get_service("Fog")
+	if fog_manager == null:
+		fog_manager = get_node_or_null("/root/FogManager")
 	if fog_state_b64.is_empty():
 		push_warning("PlayerWindow: fog_state_snapshot missing fog_state_png_b64")
 		return
@@ -291,7 +296,12 @@ func _handle_fog_delta(data: Dictionary) -> void:
 func _apply_cached_fog_stamp() -> void:
 	if _map_view == null:
 		return
-	var fog_manager := get_node_or_null("/root/FogManager")
+	var fog_manager: Object = null
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		fog_manager = registry.get_service("Fog")
+	if fog_manager == null:
+		fog_manager = get_node_or_null("/root/FogManager")
 	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
 		return
 	var cached := fog_manager.get_fog_state() as PackedByteArray

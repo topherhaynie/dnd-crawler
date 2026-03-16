@@ -277,7 +277,12 @@ func _pixels_per_5ft(map: MapData) -> float:
 func _vision_scale_for_profile(profile: PlayerProfile) -> float:
 	var dash := bool(profile.extras.get("is_dashing", false))
 	var scale := 0.5 if dash else 1.0
-	var fog_manager := get_node_or_null("/root/FogManager")
+	var fog_manager: Object = null
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		fog_manager = registry.get_service("Fog")
+	if fog_manager == null:
+		fog_manager = get_node_or_null("/root/FogManager")
 	if fog_manager and fog_manager.has_method("compute_dash_vision_scale"):
 		scale = float(fog_manager.compute_dash_vision_scale(dash))
 	if fog_manager and fog_manager.has_method("set_vision_scale"):

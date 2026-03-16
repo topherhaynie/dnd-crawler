@@ -731,7 +731,12 @@ func _build_fog_state_snapshot(_map: MapData) -> Dictionary:
 	var fog_state_png: PackedByteArray = PackedByteArray()
 	if _map_view and _map_view.has_method("get_fog_state"):
 		fog_state_png = await _map_view.get_fog_state()
-	var fog_manager := get_node_or_null("/root/FogManager")
+	var fog_manager: Object = null
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		fog_manager = registry.get_service("Fog")
+	if fog_manager == null:
+		fog_manager = get_node_or_null("/root/FogManager")
 	if not fog_state_png.is_empty() and fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
