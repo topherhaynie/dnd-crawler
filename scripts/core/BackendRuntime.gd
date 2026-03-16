@@ -99,8 +99,8 @@ func step(delta: float) -> bool:
 		if token.has_method("set_vision_radius_px"):
 			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = _input_manager().get_vector(p.id)
-		if vec != Vector2.ZERO:
-			print("BackendRuntime: input for %s => %s" % [p.id, str(vec)])
+		# if vec != Vector2.ZERO:
+		# 	print("BackendRuntime: input for %s => %s" % [p.id, str(vec)])
 		token.set_movement_input(vec)
 		var prev_pos: Vector2 = token.global_position
 		token.step_authoritative_motion(delta, _profile_speed_px_per_second(p, map), max_bounds)
@@ -281,8 +281,8 @@ func _vision_scale_for_profile(profile: PlayerProfile) -> float:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
-	if fog_manager == null:
-		fog_manager = get_node_or_null("/root/FogManager")
+		if fog_manager == null:
+			fog_manager = registry.get_service("FogAdapter")
 	if fog_manager and fog_manager.has_method("compute_dash_vision_scale"):
 		scale = float(fog_manager.compute_dash_vision_scale(dash))
 	if fog_manager and fog_manager.has_method("set_vision_scale"):

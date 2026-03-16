@@ -1,4 +1,4 @@
-extends Node
+extends SceneTree
 
 func _ready() -> void:
     var FogScript: Script = load("res://scripts/services/FogService.gd")
@@ -20,6 +20,5 @@ func _ready() -> void:
     assert(s.enabled == false)
 
     print("test_fog_service: PASS")
-    # If run under headless Godot, quit with success code
-    if Engine.has_singleton("OS"):
-        get_tree().quit(0)
+    # Quit with success code
+    self.quit(0)

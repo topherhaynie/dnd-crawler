@@ -8,17 +8,17 @@ func _ready() -> void:
 
     var registry: ServiceRegistry = ServiceRegistryScript.new() as ServiceRegistry
     registry.name = "ServiceRegistry"
-    get_tree().root.add_child(registry)
+    get_tree().root.call_deferred("add_child", registry)
 
     var fog: FogService = FogServiceScript.new() as FogService
     fog.name = "FogService"
-    get_tree().root.add_child(fog)
+    get_tree().root.call_deferred("add_child", fog)
 
     var adapter: FogAdapter = FogAdapterScript.new() as FogAdapter
     adapter.name = "FogAdapter"
     if adapter.has_method("set_service"):
         adapter.set_service(fog)
-    get_tree().root.add_child(adapter)
+    get_tree().root.call_deferred("add_child", adapter)
 
     # Register with runtime conformance checks (required methods list mirrors IFogService)
     registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])

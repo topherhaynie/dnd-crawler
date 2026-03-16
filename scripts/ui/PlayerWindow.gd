@@ -134,8 +134,8 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
-	if fog_manager == null:
-		fog_manager = get_node_or_null("/root/FogManager")
+		if fog_manager == null:
+			fog_manager = registry.get_service("FogAdapter")
 	if fog_state_b64.is_empty():
 		push_warning("PlayerWindow: fog_state_snapshot missing fog_state_png_b64")
 		return
@@ -300,8 +300,8 @@ func _apply_cached_fog_stamp() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
-	if fog_manager == null:
-		fog_manager = get_node_or_null("/root/FogManager")
+		if fog_manager == null:
+			fog_manager = registry.get_service("FogAdapter")
 	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
 		return
 	var cached := fog_manager.get_fog_state() as PackedByteArray
