@@ -397,6 +397,21 @@ Notes & next steps:
 Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-progress).
 
 ## Update: DM UI & NetworkManager sweep (2026-03-16)
+### MapService migration started (2026-03-16)
+
+- **Actions performed:**
+  - Added `scripts/protocols/IMapService.gd` as the protocol contract for map management.
+  - Implemented `scripts/services/MapService.gd` to own `MapData` lifecycle, load/save bundle JSON, and emit `map_loaded` / `map_updated` signals.
+  - Added `scripts/registry/MapAdapter.gd` to provide a backward-compatible shim that forwards legacy API calls to the registered Map service.
+  - Wired `MapService` and `MapAdapter` into `scripts/autoloads/ServiceBootstrap.gd` and registered them with `ServiceRegistry` (required methods: `get_map`, `load_map`, `load_map_from_bundle`).
+  - Recorded these steps in the migration TODO list.
+
+- **Status:** in-progress — service implemented and registered; next tasks are migrating a consumer to use the registry and adding unit tests for map load/save and basic state emissions.
+
+- **Notes / caveats:**
+  - `MapService` currently focuses on metadata, serialization, and signaling. Fog and visibility remain owned by `FogService` and `FogAdapter` as before.
+  - Consumer migration should be done incrementally (start with `DMWindow` map open flow) to avoid accidental behavioral changes; the `MapAdapter` shim preserves legacy method names for safe migration.
+
 
 - Action: Centralised Network access in `DMWindow.gd` behind helper wrappers (`_nm_*`) that prefer the `ServiceRegistry` and fall back to the legacy `NetworkManager` autoload when present.
 - Files changed: `scripts/ui/DMWindow.gd` — added `_nm_*` wrappers and migrated broadcast/send/bind call sites to use the wrappers.

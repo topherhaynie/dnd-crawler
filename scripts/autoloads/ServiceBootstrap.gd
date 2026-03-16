@@ -5,6 +5,8 @@ func _ready() -> void:
     var ServiceRegistryScript: Script = load("res://scripts/registry/ServiceRegistry.gd")
     var FogServiceScript: Script = load("res://scripts/services/FogService.gd")
     var FogAdapterScript: Script = load("res://scripts/registry/FogAdapter.gd")
+    var MapServiceScript: Script = load("res://scripts/services/MapService.gd")
+    var MapAdapterScript: Script = load("res://scripts/registry/MapAdapter.gd")
     var NetworkServiceScript: Script = load("res://scripts/services/NetworkService.gd")
     var NetworkAdapterScript: Script = load("res://scripts/registry/NetworkAdapter.gd")
     var GameStateServiceScript: Script = load("res://scripts/services/GameStateService.gd")
@@ -18,11 +20,21 @@ func _ready() -> void:
     fog.name = "FogService"
     get_tree().root.call_deferred("add_child", fog)
 
+    var map: MapService = MapServiceScript.new() as MapService
+    map.name = "MapService"
+    get_tree().root.call_deferred("add_child", map)
+
     var adapter: FogAdapter = FogAdapterScript.new() as FogAdapter
     adapter.name = "FogAdapter"
     if adapter.has_method("set_service"):
         adapter.set_service(fog)
     get_tree().root.call_deferred("add_child", adapter)
+
+    var map_adapter: MapAdapter = MapAdapterScript.new() as MapAdapter
+    map_adapter.name = "MapAdapter"
+    if map_adapter.has_method("set_service"):
+        map_adapter.set_service(map)
+    get_tree().root.call_deferred("add_child", map_adapter)
 
     var net: Node = NetworkServiceScript.new() as Node
     net.name = "NetworkService"
@@ -47,6 +59,8 @@ func _ready() -> void:
     # Register with runtime conformance checks (required methods list mirrors IFogService)
     registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])
     registry.register("FogAdapter", adapter)
+    registry.register("Map", map, ["get_map", "load_map", "load_map_from_bundle"])
+    registry.register("MapAdapter", map_adapter)
     registry.register("Network", net, ["start_server", "stop_server", "broadcast_to_displays", "send_to_display"])
     registry.register("NetworkAdapter", net_adapter)
     registry.register("GameState", gs, ["get_profile_by_id"])

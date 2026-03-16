@@ -257,6 +257,16 @@ func _game_state() -> Node:
 	return null
 
 
+func _map_service() -> Node:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc := registry.get_service("Map") as Node
+		if svc == null:
+			svc = registry.get_service("MapAdapter") as Node
+		return svc
+	return null
+
+
 func _init_network_binding() -> void:
 	var nm := _network()
 	if nm == null:
@@ -1913,6 +1923,13 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
 	_apply_map(map)
+	# Keep registered Map service in sync if available
+	var ms := _map_service()
+	if ms != null:
+		if ms.has_method("update_map"):
+			ms.update_map(map)
+		elif ms.has_method("load_map"):
+			ms.load_map(map)
 	_nm_broadcast_map(map)
 	_set_status("New map: %s" % map.map_name)
 
@@ -1932,12 +1949,21 @@ func _on_map_bundle_selected(path: String) -> void:
 	if bundle_path.is_empty():
 		_set_status("Failed to load map: selected path is not a valid .map bundle.")
 		return
-	var map := _load_map_from_bundle(bundle_path)
+	var map: MapData = null
+	var ms := _map_service()
+	if ms != null and ms.has_method("load_map_from_bundle"):
+		map = ms.load_map_from_bundle(bundle_path)
+	else:
+		map = _load_map_from_bundle(bundle_path)
 	if map == null:
 		_set_status("Failed to load map from: %s" % bundle_path.get_file())
 		return
 	_active_map_bundle_path = bundle_path
 	_apply_map(map)
+	# Ensure map service knows about this map
+	if ms != null:
+		if ms.has_method("load_map"):
+			ms.load_map(map)
 	_nm_broadcast_map(map)
 	_set_status("Opened: %s" % map.map_name)
 
@@ -1954,6 +1980,12 @@ func _on_save_map_pressed() -> void:
 		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
 	_save_map_data(map)
+	var ms := _map_service()
+	if ms != null:
+		if ms.has_method("update_map"):
+			ms.update_map(map)
+		elif ms.has_method("load_map"):
+			ms.load_map(map)
 	_nm_broadcast_map_update(map)
 	_set_status("Saved: %s" % map.map_name)
 
@@ -1993,6 +2025,12 @@ func _save_map_as_path(bundle_path: String) -> void:
 	map.image_path = new_img_abs
 	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
+	var ms := _map_service()
+	if ms != null:
+		if ms.has_method("update_map"):
+			ms.update_map(map)
+		elif ms.has_method("load_map"):
+			ms.load_map(map)
 	_nm_broadcast_map_update(map)
 	_set_status("Saved as: %s" % map.map_name)
 
