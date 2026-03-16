@@ -304,4 +304,118 @@ Update: Prepared removal (2026-03-15)
 
 Recorded-by: migration agent
 
+## Phase 2 — Fog Pilot: Marked Complete (2026-03-15)
+
+- Status: MARKED COMPLETE per maintainer instruction. Phase 2 fog-related migration items have been finished and verified locally.
+
+- Summary of completion:
+  - `ServiceRegistry` and `ServiceBootstrap` autoload are wired and verified.
+  - `scripts/services/FogService.gd` provides history seed/delta/brush/rect APIs, LOS helpers, CPU merge (`merge_live_los_into_history`), snapshot APIs (`capture_fog_state`, `get_fog_state`, `set_fog_state`, `get_fog_state_size`), and GPU helper wrappers.
+  - `scripts/registry/FogAdapter.gd` exposes legacy snapshot/mutation APIs and forwards to the registered `Fog` service.
+  - Consumers were swept to use `ServiceRegistry.get("Fog")` / `FogAdapter`; direct `/root/FogManager` lookups were removed from runtime code.
+  - Legacy autoload `scripts/autoloads/FogManager.gd` was removed locally and `project.godot` updated.
+
+- Notes:
+  - Per your direction, CI and broader unit-test expansion are deferred for now — Phase 2 is considered complete so Phase 3 work can begin.
+  - One remote headless runner previously returned exit code 130 due to an environment-specific C# autoload mismatch; address this in CI when you re-enable it.
+
+- Next immediate action (Phase 3 kickoff):
+  1. Start Phase 3 planning: enumerate candidate services for migration and draft a prioritized rollout with small, reviewable commits per service.
+  2. For each service pilot: define an `I<Service>` protocol, implement a `Service` pilot, create an `Adapter` shim for legacy compatibility, and migrate consumers to registry-first lookups.
+  3. After a set of pilots, restore CI/unit gating to validate cutovers before final removals.
+
+Recorded-by: migration agent (phase-2 completion)
+
+## Phase 3 — Service Rollout Plan (kickoff: 2026-03-15)
+
+Status: Started — inventory and prioritization for Phase 3 pilots have been recorded below. Phase 3 will migrate additional autoloaded managers into small, focused Service pilots following the same registry + adapter pattern used for Fog.
+
+Candidate services (initial inventory and suggested priority):
+
+- **High priority (pilot candidates):**
+  - `NetworkManager` (`scripts/autoloads/NetworkManager.gd`) — WebSocket server, peer routing, display broadcasts. Good pilot because it has clear boundaries and high impact on runtime messaging.
+  - `GameState` (`scripts/autoloads/GameState.gd`) — global runtime state, player profiles, map metadata. Central to many consumers; migrate carefully.
+  - `InputManager` (`scripts/autoloads/InputManager.gd`) — input aggregation and per-player vectors; clear API and low surface area.
+
+- **Medium priority:**
+  - `PlayerProfile` / profile persistence (`scripts/data/PlayerProfile.gd`) — migrate to a service for profile lifecycle and storage helpers.
+  - `MapData` (`scripts/data/MapData.gd`) — map model and serialization; candidate for service if consumers need centralized access/validation.
+
+- **Lower priority / Infrastructure:**
+  - `HttpServer` (`scripts/autoloads/HttpServer.cs`) — embedded HTTP server; consider a service wrapper for platform differences (C# binding management).
+
+Phase 3 rollout approach (per-service checklist):
+
+1. Define protocol `I<ServiceName>` (method surface and signals). Keep signatures minimal and explicit typed where helpful for the analyzer.
+2. Implement `ServiceNameService` in `scripts/services/` that provides the new behavior and keeps legacy compatibility helpers where needed.
+3. Add `ServiceNameAdapter` in `scripts/registry/` to expose the legacy API and forward to the registered service.
+4. Update consumers to prefer `ServiceRegistry.get("<Name>")` and fall back only to the adapter where necessary during the pilot; prefer raising clear errors instead of dual-write fallbacks where acceptable.
+5. Run local smoke verification (headless) and quick manual playthrough for the affected flows.
+6. When the service pilot is stable, simplify the adapter to forward-only and prepare the legacy autoload removal for that service.
+
+Planned immediate pilots (first two weeks):
+
+- Week 1: `NetworkManager` pilot — protocol, service, adapter, consumer sweep for broadcast/peer codepaths, smoke test run.
+- Week 2: `GameState` pilot — protocol, service, adapter, migrate consumer reads/writes that manage profiles and active map metadata.
+
+## Update: GameState migration (2026-03-16)
+
+- Completed: implemented `GameStateService` as the authoritative service owning `profiles`, `player_positions`, and `player_locked` state. Added persistence (`load_profiles` / `save_profiles`) and the required helpers to mirror legacy `GameState` behavior.
+- Bootstrap: updated `scripts/autoloads/ServiceBootstrap.gd` to add `ServiceRegistry` and `GameStateService` synchronously at startup so consumers using registry-only lookups find the service immediately.
+- Consumers: migrated core consumers to registry-only lookup for GameState (`Main.gd`, `BackendRuntime.gd`, `InputManager.gd`, and `DMWindow.gd` were updated to prefer `ServiceRegistry.get_service("GameState")` / adapter and no longer fall back to `/root/GameState`).
+- Cutover: removed the legacy autoload entry for `GameState` in `project.godot` to finalize the migration for that service.
+
+## Update: Gamepad binding migration and verification (2026-03-16)
+
+- Test result: Mobile (WebSocket) player control working; Bluetooth/Switch remote initially did not control players.
+- Cause: profiles needed to be saved/updated to the migrated `GameStateService` format so the player's `input_type`/`input_id` binding was recognized by the new binding logic.
+- Action taken: restored and enhanced gamepad binding behavior:
+  - `DMWindow._apply_profile_bindings()` now binds by numeric `input_id` as before.
+  - If `input_id` is a non-numeric string, the code attempts a case-insensitive substring match against `Input.get_joy_name(device_id)`.
+  - If `input_id` is empty, the code auto-binds the first connected, unbound device to the profile.
+  - `GameStateService` gained `lock_player`/`unlock_player`/`is_locked` APIs to maintain legacy contract with `InputManager`.
+- Verification: after saving the updated profile under the new service, the Switch remote connected and player control worked as expected.
+
+## Result & status (2026-03-16)
+
+- Migration milestone: Gamepad binding functionality migrated and verified. Phase 3 (Network pilot) and follow-up tasks continue.
+- Action: maintainer will commit the current workspace state. Agent recorded this success and updated migration docs.
+
+## Suggested next steps (MIGRATION_PLAN continuation)
+
+1. Commit and push the current branch with the registry/GameState changes and the gamepad-binding fixes.
+2. Run the headless smoke tests and the `tests/unit` suite in CI once pushed.
+3. Continue `Network` pilot: finish `NetworkService` feature parity and sweep remaining consumers to registry-only usage.
+4. Add targeted unit tests for `InputManager` bindings (name-based and numeric binding paths) to prevent regression.
+
+Record: gamepad migration completed and verified locally (DM→Player). Continue with Network pilot and CI gating.
+
+Notes & next steps:
+- `NetworkManager` remains a Phase 3 pilot in-progress. I did not remove the `NetworkManager` autoload yet to avoid disrupting networking during the ongoing NetworkService rollout. Next migration chunk will focus on implementing `NetworkService` functionality and converting remaining consumers to registry-only for Network.
+- Please restart the Godot editor/project so the updated `ServiceBootstrap` and `GameStateService` are loaded from the new autoload configuration before running smoke tests.
+
+Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-progress).
+
+## Update: DM UI & NetworkManager sweep (2026-03-16)
+
+- Completed: converted `scripts/ui/DMWindow.gd` to registry-only `GameState` usage. All profile editor functions, bindings, import/export, and DM override input now obtain `GameState` via the `ServiceRegistry` (`_game_state()` helper) and guard calls to `save_profiles`/`load_profiles` where present.
+- Completed: updated `scripts/autoloads/NetworkManager.gd` to use registry-first `GameState` lookups so legacy networking still operates without depending on the removed autoload.
+- Rationale: finish migrating consumers off the legacy global before re-running smoke tests so the runtime exercises the intended service boundaries.
+
+Next: continue the `Network` pilot by finishing `NetworkService` implementation and migrating remaining Network consumer callsites to registry-only usage. When the Network service is feature-complete, run the headless smoke tests and a DM→Player manual sync.
+
+Recording: Phase 3 kickoff recorded in this document; progress on pilot tasks will be appended to `docs/MIGRATION_PROGRESS.md` as each pilot completes its checklist.
+
+### Phase 3 — Network pilot: scaffolded (2026-03-15)
+
+- Action: added `scripts/protocols/INetworkService.gd`, `scripts/services/NetworkService.gd`, and `scripts/registry/NetworkAdapter.gd` as an initial pilot scaffold. `ServiceBootstrap.gd` was updated to register the `Network` service and `NetworkAdapter` adapter at startup.
+- Rationale: start the pilot with a minimal service that delegates to the legacy `NetworkManager` autoload so runtime remains stable while consumers are incrementally migrated to the registry.
+- Next: migrate consumers to prefer `ServiceRegistry.get("Network")` or `NetworkAdapter` where appropriate; replace direct `/root/NetworkManager` lookups in small commits and run the smoke test after each change.
+
+## Note — unit tests deferred (2026-03-15)
+
+- Per maintainer direction, all expanded unit-test development and CI integration for Phase 3 and related pilots is deferred and recorded as future work. The migration will continue with smoke/manual verification for pilot changes; comprehensive unit tests and CI gating will be added after pilot APIs stabilize.
+
+
+
 

@@ -22,10 +22,23 @@ const PlayerMainScene: PackedScene = preload("res://scenes/PlayerMain.tscn")
 
 
 func _game_state() -> Node:
-	return get_node("/root/GameState")
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc := registry.get_service("GameState") as Node
+		if svc == null:
+			svc = registry.get_service("GameStateAdapter") as Node
+		return svc
+	return null
 
 
 func _network_manager() -> Node:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc := registry.get_service("Network") as Node
+		if svc == null:
+			svc = registry.get_service("NetworkAdapter") as Node
+		if svc != null:
+			return svc
 	return get_node("/root/NetworkManager")
 
 
@@ -54,7 +67,11 @@ func _is_player_mode() -> bool:
 
 func _start_dm_mode() -> void:
 	get_tree().root.title = "Omni-Crawl — DM"
-	_game_state().windows.append(get_tree().root.get_window_id())
+	var gs_node: Node = _game_state()
+	if gs_node == null:
+		call_deferred("_deferred_register_window")
+	else:
+		gs_node.windows.append(get_tree().root.get_window_id())
 	# Resize and position the DM window at ~85% of screen
 	var screen_size := DisplayServer.screen_get_size()
 	var win_size := Vector2i(
@@ -66,9 +83,19 @@ func _start_dm_mode() -> void:
 		int((screen_size.y - win_size.y) * 0.5))
 	DisplayServer.window_set_position(center_pos)
 	# Start WS server before spawning the Player process so the child can connect.
-	_network_manager().start_server()
+	var nm := _network_manager()
+	if nm != null and nm.has_method("start_server"):
+		nm.start_server()
 	add_child(DMWindowScene.instantiate())
 	print("Main: running as DM host")
+
+
+func _deferred_register_window() -> void:
+	var gs_node: Node = _game_state()
+	if gs_node == null:
+		call_deferred("_deferred_register_window")
+		return
+	gs_node.windows.append(get_tree().root.get_window_id())
 
 
 # ---------------------------------------------------------------------------

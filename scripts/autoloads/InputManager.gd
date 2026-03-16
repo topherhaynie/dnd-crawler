@@ -26,7 +26,13 @@ var gamepad_bindings: Dictionary = {}
 
 
 func _game_state() -> Node:
-	return get_node("/root/GameState")
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc := registry.get_service("GameState") as Node
+		if svc == null:
+			svc = registry.get_service("GameStateAdapter") as Node
+		return svc
+	return null
 
 # ---------------------------------------------------------------------------
 # Frame update — poll all bound gamepads
