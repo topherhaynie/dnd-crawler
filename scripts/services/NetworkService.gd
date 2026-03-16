@@ -21,12 +21,12 @@ func _ready() -> void:
     # for unused signals are avoided.
     var legacy := _legacy()
     if legacy != null:
-        if legacy.has_signal("client_connected") and not legacy.is_connected("client_connected", Callable(self, "_on_legacy_client_connected")):
-            legacy.connect("client_connected", Callable(self, "_on_legacy_client_connected"))
-        if legacy.has_signal("client_disconnected") and not legacy.is_connected("client_disconnected", Callable(self, "_on_legacy_client_disconnected")):
-            legacy.connect("client_disconnected", Callable(self, "_on_legacy_client_disconnected"))
-        if legacy.has_signal("display_peer_registered") and not legacy.is_connected("display_peer_registered", Callable(self, "_on_legacy_display_peer_registered")):
-            legacy.connect("display_peer_registered", Callable(self, "_on_legacy_display_peer_registered"))
+        if legacy.has_signal("client_connected") and not legacy.is_connected("client_connected", Callable(self , "_on_legacy_client_connected")):
+            legacy.connect("client_connected", Callable(self , "_on_legacy_client_connected"))
+        if legacy.has_signal("client_disconnected") and not legacy.is_connected("client_disconnected", Callable(self , "_on_legacy_client_disconnected")):
+            legacy.connect("client_disconnected", Callable(self , "_on_legacy_client_disconnected"))
+        if legacy.has_signal("display_peer_registered") and not legacy.is_connected("display_peer_registered", Callable(self , "_on_legacy_display_peer_registered")):
+            legacy.connect("display_peer_registered", Callable(self , "_on_legacy_display_peer_registered"))
 
 func _on_legacy_client_connected(peer_id: int) -> void:
     emit_signal("client_connected", peer_id)

@@ -49,7 +49,7 @@ func _ready() -> void:
     registry.register("FogAdapter", adapter)
     registry.register("Network", net, ["start_server", "stop_server", "broadcast_to_displays", "send_to_display"])
     registry.register("NetworkAdapter", net_adapter)
-    registry.register("GameState", gs, ["get_profile_by_id"]) 
+    registry.register("GameState", gs, ["get_profile_by_id"])
     registry.register("GameStateAdapter", gs_adapter)
 
     print("ServiceBootstrap: registered Fog service and adapter")
