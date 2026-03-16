@@ -18,7 +18,7 @@ Use this checklist after fog architecture changes to validate performance, stabi
 
 ## Visual Consistency Checks
 
-1. Move player tokens to trigger backend LOS reveals.
+1. Move player tokens to trigger DM-side LOS updates (live lights in `FogSystem`).
 2. Apply DM fog brush reveal and hide edits repeatedly.
 3. Confirm player and DM fog shapes match visually for same framing.
 

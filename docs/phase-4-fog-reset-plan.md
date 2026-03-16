@@ -11,7 +11,7 @@ Reset fog of war implementation to restore:
 
 ## Constraints
 
-1. Backend remains authoritative for fog truth and LOS-driven reveals.
+1. DM remains authoritative for fog truth and LOS-driven reveals.
 2. Player remains render-only for fog/visibility.
 3. DM and Player both use the same MapView and FogOverlay rendering path.
 4. Rendering may smooth/feather visual output but must not mutate truth.
@@ -42,7 +42,7 @@ Current clean-slate decision:
 
 Deliverables:
 
-1. `scripts/core/BackendRuntime.gd` baseline authority updates
+1. DM-side baseline authority updates (`scripts/ui/DMWindow.gd`, `scripts/autoloads/FogManager.gd`)
 2. `scripts/ui/DMWindow.gd` direct fog delta/full-sync broadcast updates
 
 ### Sub-point 4.3: Unified Render Layer Refactor

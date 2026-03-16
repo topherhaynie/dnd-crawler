@@ -5,7 +5,7 @@ Status: Complete
 ## Summary
 Phase 4 introduces a strict runtime split:
 
-1. Backend authority (`scripts/core/BackendRuntime.gd`)
+1. Authoritative simulation (`scripts/core/BackendRuntime.gd`)
 2. DM operator window (`scripts/ui/DMWindow.gd`)
 3. Player render window (`scripts/ui/PlayerWindow.gd`)
 
@@ -52,7 +52,7 @@ DM-only overlays (toolbar/menu and editor controls) live outside the shared `Map
 ## Fog of War Flow
 
 ### Current Flow
-1. Backend advances simulation and DM runtime updates live LOS lights in `FogSystem`.
+1. Backend advances simulation; DM runtime updates live LOS lights in `FogSystem`.
 2. `FogSystem` composes persistent history (`history_tex`) with live LOS (`live_lights_tex`).
 3. DM fog tools edit history directly in image space (brush/rect).
 4. DM runtime sends fog full-sync as chunked snapshot packets.

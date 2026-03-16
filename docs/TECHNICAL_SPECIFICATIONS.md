@@ -13,8 +13,8 @@ The runtime is split into three roles:
 
 | Role | Responsibility | Key Script |
 | :--- | :--- | :--- |
-| **Backend** | Authoritative simulation and state arbitration (inputs, movement, fog reveal/LOS, collisions). | `scripts/core/BackendRuntime.gd` |
-| **DM Window** | UI/editor interactions and operator controls; forwards intent to backend and broadcasts backend-authoritative state. | `scripts/ui/DMWindow.gd` |
+| **Backend** | Authoritative simulation and state arbitration (inputs, movement, collisions). | `scripts/core/BackendRuntime.gd` |
+| **DM Window** | UI/editor interactions and operator controls; forwards intent to backend and broadcasts DM-managed state (map, camera, fog snapshots). | `scripts/ui/DMWindow.gd` |
 | **Player Window** | Render-only consumer of DM packets (`map`, `camera`, `state`, `fog`). | `scripts/ui/PlayerWindow.gd` |
 
 Status: Phase 4 is complete.
@@ -50,7 +50,7 @@ Deterministic command ordering (timestamped global input queue/replay pipeline) 
     * `LightOccluder2D` layers on the map to create real-time shadows.
 
 ### 3.1 Visibility Authority and Layering
-* **Authoritative Runtime:** backend computes gameplay visibility state (fog reveal, LOS, wall blocking, token state).
+* **Authoritative Runtime:** backend computes authoritative simulation state (movement, wall blocking, token state). Fog reveal/LOS is DM-managed via `scripts/fog/FogSystem.gd` and distributed as snapshots.
 * **Player Runtime:** render-only consumer of DM packets. Player does not run fog-reveal or gameplay LOS logic.
 * **Layer Policy:**
     * DM view can render additional control/debug layers (walls, traps, editing helpers, transparent fog).
