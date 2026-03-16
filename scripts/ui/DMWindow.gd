@@ -120,7 +120,7 @@ var _profile_is_new_draft: bool = false
 var _profiles_import_dialog: FileDialog = null
 var _profiles_export_dialog: FileDialog = null
 var _profiles_root: Control = null
-var NetworkManager: Node = null
+## Legacy autoload reference removed — use registry-first `_network()` helper
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -181,9 +181,70 @@ func _network() -> Node:
 			svc = registry.get_service("NetworkAdapter") as Node
 		if svc != null:
 			return svc
-	if has_node("/root/NetworkManager"):
-		return get_node("/root/NetworkManager")
 	return null
+
+
+## Network helper wrappers (centralise registry fallback and null-guards)
+func _nm_broadcast_to_displays(msg: Dictionary) -> void:
+	var nm := _network()
+	if nm != null and nm.has_method("broadcast_to_displays"):
+		nm.broadcast_to_displays(msg)
+
+func _nm_broadcast_map(map: MapData) -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	if nm.has_method("broadcast_map"):
+		nm.broadcast_map(map)
+	elif nm.has_method("broadcast_to_displays"):
+		nm.broadcast_to_displays({"msg": "map_loaded", "map": map})
+
+func _nm_broadcast_map_update(map: MapData) -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	if nm.has_method("broadcast_map_update"):
+		nm.broadcast_map_update(map)
+	elif nm.has_method("broadcast_to_displays"):
+		nm.broadcast_to_displays({"msg": "map_updated", "map": map})
+
+func _nm_send_map_to_display(peer_id: int, map: MapData, is_update: bool, fog_snapshot: Dictionary) -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	if nm.has_method("send_map_to_display"):
+		nm.send_map_to_display(peer_id, map, is_update, fog_snapshot)
+	elif nm.has_method("broadcast_map"):
+		nm.broadcast_map(map)
+
+func _nm_bind_peer(peer_id: int, player_id: Variant) -> void:
+	var nm := _network()
+	if nm != null and nm.has_method("bind_peer"):
+		nm.bind_peer(peer_id, player_id)
+
+func _nm_get_connected_input_peers() -> Array:
+	var nm := _network()
+	if nm != null and nm.has_method("get_connected_input_peers"):
+		return nm.get_connected_input_peers()
+	return []
+
+func _nm_get_peer_bound_player(peer_id: int) -> String:
+	var nm := _network()
+	if nm != null and nm.has_method("get_peer_bound_player"):
+		return str(nm.get_peer_bound_player(peer_id))
+	return ""
+
+func _nm_displays_under_backpressure() -> bool:
+	var nm := _network()
+	if nm != null and nm.has_method("displays_under_backpressure"):
+		return bool(nm.displays_under_backpressure())
+	return false
+
+func _nm_is_display_peer_connected(peer_id: int) -> bool:
+	var nm := _network()
+	if nm != null and nm.has_method("is_display_peer_connected"):
+		return bool(nm.is_display_peer_connected(peer_id))
+	return true
 
 
 func _game_state() -> Node:
@@ -197,19 +258,28 @@ func _game_state() -> Node:
 
 
 func _init_network_binding() -> void:
-	NetworkManager = _network()
-	if NetworkManager == null:
+	var nm := _network()
+	if nm == null:
 		# Try again later if not yet registered
 		call_deferred("_init_network_binding")
 		return
-	if NetworkManager.has_signal("display_peer_registered"):
-		NetworkManager.display_peer_registered.connect(_on_display_peer_registered)
-	if NetworkManager.has_signal("display_viewport_resized"):
-		NetworkManager.display_viewport_resized.connect(_on_display_viewport_resized)
-	if NetworkManager.has_signal("client_disconnected"):
-		NetworkManager.client_disconnected.connect(_on_client_disconnected)
-	if NetworkManager.has_signal("display_sync_applied"):
-		NetworkManager.display_sync_applied.connect(_on_display_sync_applied)
+	# keep local nm reference only; avoid storing legacy global
+	var connected_any := false
+	if nm.has_signal("display_peer_registered") and not nm.is_connected("display_peer_registered", Callable(self , "_on_display_peer_registered")):
+		nm.display_peer_registered.connect(_on_display_peer_registered)
+		connected_any = true
+	if nm.has_signal("client_disconnected") and not nm.is_connected("client_disconnected", Callable(self , "_on_client_disconnected")):
+		nm.client_disconnected.connect(_on_client_disconnected)
+		connected_any = true
+	if nm.has_signal("display_viewport_resized") and not nm.is_connected("display_viewport_resized", Callable(self , "_on_display_viewport_resized")):
+		nm.display_viewport_resized.connect(_on_display_viewport_resized)
+		connected_any = true
+	if nm.has_signal("display_sync_applied") and not nm.is_connected("display_sync_applied", Callable(self , "_on_display_sync_applied")):
+		nm.display_sync_applied.connect(_on_display_sync_applied)
+		connected_any = true
+	# If the service exists but hasn't yet exposed the expected signals, retry shortly.
+	if not connected_any:
+		call_deferred("_init_network_binding")
 
 
 func _notification(what: int) -> void:
@@ -728,10 +798,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	var attempt := int(_initial_sync_attempt_by_peer.get(peer_id, 0)) + 1
 	_initial_sync_attempt_by_peer[peer_id] = attempt
 	print("DMWindow: initial sync send attempt %d to peer %d" % [attempt, peer_id])
-	if NetworkManager.has_method("send_map_to_display"):
-		NetworkManager.send_map_to_display(peer_id, map, false, fog_snapshot)
-	else:
-		NetworkManager.broadcast_map(map)
+	_nm_send_map_to_display(peer_id, map, false, fog_snapshot)
 	_broadcast_player_viewport()
 	_broadcast_player_state()
 
@@ -740,7 +807,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	retry_timer.timeout.connect(func() -> void:
 		if not bool(_initial_sync_ack_pending.get(peer_id, false)):
 			return
-		if NetworkManager.has_method("is_display_peer_connected") and not NetworkManager.is_display_peer_connected(peer_id):
+		if not _nm_is_display_peer_connected(peer_id):
 			return
 		var retries := int(_initial_sync_attempt_by_peer.get(peer_id, 1))
 		if retries >= 3:
@@ -850,7 +917,7 @@ func _update_player_window_size_preserve_world(new_size: Vector2) -> void:
 
 
 func _broadcast_player_viewport() -> void:
-	NetworkManager.broadcast_to_displays({
+	_nm_broadcast_to_displays({
 		"msg": "camera_update",
 		"position": {"x": _player_cam_pos.x, "y": _player_cam_pos.y},
 		"zoom": _player_cam_zoom,
@@ -1004,7 +1071,7 @@ func _on_grid_type_selected(index: int) -> void:
 		return
 	map.grid_type = _grid_option.get_item_id(index)
 	_map_view.grid_overlay.apply_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_set_status("Grid: %s" % _grid_option.get_item_text(index))
 
@@ -1036,7 +1103,7 @@ func _on_calibration_done(map: MapData) -> void:
 	# Apply offset from the dialog spinboxes (user-entered or retained from before).
 	map.grid_offset = Vector2(_offset_x_spin.value, _offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	var detail := ("cell_px=%.1f" % map.cell_px) if map.grid_type == MapData.GridType.SQUARE else ("hex_size=%.1f" % map.hex_size)
 	_set_status("Calibrated: %s  offset=(%.0f, %.0f)" % [detail, map.grid_offset.x, map.grid_offset.y])
@@ -1075,7 +1142,7 @@ func _on_manual_scale_confirmed() -> void:
 		_:
 			map.hex_size = cell_px * 0.5
 	_map_view.grid_overlay.apply_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_set_status("Scale set: %.1f px = %.0f ft" % [px_per_cell, ft_per_cell])
 
@@ -1100,7 +1167,7 @@ func _on_offset_confirmed() -> void:
 		return
 	map.grid_offset = Vector2(_solo_offset_x_spin.value, _solo_offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_set_status("Grid offset: (%.0f, %.0f)" % [map.grid_offset.x, map.grid_offset.y])
 
@@ -1846,7 +1913,7 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
 	_apply_map(map)
-	NetworkManager.broadcast_map(map)
+	_nm_broadcast_map(map)
 	_set_status("New map: %s" % map.map_name)
 
 
@@ -1871,7 +1938,7 @@ func _on_map_bundle_selected(path: String) -> void:
 		return
 	_active_map_bundle_path = bundle_path
 	_apply_map(map)
-	NetworkManager.broadcast_map(map)
+	_nm_broadcast_map(map)
 	_set_status("Opened: %s" % map.map_name)
 
 
@@ -1887,7 +1954,7 @@ func _on_save_map_pressed() -> void:
 		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
 	_save_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_set_status("Saved: %s" % map.map_name)
 
 
@@ -1926,7 +1993,7 @@ func _save_map_as_path(bundle_path: String) -> void:
 	map.image_path = new_img_abs
 	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_set_status("Saved as: %s" % map.map_name)
 
 
@@ -1976,7 +2043,7 @@ func _broadcast_player_state() -> void:
 	var players: Array = []
 	if _backend and _backend.has_method("build_player_state_payload"):
 		players = _backend.build_player_state_payload()
-	NetworkManager.broadcast_to_displays({"msg": "state", "players": players})
+	_nm_broadcast_to_displays({"msg": "state", "players": players})
 
 
 func _update_dm_override_input() -> void:
@@ -2073,16 +2140,16 @@ func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_ce
 		if revealed_chunk.is_empty() and hidden_chunk.is_empty():
 			break
 
-		NetworkManager.broadcast_to_displays({
-			"msg": "fog_delta",
-			"fog_cell_px": cell_px,
-			"revealed_cells": _serialise_fog_cells(revealed_chunk),
-			"hidden_cells": _serialise_fog_cells(hidden_chunk),
-		})
+			_nm_broadcast_to_displays({
+				"msg": "fog_delta",
+				"fog_cell_px": cell_px,
+				"revealed_cells": _serialise_fog_cells(revealed_chunk),
+				"hidden_cells": _serialise_fog_cells(hidden_chunk),
+			})
 
 
 func _on_map_walls_changed(map: MapData) -> void:
-	NetworkManager.broadcast_map_update(map)
+	_nm_broadcast_map_update(map)
 	_set_status("Wall added. Save map to persist wall/fog edits.")
 
 
@@ -2092,7 +2159,7 @@ func _broadcast_fog_state() -> void:
 	if _fog_snapshot_in_flight:
 		_fog_snapshot_queued = true
 		return
-	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+	if _nm_displays_under_backpressure():
 		_queue_fog_snapshot_sync(0.5)
 		return
 	if _map_view.has_method("force_fog_sync"):
@@ -2110,11 +2177,11 @@ func _broadcast_fog_state_after_frame() -> void:
 	if map == null:
 		_fog_snapshot_in_flight = false
 		return
-	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+	if _nm_displays_under_backpressure():
 		_fog_snapshot_in_flight = false
 		_queue_fog_snapshot_sync(0.5)
 		return
-	NetworkManager.broadcast_to_displays(await _build_fog_state_snapshot(map))
+	_nm_broadcast_to_displays(await _build_fog_state_snapshot(map))
 	_fog_snapshot_in_flight = false
 	if _fog_snapshot_queued:
 		_fog_snapshot_queued = false
@@ -2124,7 +2191,7 @@ func _broadcast_fog_state_after_frame() -> void:
 func _broadcast_fog_truth_state() -> void:
 	if _map_view == null:
 		return
-	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+	if _nm_displays_under_backpressure():
 		_queue_fog_snapshot_sync(0.5)
 		return
 	var map: MapData = _map_view.get_map()
@@ -2187,14 +2254,14 @@ func _pump_fog_truth_send_queue() -> void:
 			_fog_truth_send_queue.clear()
 			_fog_truth_send_index = 0
 		return
-	if NetworkManager.has_method("displays_under_backpressure") and NetworkManager.displays_under_backpressure():
+	if _nm_displays_under_backpressure():
 		return
 	var sent := 0
 	var per_frame := maxi(1, _FOG_TRUTH_CHUNKS_PER_FRAME)
 	while sent < per_frame and _fog_truth_send_index < _fog_truth_send_queue.size():
 		var msg: Variant = _fog_truth_send_queue[_fog_truth_send_index]
 		if msg is Dictionary:
-			NetworkManager.broadcast_to_displays(msg as Dictionary)
+			_nm_broadcast_to_displays(msg as Dictionary)
 		_fog_truth_send_index += 1
 		sent += 1
 

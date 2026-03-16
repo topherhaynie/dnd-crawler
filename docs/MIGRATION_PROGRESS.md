@@ -398,6 +398,53 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
 
 ## Update: DM UI & NetworkManager sweep (2026-03-16)
 
+- Action: Centralised Network access in `DMWindow.gd` behind helper wrappers (`_nm_*`) that prefer the `ServiceRegistry` and fall back to the legacy `NetworkManager` autoload when present.
+- Files changed: `scripts/ui/DMWindow.gd` — added `_nm_*` wrappers and migrated broadcast/send/bind call sites to use the wrappers.
+- Rationale: Reduce direct references to the legacy `NetworkManager` autoload and make future removal and `NetworkService` pilot safer and incremental.
+- Status: patched locally; remaining signallistens via `NetworkManager` are left in `_init_network_binding` to preserve runtime signal hook timing (safe interim measure). Next task: complete signal migration to registry-based connections when `NetworkService` offers the same signals.
+
+Update: after this patch, DM→Player broadcast paths use the registry-first helpers — please run the headless smoke test and a quick DM→Player manual sync to validate.
+
+## NetworkService parity (2026-03-16)
+
+- Action: Implemented `displays_under_backpressure()` on `NetworkService` and exposed it via `NetworkAdapter` so consumers (e.g., `DMWindow`) can query backpressure without touching the legacy autoload.
+- Files changed: `scripts/services/NetworkService.gd`, `scripts/registry/NetworkAdapter.gd`.
+- Rationale: `DMWindow` needs a registry-first `displays_under_backpressure()` check to avoid sending large fog snapshots when the player displays are congested; adding this method completes a missing piece of `NetworkService` parity with the legacy `NetworkManager`.
+- Status: implemented locally. Next: finish any remaining `NetworkService` methods used by consumers and sweep consumers to remove legacy fallbacks.
+
+## Next: Network parity & consumer sweep (2026-03-16)
+
+- Goal: finish `NetworkService` feature parity with `NetworkManager`, remove legacy fallbacks across consumers, and prepare the codebase for a headless smoke test focused on DM→Player messaging and fog sync.
+- Concrete steps:
+  - Audit remaining consumer call sites that still reference `/root/NetworkManager` and replace with registry-first calls or the `NetworkAdapter`.
+  - Implement any small missing `NetworkService` methods discovered during the audit (parity patching).
+  - Convert remaining signal hookups to prefer the `Network` service signals and remove direct legacy autoload connections.
+  - When done, run the headless smoke test and a quick manual DM→Player sync.
+- Status: in-progress — `displays_under_backpressure()` implemented; next is the consumer sweep and small parity fixes.
+
+### Consumer sweep update (2026-03-16)
+
+- Action: Updated `Main.gd` to stop falling back to the legacy `/root/NetworkManager` autoload and rely only on the registry-provided `Network` service/adapter. This enforces the registry-first pattern for the DM startup logic (`start_server`).
+- File changed: `scripts/core/Main.gd`.
+- Rationale: Prevent implicit use of the legacy autoload during startup and make the service registration/order deterministic.
+- Impact: If `ServiceBootstrap` is not autoloaded or `Network` isn't registered yet, `Main` will skip starting the server until the service is available and should be robust due to existing deferred registration logic.
+
+- Cleanup: removed legacy `NetworkManager` global in `scripts/ui/DMWindow.gd` and prevented storing the legacy autoload reference; DMWindow now only uses the registry-first `_network()` helper and retries until the service exposes expected signals. This enforces registry-only usage in the DM UI.
+
+### Quick fix: Network start race (2026-03-16)
+
+- Problem: The DM tried to start the WebSocket server before the `Network` service node was added (ServiceBootstrap uses deferred child addition), causing the server not to start and mobile clients to fail connecting.
+- Fix: `scripts/core/Main.gd` now defers network startup via `_ensure_network_started()` which retries until the `Network` service is available and then calls `start_server()`.
+- Impact: Mobile controller WebSocket connections should be restored; if you still see connection problems, please restart the DM process or run the test again and send the latest Godot output.
+
+## Phase 3 — Network cutover (2026-03-16)
+
+- Action: Removed the legacy `NetworkManager` autoload from `project.godot` and completed the final consumer sweep so runtime consumers use the `Network` service (or `NetworkAdapter`) exclusively.
+- Files changed: `project.godot`, `scripts/core/Main.gd`, `scripts/ui/DMWindow.gd`, `scripts/services/NetworkService.gd`, `scripts/registry/NetworkAdapter.gd`.
+- Rationale: With `NetworkService` implementing the legacy surface and `NetworkAdapter` exposing the compatibility API, keeping the old autoload creates dual-write ambiguity and hides registration/order issues. Removing the autoload enforces the registry-first pattern and makes startup deterministic.
+- Impact: The legacy `NetworkManager.gd` file remains in the workspace for reference but is no longer autoloaded. If a runtime issue arises, re-adding it to autoloads or temporarily adjusting `ServiceBootstrap.gd` may be used as a rollback.
+- Status: Phase 3 cutover complete locally. Ready for the Phase 3 smoke test (DM → Player messaging, fog sync, profile binding).
+
 - Completed: converted `scripts/ui/DMWindow.gd` to registry-only `GameState` usage. All profile editor functions, bindings, import/export, and DM override input now obtain `GameState` via the `ServiceRegistry` (`_game_state()` helper) and guard calls to `save_profiles`/`load_profiles` where present.
 - Completed: updated `scripts/autoloads/NetworkManager.gd` to use registry-first `GameState` lookups so legacy networking still operates without depending on the removed autoload.
 - Rationale: finish migrating consumers off the legacy global before re-running smoke tests so the runtime exercises the intended service boundaries.
@@ -411,6 +458,33 @@ Recording: Phase 3 kickoff recorded in this document; progress on pilot tasks wi
 - Action: added `scripts/protocols/INetworkService.gd`, `scripts/services/NetworkService.gd`, and `scripts/registry/NetworkAdapter.gd` as an initial pilot scaffold. `ServiceBootstrap.gd` was updated to register the `Network` service and `NetworkAdapter` adapter at startup.
 - Rationale: start the pilot with a minimal service that delegates to the legacy `NetworkManager` autoload so runtime remains stable while consumers are incrementally migrated to the registry.
 - Next: migrate consumers to prefer `ServiceRegistry.get("Network")` or `NetworkAdapter` where appropriate; replace direct `/root/NetworkManager` lookups in small commits and run the smoke test after each change.
+
+### Phase 3 — readiness for smoke test (2026-03-16)
+
+- Status: consumer sweep completed and registry-only `Network` call sites enforced in runtime consumers (`Main`, `DMWindow`, `PlayerWindow`). `NetworkService` parity methods (including `displays_under_backpressure`) have been implemented and `NetworkAdapter` exposes the same helpers.
+- Remaining legacy fallbacks are intentionally confined to `scripts/services/NetworkService.gd` and `scripts/registry/NetworkAdapter.gd` for staged delegation; these are acceptable during migration.
+- Recommendation: proceed with the Phase 3 smoke test (DM → Player messaging, fog sync, profile binding). The smoke checklist is small and manual:
+  1. Ensure `ServiceBootstrap` is autoloaded.
+  2. Launch the DM window, load a map, and observe map/fog broadcast to the Player window.
+  3. Confirm WebSocket mobile input and Bluetooth/gamepad bindings operate as expected.
+  4. Watch the Godot output for runtime errors.
+
+- Next action: run the headless smoke script or perform a quick manual DM→Player session. If you want, I can run the smoke script locally — say the word and I'll execute it and report results.
+
+## Final cutover — Network migration completed (2026-03-16)
+
+- Action: Completed the final cutover for the `Network` pilot. `NetworkService` is now the canonical implementation and no longer delegates to the legacy autoload.
+- Files changed: `scripts/services/NetworkService.gd` (removed legacy fallbacks and signal mirroring), `scripts/registry/NetworkAdapter.gd` (removed autoload fallback), `scripts/autoloads/NetworkManager.gd` (removed from workspace).
+- Rationale: Remove dual-write surface and enforce registry-first usage across consumers so startup ordering and service boundaries are deterministic.
+- Impact: The project no longer relies on `/root/NetworkManager` at runtime. If you need to inspect the previous behavior, the removed file is preserved in VCS history.
+
+## Bug note — gamepad binding persistence
+
+- Observed: gamepad (Bluetooth / Switch remote) connection works only after explicitly saving the player profile during testing; an unsaved profile does not persist the input binding and the connection isn't remembered across restarts.
+- Severity: medium — affects user convenience and some controller workflows but not core game logic.
+- Next steps: file a focused follow-up to investigate `PlayerProfile` persistence and `GameState.save_profiles()` invocation timing; add a unit test covering profile save/restore for input bindings.
+
+Status: Phase 3 cutover complete locally. Proceed with the Phase 3 smoke test (DM → Player messaging, fog sync, profile binding).
 
 ## Note — unit tests deferred (2026-03-15)
 

@@ -39,7 +39,7 @@ func _network_manager() -> Node:
 			svc = registry.get_service("NetworkAdapter") as Node
 		if svc != null:
 			return svc
-	return get_node("/root/NetworkManager")
+	return null
 
 
 func _ready() -> void:
@@ -83,11 +83,19 @@ func _start_dm_mode() -> void:
 		int((screen_size.y - win_size.y) * 0.5))
 	DisplayServer.window_set_position(center_pos)
 	# Start WS server before spawning the Player process so the child can connect.
+	# NetworkService may be added deferred by ServiceBootstrap; retry until available.
+	call_deferred("_ensure_network_started")
+	add_child(DMWindowScene.instantiate())
+	print("Main: running as DM host")
+
+
+func _ensure_network_started() -> void:
 	var nm := _network_manager()
 	if nm != null and nm.has_method("start_server"):
 		nm.start_server()
-	add_child(DMWindowScene.instantiate())
-	print("Main: running as DM host")
+		return
+	# Try again next idle until the service appears.
+	call_deferred("_ensure_network_started")
 
 
 func _deferred_register_window() -> void:
