@@ -293,3 +293,15 @@ Update: Prepared removal (2026-03-15)
 - Rationale: all consumer call sites now use registry-first lookups and the Fog adapter; removing the legacy autoload prevents accidental direct usage and makes the migration deterministic.
 - Note: the file was removed locally in the workspace; commit and push when you're ready to make the PR. Keep a branch for the change so it's reviewable and reversible if needed.
 
+## Update — commit applied (2026-03-15)
+
+- Action: Prepared and committed the removal of `scripts/autoloads/FogManager.gd` and updated `project.godot` to remove the autoload entry. Changes are staged/committed in your local branch.
+- Verification: local static analysis reported no errors; local unit and smoke tests ran successfully (user-run). One remote headless runner previously showed exit code 130 due to an unrelated C# autoload environment mismatch; that remains an environment issue to address in CI.
+- Immediate next steps:
+  1. Push the branch and open a PR for review (include this migration progress doc as part of the PR description).
+  2. Add CI steps to run `tests/smoke/smoke_fog_gd.gd` and `tests/unit/test_fog_service.gd` headless on PRs/pushes and resolve any environment-specific differences (C# autoload in runner).
+  3. Continue migrating lower-level GPU helper logic into `scripts/services/FogService.gd` and add targeted unit tests for serialization, merge correctness, and performance.
+
+Recorded-by: migration agent
+
+
