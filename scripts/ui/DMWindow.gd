@@ -165,12 +165,22 @@ func _ready() -> void:
 	_build_ui()
 	# Bind to the runtime Network service/adapter (deferred to handle autoload ordering).
 	call_deferred("_init_network_binding")
-	var gs_node: Node = _game_state()
-	if gs_node != null and gs_node.has_signal("profiles_changed"):
-		gs_node.profiles_changed.connect(_on_profiles_changed)
-	_apply_profile_bindings()
+	# Defer profile bindings to ensure GameStateService is registered by bootstrap.
+	call_deferred("_ensure_profile_bindings")
 	_apply_ui_scale()
 	print("DMWindow: ready")
+
+
+func _ensure_profile_bindings() -> void:
+	var ps_node: Node = _profile_service()
+	var gs_node: Node = _game_state()
+	if ps_node == null and gs_node == null:
+		call_deferred("_ensure_profile_bindings")
+		return
+	var target := ps_node if ps_node != null else gs_node
+	if target.has_signal("profiles_changed") and not target.is_connected("profiles_changed", Callable(self , "_on_profiles_changed")):
+		target.profiles_changed.connect(_on_profiles_changed)
+	_apply_profile_bindings()
 
 
 func _network() -> Node:
@@ -1510,14 +1520,20 @@ func _on_profile_selected(index: int) -> void:
 
 
 func _load_selected_profile_into_form(index: int) -> void:
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
-	if gs_node == null:
+	var profiles_arr: Array = []
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		profiles_arr = ps_node.get_profiles()
+	elif gs_node != null:
+		profiles_arr = gs_node.profiles
+	else:
 		_clear_profile_form()
 		return
-	if index < 0 or index >= gs_node.profiles.size():
+	if index < 0 or index >= profiles_arr.size():
 		_clear_profile_form()
 		return
-	var profile = gs_node.profiles[index]
+	var profile = profiles_arr[index]
 	if not profile is PlayerProfile:
 		_clear_profile_form()
 		return
@@ -1546,9 +1562,12 @@ func _on_profile_add_pressed() -> void:
 	if _profiles_list:
 		_profiles_list.deselect_all()
 	_clear_profile_form()
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
 	var next_idx: int = 1
-	if gs_node != null:
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		next_idx = ps_node.get_profiles().size() + 1
+	elif gs_node != null:
 		next_idx = gs_node.profiles.size() + 1
 	_profile_name_edit.text = "Player %d" % next_idx
 	if _profile_name_edit:
@@ -1561,18 +1580,36 @@ func _on_profile_delete_pressed() -> void:
 	if _profile_is_new_draft:
 		_on_profile_cancel_new_pressed()
 		return
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
-	if gs_node == null or _profile_selected_index < 0 or _profile_selected_index >= gs_node.profiles.size():
-		_set_status("Select a profile to remove.")
-		return
+	if ps_node != null:
+		if _profile_selected_index < 0 or _profile_selected_index >= (ps_node.get_profiles() if ps_node.has_method("get_profiles") else []).size():
+			_set_status("Select a profile to remove.")
+			return
+	else:
+		if gs_node == null or _profile_selected_index < 0 or _profile_selected_index >= gs_node.profiles.size():
+			_set_status("Select a profile to remove.")
+			return
 	var removed_name := "Profile"
-	if gs_node.profiles[_profile_selected_index] is PlayerProfile:
-		removed_name = (gs_node.profiles[_profile_selected_index] as PlayerProfile).player_name
-	gs_node.profiles.remove_at(_profile_selected_index)
-	if gs_node.has_method("save_profiles"):
-		gs_node.save_profiles()
-	if gs_node.has_method("load_profiles"):
-		gs_node.load_profiles()
+	if ps_node != null:
+		var arr: Array = ps_node.get_profiles() if ps_node.has_method("get_profiles") else []
+		var item = arr[_profile_selected_index]
+		if item is PlayerProfile:
+			removed_name = (item as PlayerProfile).player_name
+		if ps_node.has_method("remove_profile"):
+			ps_node.remove_profile(item.id if item is PlayerProfile else str(item.get("id", "")))
+		if ps_node.has_method("save_profiles"):
+			ps_node.save_profiles()
+		if ps_node.has_method("load_profiles"):
+			ps_node.load_profiles()
+	else:
+		if gs_node.profiles[_profile_selected_index] is PlayerProfile:
+			removed_name = (gs_node.profiles[_profile_selected_index] as PlayerProfile).player_name
+		gs_node.profiles.remove_at(_profile_selected_index)
+		if gs_node.has_method("save_profiles"):
+			gs_node.save_profiles()
+		if gs_node.has_method("load_profiles"):
+			gs_node.load_profiles()
 	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, gs_node.profiles.size() - 1))
 	_profile_is_new_draft = false
 	_refresh_profiles_list()
@@ -1580,18 +1617,35 @@ func _on_profile_delete_pressed() -> void:
 	_set_status("Deleted profile: %s" % removed_name)
 
 
+func _profile_service() -> Node:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc: Object = registry.get_service("Profile")
+		if svc == null:
+			var adapter: Object = registry.get_service("ProfileAdapter")
+			if adapter != null:
+				push_warning("DMWindow: 'Profile' service missing — falling back to 'ProfileAdapter'")
+				svc = adapter
+		if svc != null:
+			return svc as Node
+	return null
+
+
 func _on_profile_save_pressed() -> void:
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
 	if _profile_is_new_draft:
 		var created := PlayerProfile.new()
 		if not _apply_form_to_profile(created):
 			return
-		if gs_node != null:
+		if ps_node != null and ps_node.has_method("add_profile"):
+			ps_node.add_profile(created)
+			if ps_node.has_method("save_profiles"):
+				ps_node.save_profiles()
+		elif gs_node != null:
 			gs_node.profiles.append(created)
 			if gs_node.has_method("save_profiles"):
 				gs_node.save_profiles()
-			if gs_node.has_method("load_profiles"):
-				gs_node.load_profiles()
 		_profile_is_new_draft = false
 		_profile_selected_index = _find_profile_index_by_id(created.id)
 		_refresh_profiles_list()
@@ -1599,24 +1653,32 @@ func _on_profile_save_pressed() -> void:
 		_set_status("Created profile: %s (PP %d)" % [created.player_name, created.get_passive_perception()])
 		return
 
-	if gs_node == null or _profile_selected_index < 0 or _profile_selected_index >= gs_node.profiles.size():
+	# Determine the profiles array from service or GameState
+	var profiles_arr: Array = []
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		profiles_arr = ps_node.get_profiles()
+	elif gs_node != null:
+		profiles_arr = gs_node.profiles
+	if profiles_arr.size() == 0 or _profile_selected_index < 0 or _profile_selected_index >= profiles_arr.size():
 		_set_status("Select a profile to edit or click New.")
 		return
 
-	var profile = gs_node.profiles[_profile_selected_index]
+	var profile = profiles_arr[_profile_selected_index]
 	if not profile is PlayerProfile:
 		_set_status("Invalid profile selected.")
 		return
-	var p := profile as PlayerProfile
+	var p: PlayerProfile = profile as PlayerProfile
 	if not _apply_form_to_profile(p):
 		return
-	# Assign updated profile back to array
-	if gs_node != null:
+
+	# Persist changes via service when available, otherwise GameState
+	if ps_node != null and ps_node.has_method("save_profiles"):
+		# service owns the profiles array; save the service-managed profiles
+		ps_node.save_profiles()
+	elif gs_node != null and gs_node.has_method("save_profiles"):
 		gs_node.profiles[_profile_selected_index] = p
-		if gs_node.has_method("save_profiles"):
-			gs_node.save_profiles()
-		if gs_node.has_method("load_profiles"):
-			gs_node.load_profiles()
+		gs_node.save_profiles()
+
 	_apply_profile_bindings()
 	_refresh_profiles_list()
 	_update_profile_action_state()
@@ -1685,14 +1747,18 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 
 
 func _find_profile_index_by_id(profile_id: String) -> int:
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
-	if gs_node == null:
-		return 0
-	for i in range(gs_node.profiles.size()):
-		var profile = gs_node.profiles[i]
+	var profiles_arr: Array = []
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		profiles_arr = ps_node.get_profiles()
+	elif gs_node != null:
+		profiles_arr = gs_node.profiles
+	for i in range(profiles_arr.size()):
+		var profile = profiles_arr[i]
 		if profile is PlayerProfile and (profile as PlayerProfile).id == profile_id:
 			return i
-	return max(0, gs_node.profiles.size() - 1)
+	return max(0, profiles_arr.size() - 1)
 
 
 func _update_profile_action_state() -> void:
@@ -1750,6 +1816,9 @@ func _on_bind_use_gamepad_pressed() -> void:
 		return
 	_profile_input_type_option.select(_profile_input_type_option.get_item_index(PlayerProfile.InputType.GAMEPAD))
 	_profile_input_id_edit.text = str(device_id)
+	# Auto-save binding for existing profile edits so bindings persist immediately
+	if not _profile_is_new_draft:
+		_on_profile_save_pressed()
 
 
 func _on_bind_use_ws_pressed() -> void:
@@ -1760,6 +1829,9 @@ func _on_bind_use_ws_pressed() -> void:
 		return
 	_profile_input_type_option.select(_profile_input_type_option.get_item_index(PlayerProfile.InputType.WEBSOCKET))
 	_profile_input_id_edit.text = str(peer_id)
+	# Auto-save binding for existing profile edits so bindings persist immediately
+	if not _profile_is_new_draft:
+		_on_profile_save_pressed()
 
 
 func _apply_profile_bindings() -> void:
@@ -1768,9 +1840,12 @@ func _apply_profile_bindings() -> void:
 	var nm := _network()
 	if nm != null and nm.has_method("clear_all_peer_bindings"):
 		nm.clear_all_peer_bindings()
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
 	var profiles_arr: Array = Array()
-	if gs_node != null:
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		profiles_arr = ps_node.get_profiles()
+	elif gs_node != null:
 		profiles_arr = gs_node.profiles
 	for profile in profiles_arr:
 		if not profile is PlayerProfile:
@@ -1846,8 +1921,14 @@ func _on_profiles_export_path_selected(path: String) -> void:
 		return
 	file.store_string(JSON.stringify(_profiles_to_array(), "\t"))
 	file.close()
-	var gs_node: Node = _game_state()
-	_set_status("Exported %d profiles." % (gs_node.profiles.size() if gs_node != null else 0))
+	var ps_node: Node = _profile_service()
+	var count := 0
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		count = ps_node.get_profiles().size()
+	else:
+		var gs_node: Node = _game_state()
+		count = gs_node.profiles.size() if gs_node != null else 0
+	_set_status("Exported %d profiles." % count)
 
 
 func _on_profiles_import_path_selected(path: String) -> void:
@@ -1872,8 +1953,15 @@ func _on_profiles_import_path_selected(path: String) -> void:
 	if imported_profiles.is_empty():
 		_set_status("Import skipped: no valid profiles found.")
 		return
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
-	if gs_node != null:
+	if ps_node != null:
+		ps_node.profiles = imported_profiles
+		if ps_node.has_method("save_profiles"):
+			ps_node.save_profiles()
+		if ps_node.has_method("load_profiles"):
+			ps_node.load_profiles()
+	elif gs_node != null:
 		gs_node.profiles = imported_profiles
 		if gs_node.has_method("save_profiles"):
 			gs_node.save_profiles()
@@ -1886,9 +1974,12 @@ func _on_profiles_import_path_selected(path: String) -> void:
 
 func _profiles_to_array() -> Array:
 	var out: Array = []
+	var ps_node: Node = _profile_service()
 	var gs_node: Node = _game_state()
 	var profiles_arr: Array = Array()
-	if gs_node != null:
+	if ps_node != null and ps_node.has_method("get_profiles"):
+		profiles_arr = ps_node.get_profiles()
+	elif gs_node != null:
 		profiles_arr = gs_node.profiles
 	for profile in profiles_arr:
 		if profile is PlayerProfile:

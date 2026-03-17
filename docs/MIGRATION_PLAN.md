@@ -29,7 +29,7 @@ Phase 2 — Pilot: FogService
 
 Phase 3 — Service-by-service migration
 - Migrate MapService, NetworkService, ProfileService, PersistenceService, InputService.
-- For each service: define protocol, implement service, provide adapter, migrate 1–2 consumers, add tests, remove adapter.
+- For each service: define protocol, implement service, provide adapter, migrate consumers, have the user test, remove adapter.
 
 Phase 4 — Cleanup and enforcement
 - Remove legacy singletons when no consumers remain.

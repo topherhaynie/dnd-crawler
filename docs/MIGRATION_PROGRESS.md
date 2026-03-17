@@ -399,6 +399,16 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
 ## Update: DM UI & NetworkManager sweep (2026-03-16)
 ### MapService migration started (2026-03-16)
 
+## Update: ProfileService migration & lint (2026-03-16)
+
+- **ProfileService scaffolded and registered:** added `IProfileService.gd`, `scripts/services/ProfileService.gd`, and `scripts/registry/ProfileAdapter.gd`, and registered them in `scripts/autoloads/ServiceBootstrap.gd`.
+- **DMWindow migrated (partial → in-progress):** `scripts/ui/DMWindow.gd` now prefers the `Profile` service for profile lookup/save flows and falls back to `GameState` where the service is not yet present. Deferred profile binding hookup and auto-save-on-binding selection remain in place.
+
+- **DMWindow migrated:** `scripts/ui/DMWindow.gd` now prefers the `Profile` service for profile lookup, save, import, export, delete, and binding application; falls back to `GameState` only when the service is absent. Deferred profile binding hookup and auto-save-on-binding selection are in place.
+- **Workspace lint:** ran static analysis and fixed compile errors introduced during the migration (type inference and scoping issues in `DMWindow.gd`, and bootstrap type annotations). The workspace analyzer reports no compile errors. One non-critical analyzer warning remains: an unused `profiles_changed` signal declaration in `scripts/protocols/IProfileService.gd` (expected for protocol scaffolding).
+- **Next steps:** run CI smoke tests to validate runtime behavior; after green CI, consider removing legacy `GameState` autoload if safe.
+
+
 - **Actions performed:**
   - Added `scripts/protocols/IMapService.gd` as the protocol contract for map management.
   - Implemented `scripts/services/MapService.gd` to own `MapData` lifecycle, load/save bundle JSON, and emit `map_loaded` / `map_updated` signals.
@@ -516,6 +526,9 @@ Recording: Phase 3 kickoff recorded in this document; progress on pilot tasks wi
 - Observed: gamepad (Bluetooth / Switch remote) connection works only after explicitly saving the player profile during testing; an unsaved profile does not persist the input binding and the connection isn't remembered across restarts.
 - Severity: medium — affects user convenience and some controller workflows but not core game logic.
 - Next steps: file a focused follow-up to investigate `PlayerProfile` persistence and `GameState.save_profiles()` invocation timing; add a unit test covering profile save/restore for input bindings.
+
+- Fix applied (2026-03-16): auto-save profile bindings when selecting a binding from the DM UI.
+- Rationale: selecting a gamepad or WebSocket binding in the profile editor now triggers an immediate save for existing profiles so the binding persists without requiring an explicit "Save" click. This addresses the observed issue where newly-created or edited profiles required a separate explicit save to persist input bindings.
 
 Status: Phase 3 cutover complete locally. Proceed with the Phase 3 smoke test (DM → Player messaging, fog sync, profile binding).
 

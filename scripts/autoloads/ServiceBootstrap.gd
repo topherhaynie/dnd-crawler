@@ -11,6 +11,8 @@ func _ready() -> void:
     var NetworkAdapterScript: Script = load("res://scripts/registry/NetworkAdapter.gd")
     var GameStateServiceScript: Script = load("res://scripts/services/GameStateService.gd")
     var GameStateAdapterScript: Script = load("res://scripts/registry/GameStateAdapter.gd")
+    var ProfileServiceScript: Script = load("res://scripts/services/ProfileService.gd")
+    var ProfileAdapterScript: Script = load("res://scripts/registry/ProfileAdapter.gd")
 
     var registry: ServiceRegistry = ServiceRegistryScript.new() as ServiceRegistry
     registry.name = "ServiceRegistry"
@@ -56,6 +58,16 @@ func _ready() -> void:
         gs_adapter.set_service(gs)
     get_tree().root.call_deferred("add_child", gs_adapter)
 
+    var ps: Node = ProfileServiceScript.new() as Node
+    ps.name = "ProfileService"
+    get_tree().root.call_deferred("add_child", ps)
+
+    var ps_adapter: Node = ProfileAdapterScript.new() as Node
+    ps_adapter.name = "ProfileAdapter"
+    if ps_adapter.has_method("set_service"):
+        ps_adapter.set_service(ps)
+    get_tree().root.call_deferred("add_child", ps_adapter)
+
     # Register with runtime conformance checks (required methods list mirrors IFogService)
     registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])
     registry.register("FogAdapter", adapter)
@@ -65,5 +77,7 @@ func _ready() -> void:
     registry.register("NetworkAdapter", net_adapter)
     registry.register("GameState", gs, ["get_profile_by_id"])
     registry.register("GameStateAdapter", gs_adapter)
+    registry.register("Profile", ps, ["get_profiles", "get_profile_by_id", "save_profiles", "load_profiles"])
+    registry.register("ProfileAdapter", ps_adapter)
 
     print("ServiceBootstrap: registered Fog service and adapter")
