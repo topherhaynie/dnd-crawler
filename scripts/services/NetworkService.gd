@@ -130,7 +130,14 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
     if not _is_known_player_id(player_id):
         return
 
-    var im := get_node_or_null("/root/InputManager")
+    var registry := get_node_or_null("/root/ServiceRegistry")
+    var im: Node = null
+    if registry != null and registry.has_method("get_service"):
+        im = registry.get_service("Input")
+        if im == null:
+            im = registry.get_service("InputAdapter")
+    if im == null:
+        im = get_node_or_null("/root/InputManager")
     if im != null and im.has_method("set_network_vector"):
         im.set_network_vector(player_id, Vector2(x, y))
 

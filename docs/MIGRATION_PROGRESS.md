@@ -399,6 +399,28 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
 ## Update: DM UI & NetworkManager sweep (2026-03-16)
 ### MapService migration started (2026-03-16)
 
+## Update: Input service migration (2026-03-17)
+
+- Added `InputService` (`scripts/services/InputService.gd`) and `InputAdapter` (`scripts/registry/InputAdapter.gd`). The adapter forwards legacy `InputManager` API calls to the registered `Input` service when present.
+- Registered `Input` and `InputAdapter` in `scripts/autoloads/ServiceBootstrap.gd` so the service is available at startup.
+- Migrated key consumers to use the registry-backed `Input` service (with safe fallbacks to the legacy `InputManager` autoload):
+  - `scripts/ui/DMWindow.gd` — replaced direct `InputManager` calls with registry lookup via a new `_input_service()` helper and updated binding logic to use the service when available.
+  - `scripts/core/BackendRuntime.gd` — now resolves input via the registry-first `Input` service before falling back to `/root/InputManager`.
+  - `scripts/services/NetworkService.gd` — now routes incoming network vectors to the registry `Input` service when present, otherwise falls back.
+- Exposed gamepad binding accessors (`get_gamepad_bindings`, `has_gamepad_binding`) on the `InputService` and `InputAdapter` to allow DM UI auto-binding to work without relying on the legacy autoload's internal properties.
+- Added signals and minor analyzer fixes to `InputService.gd` so it integrates cleanly with existing signal consumers.
+
+Verification & status:
+
+- Static analysis: workspace analyzer reports no errors after the migration edits.
+- Manual test: maintainer tested the program manually (DM→Player flows) and reported no regressions for input handling.
+
+Next steps:
+
+- Run `tests/unit/test_persistence.gd` and full unit/smoke test suite in CI. (blocked on maintaining CI headless environment; can be run locally with the Godot CLI.)
+- Audit remaining direct `InputManager` usages and either remove or keep as explicit fallbacks; prepare PR to remove the legacy autoload once CI is green.
+
+
 ## Update: PersistenceService implemented (2026-03-16)
 
 - Implemented `scripts/protocols/IPersistenceService.gd` defining the persistence protocol (`save_game`, `load_game`, `list_saves`, `delete_save`) and `persistence_changed` signal.

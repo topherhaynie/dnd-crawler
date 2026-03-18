@@ -198,6 +198,21 @@ func _network() -> Node:
 	return null
 
 
+func _input_service() -> Node:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc: Object = registry.get_service("Input")
+		if svc == null:
+			var adapter: Object = registry.get_service("InputAdapter")
+			if adapter != null:
+				push_warning("DMWindow: 'Input' service missing — falling back to 'InputAdapter'")
+				svc = adapter
+		if svc != null:
+			return svc as Node
+	# Final fallback to legacy autoload
+	return get_node_or_null("/root/InputManager")
+
+
 ## Network helper wrappers (centralise registry fallback and null-guards)
 func _nm_broadcast_to_displays(msg: Dictionary) -> void:
 	var nm := _network()
@@ -1836,7 +1851,10 @@ func _on_bind_use_ws_pressed() -> void:
 
 
 func _apply_profile_bindings() -> void:
-	if InputManager and InputManager.has_method("clear_all_bindings"):
+	var input := _input_service()
+	if input != null and input.has_method("clear_all_bindings"):
+		input.clear_all_bindings()
+	elif InputManager and InputManager.has_method("clear_all_bindings"):
 		InputManager.clear_all_bindings()
 	var nm := _network()
 	if nm != null and nm.has_method("clear_all_peer_bindings"):
@@ -1858,9 +1876,17 @@ func _apply_profile_bindings() -> void:
 		match p.input_type:
 			PlayerProfile.InputType.GAMEPAD:
 				# Bind by numeric device id if present
-				if p.input_id.is_valid_int() and InputManager and InputManager.has_method("bind_gamepad"):
+				if p.input_id.is_valid_int() and input != null and input.has_method("bind_gamepad"):
+					input.bind_gamepad(int(p.input_id), p.id)
+				elif p.input_id.is_valid_int() and InputManager and InputManager.has_method("bind_gamepad"):
 					InputManager.bind_gamepad(int(p.input_id), p.id)
 				# Otherwise try to match by device name substring, or auto-bind first free device
+				elif p.input_id != "" and input != null and input.has_method("bind_gamepad"):
+					for device_id in Input.get_connected_joypads():
+						var joy_name := Input.get_joy_name(device_id)
+						if joy_name != null and joy_name.to_lower().find(p.input_id.to_lower()) >= 0:
+							input.bind_gamepad(device_id, p.id)
+							break
 				elif p.input_id != "" and InputManager and InputManager.has_method("bind_gamepad"):
 					for device_id in Input.get_connected_joypads():
 						var joy_name := Input.get_joy_name(device_id)
@@ -1869,7 +1895,18 @@ func _apply_profile_bindings() -> void:
 							break
 				else:
 					# Auto-bind: first connected device not already bound
-					if InputManager and InputManager.has_method("bind_gamepad"):
+					if input != null and input.has_method("bind_gamepad"):
+						var connected := Input.get_connected_joypads()
+						for device_id in connected:
+							var already := false
+							if input.has_method("has_gamepad_binding"):
+								already = input.has_gamepad_binding(device_id)
+							elif InputManager and InputManager.gamepad_bindings != null:
+								already = InputManager.gamepad_bindings.has(device_id)
+							if not already:
+								input.bind_gamepad(device_id, p.id)
+								break
+					elif InputManager and InputManager.has_method("bind_gamepad"):
 						var connected := Input.get_connected_joypads()
 						for device_id in connected:
 							if not InputManager.gamepad_bindings.has(device_id):
@@ -2264,14 +2301,21 @@ func _update_dm_override_input() -> void:
 			primary_player_id = (profile as PlayerProfile).id
 			break
 
+	var input := _input_service()
 	if _dm_override_player_id != "" and _dm_override_player_id != primary_player_id:
-		InputManager.clear_dm_vector(_dm_override_player_id)
+		if input != null and input.has_method("clear_dm_vector"):
+			input.clear_dm_vector(_dm_override_player_id)
+		elif InputManager and InputManager.has_method("clear_dm_vector"):
+			InputManager.clear_dm_vector(_dm_override_player_id)
 
 	_dm_override_player_id = primary_player_id
 	if _dm_override_player_id == "":
 		return
 
-	InputManager.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
+	if input != null and input.has_method("set_dm_vector"):
+		input.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
+	elif InputManager and InputManager.has_method("set_dm_vector"):
+		InputManager.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
 
 
 func _on_map_fog_changed(_map_data: MapData) -> void:

@@ -37,7 +37,14 @@ func _game_state() -> Node:
 
 
 func _input_manager() -> Node:
-	return get_node("/root/InputManager")
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var svc: Node = registry.get_service("Input") as Node
+		if svc == null:
+			svc = registry.get_service("InputAdapter") as Node
+		if svc != null:
+			return svc
+	return get_node_or_null("/root/InputManager")
 
 
 func _map() -> MapData:
@@ -119,7 +126,10 @@ func step(delta: float) -> bool:
 		var token_radius_px := _token_diameter_px_for_map(map) * 0.5
 		if token.has_method("set_vision_radius_px"):
 			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
-		var vec: Vector2 = _input_manager().get_vector(p.id)
+		var vec: Vector2 = Vector2.ZERO
+		var imgr := _input_manager()
+		if imgr != null and imgr.has_method("get_vector"):
+			vec = imgr.get_vector(p.id)
 		# if vec != Vector2.ZERO:
 		# 	print("BackendRuntime: input for %s => %s" % [p.id, str(vec)])
 		token.set_movement_input(vec)
