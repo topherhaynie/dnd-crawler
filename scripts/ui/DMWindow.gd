@@ -21,7 +21,7 @@ extends Node
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
 const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.gd")
-const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
@@ -188,11 +188,6 @@ func _network() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("Network")
-		if svc == null:
-			var adapter: Object = registry.get_service("NetworkAdapter")
-			if adapter != null:
-				push_warning("DMWindow: 'Network' service missing — falling back to 'NetworkAdapter'")
-				svc = adapter
 		if svc != null:
 			return svc as Node
 	return null
@@ -202,11 +197,6 @@ func _input_service() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("Input")
-		if svc == null:
-			var adapter: Object = registry.get_service("InputAdapter")
-			if adapter != null:
-				push_warning("DMWindow: 'Input' service missing — falling back to 'InputAdapter'")
-				svc = adapter
 		if svc != null:
 			return svc as Node
 	# Do not fall back to legacy autoloads; prefer registry-only services/adapters.
@@ -1751,7 +1741,7 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	if extras_raw.is_empty():
 		p.extras = {}
 	else:
-		var parsed: Variant = JsonUtils.parse_json_text(extras_raw)
+		var parsed: Variant = JsonUtilsScript.parse_json_text(extras_raw)
 		if parsed == null or not parsed is Dictionary:
 			_set_status("Extras must be valid JSON object; profile not saved.")
 			return false
@@ -2000,7 +1990,7 @@ func _on_profiles_import_path_selected(path: String) -> void:
 			return
 		var text := file.get_as_text()
 		file.close()
-		parsed = JsonUtils.parse_json_text(text)
+		parsed = JsonUtilsScript.parse_json_text(text)
 	if parsed == null or not parsed is Array:
 		_set_status("Import failed: JSON must be an array of profiles.")
 		return
@@ -2635,7 +2625,7 @@ func _load_map_from_bundle(bundle_path: String) -> MapData:
 		return null
 	var text := fa.get_as_text()
 	fa.close()
-	var parsed: Variant = JsonUtils.parse_json_text(text)
+	var parsed: Variant = JsonUtilsScript.parse_json_text(text)
 	if not (parsed is Dictionary):
 		push_error("DMWindow: invalid JSON in '%s'" % json_path)
 		return null

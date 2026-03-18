@@ -4,7 +4,7 @@ class_name MapService
 signal map_loaded(map: Object)
 signal map_updated(map: Object)
 
-const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 @onready var _current_map: Object = null
 
@@ -19,7 +19,7 @@ func load_map_from_bundle(bundle_path: String) -> Object:
         return null
     var text := fa.get_as_text()
     fa.close()
-    var parsed: Variant = JsonUtils.parse_json_text(text)
+    var parsed: Variant = JsonUtilsScript.parse_json_text(text)
     if not (parsed is Dictionary):
         push_error("MapService: invalid JSON in '%s'" % json_path)
         return null

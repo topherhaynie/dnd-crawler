@@ -4,7 +4,6 @@ func _ready() -> void:
     # Load scripts explicitly to avoid class_name dependency during headless runs
     var ServiceRegistryScript: Script = load("res://scripts/registry/ServiceRegistry.gd")
     var FogServiceScript: Script = load("res://scripts/services/FogService.gd")
-    var FogAdapterScript: Script = load("res://scripts/registry/FogAdapter.gd")
 
     var registry: Object = ServiceRegistryScript.new()
     registry.name = "ServiceRegistry"
@@ -14,11 +13,7 @@ func _ready() -> void:
     fog.name = "FogService"
     self.root.call_deferred("add_child", fog)
 
-    var adapter: Object = FogAdapterScript.new()
-    adapter.name = "FogAdapter"
-    if adapter.has_method("set_service"):
-        adapter.set_service(fog)
-    self.root.call_deferred("add_child", adapter)
+    # No adapter used in smoke test; register FogService directly
 
     # Register services
     registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])

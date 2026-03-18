@@ -2,7 +2,7 @@ extends Node
 class_name PersistenceService
 
 signal persistence_changed(save_name: String)
-const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 func _init() -> void:
     # Ensure save directory exists
@@ -65,7 +65,7 @@ func load_game(save_name: String) -> Dictionary:
     fa.close()
     if content == "":
         return {}
-    var parsed: Variant = JsonUtils.parse_json_text(content)
+    var parsed: Variant = JsonUtilsScript.parse_json_text(content)
     if parsed is Dictionary:
         return parsed as Dictionary
     return {}

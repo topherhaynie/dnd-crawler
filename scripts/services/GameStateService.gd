@@ -2,7 +2,7 @@ extends Node
 class_name GameStateService
 signal profiles_changed()
 
-const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 signal player_lock_changed(player_id, is_locked: bool)
 
 var profiles: Array = []
@@ -107,4 +107,4 @@ func _write_json(path: String, data: Variant) -> void:
 
 
 func _read_json(path: String) -> Variant:
-    return JsonUtils.read_json(path)
+    return JsonUtilsScript.read_json(path)

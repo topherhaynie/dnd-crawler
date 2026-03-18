@@ -103,7 +103,7 @@ func dismiss_notification(notification_id: int, unfreeze_player: bool = true) ->
 # ---------------------------------------------------------------------------
 
 var profiles: Array = [] # Array of PlayerProfile resources
-const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 
 func _ready() -> void:
@@ -206,7 +206,7 @@ func _read_json(path: String) -> Variant:
 		return null
 	var text := file.get_as_text()
 	file.close()
-	var parsed: Variant = JsonUtils.parse_json_text(text)
+	var parsed: Variant = JsonUtilsScript.parse_json_text(text)
 	if parsed == null:
 		push_error("GameState: JSON parse error in %s" % path)
 	return parsed
