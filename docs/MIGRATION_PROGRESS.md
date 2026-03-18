@@ -667,5 +667,15 @@ Status: Phase 3 cutover complete locally. Proceed with the Phase 3 smoke test (D
 - Per maintainer direction, all expanded unit-test development and CI integration for Phase 3 and related pilots is deferred and recorded as future work. The migration will continue with smoke/manual verification for pilot changes; comprehensive unit tests and CI gating will be added after pilot APIs stabilize.
 
 
+## 2026-03-17 — InputService migration & autoload removal
+
+- Action: Implemented `IInputService` protocol, `scripts/services/InputService.gd`, and `scripts/registry/InputAdapter.gd`; migrated consumers to prefer the registered `Input` service (notably `scripts/ui/DMWindow.gd`, `scripts/core/BackendRuntime.gd`, and `scripts/services/NetworkService.gd`). Implemented `bind_peer()` and added `get_gamepad_bindings()` / `has_gamepad_binding(device_id)` to the protocol.
+- Cutover: removed the legacy `InputManager` autoload from `project.godot` and deleted `scripts/autoloads/InputManager.gd` to enforce registry-first usage.
+- Files changed: `project.godot`, `scripts/autoloads/ServiceBootstrap.gd`, `scripts/protocols/IInputService.gd`, `scripts/services/InputService.gd`, `scripts/registry/InputAdapter.gd`, `scripts/ui/DMWindow.gd`, `scripts/core/BackendRuntime.gd`, `scripts/services/NetworkService.gd`.
+- Rationale: eliminate dual-write/autoload ambiguity and make startup/service ordering deterministic while preserving backward compatibility via adapters during the migration.
+- Impact: Runtime now prefers the `Input` service. If regressions occur, re-adding the legacy autoload or using the preserved VCS history for `InputManager.gd` provides a quick rollback.
+- Status: cutover completed locally. Recommendation: run the Phase 3 headless smoke tests (DM → Player messaging, fog sync, profile binding) before removing the `InputAdapter` and finalizing cleanup.
+
+
 
 

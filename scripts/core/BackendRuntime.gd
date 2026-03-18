@@ -44,7 +44,8 @@ func _input_manager() -> Node:
 			svc = registry.get_service("InputAdapter") as Node
 		if svc != null:
 			return svc
-	return get_node_or_null("/root/InputManager")
+	# Do not fallback to legacy autoload; prefer registry-only services/adapters.
+	return null
 
 
 func _map() -> MapData:

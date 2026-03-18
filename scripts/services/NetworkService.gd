@@ -136,8 +136,6 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
         im = registry.get_service("Input")
         if im == null:
             im = registry.get_service("InputAdapter")
-    if im == null:
-        im = get_node_or_null("/root/InputManager")
     if im != null and im.has_method("set_network_vector"):
         im.set_network_vector(player_id, Vector2(x, y))
 

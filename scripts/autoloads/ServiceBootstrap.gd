@@ -105,7 +105,7 @@ func _ready() -> void:
     registry.register("ProfileAdapter", ps_adapter)
     registry.register("Persistence", persistence, ["save_game", "load_game", "list_saves", "delete_save", "export_to_path", "copy_file"])
     registry.register("PersistenceAdapter", persistence_adapter)
-    registry.register("Input", input, ["get_vector", "set_network_vector", "set_gamepad_vector", "bind_gamepad", "bind_peer", "clear_all_bindings"])
+    registry.register("Input", input, ["get_vector", "set_network_vector", "set_gamepad_vector", "set_dm_vector", "bind_gamepad", "unbind_gamepad", "bind_peer", "clear_all_bindings", "get_gamepad_bindings", "has_gamepad_binding"])
     registry.register("InputAdapter", input_adapter)
 
     print("ServiceBootstrap: registered Fog service and adapter")

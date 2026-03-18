@@ -18,7 +18,6 @@ config/main_scene="res://scenes/Main.tscn"
 
 [autoload]
 
-InputManager="*res://scripts/autoloads/InputManager.gd"
 HttpServer="*res://scripts/autoloads/HttpServer.cs"
 ServiceBootstrap="*res://scripts/autoloads/ServiceBootstrap.gd"
 

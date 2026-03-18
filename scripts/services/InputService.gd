@@ -104,7 +104,15 @@ func unbind_gamepad(device_id: int) -> void:
         emit_signal("input_binding_changed", player_id)
 
 func bind_peer(_peer_id: int, _player_id) -> void:
-    return
+    var registry := get_node_or_null("/root/ServiceRegistry")
+    if registry != null and registry.has_method("get_service"):
+        var net: Object = registry.get_service("Network")
+        if net == null:
+            net = registry.get_service("NetworkAdapter")
+        if net != null and net.has_method("bind_peer"):
+            net.bind_peer(_peer_id, _player_id)
+            return
+    # Do not fallback to legacy autoload; prefer registry-only Network service.
 
 func clear_all_bindings() -> void:
     gamepad_bindings.clear()

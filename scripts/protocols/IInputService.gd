@@ -26,3 +26,9 @@ func bind_peer(_peer_id: int, _player_id) -> void:
 
 func clear_all_bindings() -> void:
     return
+
+func get_gamepad_bindings() -> Dictionary:
+    return {}
+
+func has_gamepad_binding(_device_id: int) -> bool:
+    return false
