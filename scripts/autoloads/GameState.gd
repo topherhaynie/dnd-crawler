@@ -121,8 +121,6 @@ func save_profiles() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence == null:
-			persistence = registry.get_service("PersistenceAdapter") as Node
 		if persistence != null and persistence.has_method("save_game"):
 			persistence.save_game("profiles", {"profiles": data})
 			emit_signal("profiles_changed")
@@ -137,8 +135,6 @@ func load_profiles() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence == null:
-			persistence = registry.get_service("PersistenceAdapter") as Node
 		if persistence != null and persistence.has_method("load_game"):
 			var loaded: Variant = persistence.load_game("profiles")
 			if loaded is Dictionary and loaded.has("profiles"):

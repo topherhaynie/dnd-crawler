@@ -21,9 +21,8 @@ func _game_state() -> Node:
     var registry := get_node_or_null("/root/ServiceRegistry")
     if registry != null and registry.has_method("get_service"):
         var svc := registry.get_service("GameState") as Node
-        if svc == null:
-            svc = registry.get_service("GameStateAdapter") as Node
-        return svc
+        if svc != null:
+            return svc
     return null
 
 func _process(_delta: float) -> void:
@@ -107,8 +106,6 @@ func bind_peer(_peer_id: int, _player_id) -> void:
     var registry := get_node_or_null("/root/ServiceRegistry")
     if registry != null and registry.has_method("get_service"):
         var net: Object = registry.get_service("Network")
-        if net == null:
-            net = registry.get_service("NetworkAdapter")
         if net != null and net.has_method("bind_peer"):
             net.bind_peer(_peer_id, _player_id)
             return

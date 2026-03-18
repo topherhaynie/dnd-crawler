@@ -676,6 +676,36 @@ Status: Phase 3 cutover complete locally. Proceed with the Phase 3 smoke test (D
 - Impact: Runtime now prefers the `Input` service. If regressions occur, re-adding the legacy autoload or using the preserved VCS history for `InputManager.gd` provides a quick rollback.
 - Status: cutover completed locally. Recommendation: run the Phase 3 headless smoke tests (DM → Player messaging, fog sync, profile binding) before removing the `InputAdapter` and finalizing cleanup.
 
+### Finalization (2026-03-17)
+
+- Action: completed the `InputService` cutover and removed the legacy `InputManager` autoload. Cleaned up leftover autoload metadata: `scripts/autoloads/InputManager.gd.uid` was deleted to avoid stale editor references.
+- Action: adapter files and their `.uid` metadata were removed from `scripts/registry/` — runtime is now service-only and `ServiceBootstrap.gd` registers services directly.
+
+Next: create the final PR that documents the cutover, includes a short migration checklist for reviewers, and marks `phase-3` migration tasks as complete in `docs/MIGRATION_PROGRESS.md`.
+
+### Migration Complete (2026-03-17)
+
+- Status: Service-only migration for Input/Persistence/Network/Fog is complete locally. Adapter files and legacy autoload entries have been removed; consumers now use `ServiceRegistry` lookups exclusively.
+
+- Files of interest (non-exhaustive):
+  - `project.godot` (autoloads updated: `ServiceBootstrap` present; legacy autoloads removed)
+  - `scripts/autoloads/ServiceBootstrap.gd` (registers services)
+  - `scripts/services/InputService.gd`, `scripts/services/PersistenceService.gd`, `scripts/services/NetworkService.gd`, `scripts/services/FogService.gd`
+  - `scripts/registry/` — adapter files deleted as part of cutover
+
+- Reviewer checklist for final PR:
+  1. Confirm `ServiceBootstrap.gd` remains autoloaded in `project.godot`.
+ 2. Verify no runtime code `get_node("/root/<LegacyAutoload>")` or `registry.get_service("<Name>Adapter")` calls remain.
+ 3. Run the headless smoke script(s): `tests/smoke/smoke_fog_gd.gd` and any DM→Player smoke scripts.
+ 4. Spot-check DM UI flows (profile import/export, binding, map load/save) in the editor.
+ 5. If CI is available, run the smoke scripts in the CI job before merging.
+
+- Rollback notes:
+  - The deleted legacy autoloads (`scripts/autoloads/InputManager.gd`, etc.) are preserved in VCS history — restore from the branch if an immediate rollback is needed.
+  - Re-adding a legacy autoload is a quick rollback path while investigating runtime regressions.
+
+Mark this document and the branch PR as the authoritative record of the Phase 3 migration cutover. After merging, close the related migration TODOs and remove any remaining migration flags in project documentation.
+
 
 
 

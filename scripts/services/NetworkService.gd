@@ -28,9 +28,8 @@ func _game_state() -> Node:
     var registry := get_node_or_null("/root/ServiceRegistry")
     if registry != null and registry.has_method("get_service"):
         var svc := registry.get_service("GameState") as Node
-        if svc == null:
-            svc = registry.get_service("GameStateAdapter") as Node
-        return svc
+        if svc != null:
+            return svc
     # Fallback to legacy autoload if present
     if has_node("/root/GameState"):
         return get_node("/root/GameState")
@@ -134,8 +133,6 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
     var im: Node = null
     if registry != null and registry.has_method("get_service"):
         im = registry.get_service("Input")
-        if im == null:
-            im = registry.get_service("InputAdapter")
     if im != null and im.has_method("set_network_vector"):
         im.set_network_vector(player_id, Vector2(x, y))
 

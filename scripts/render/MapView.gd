@@ -762,11 +762,6 @@ func _apply_cached_fog_snapshot_if_compatible() -> bool:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			var fog_adapter: Object = registry.get_service("FogAdapter")
-			if fog_adapter != null:
-				push_warning("MapView: 'Fog' service missing — falling back to 'FogAdapter'")
-				fog_manager = fog_adapter
 	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
 		return false
 	var cached := fog_manager.get_fog_state() as PackedByteArray

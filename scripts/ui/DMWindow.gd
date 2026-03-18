@@ -270,12 +270,8 @@ func _game_state() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("GameState")
-		if svc == null:
-			var adapter: Object = registry.get_service("GameStateAdapter")
-			if adapter != null:
-				push_warning("DMWindow: 'GameState' service missing — falling back to 'GameStateAdapter'")
-				svc = adapter
-		return svc as Node
+		if svc != null:
+			return svc as Node
 	return null
 
 
@@ -283,12 +279,8 @@ func _map_service() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("Map")
-		if svc == null:
-			var adapter: Object = registry.get_service("MapAdapter")
-			if adapter != null:
-				push_warning("DMWindow: 'Map' service missing — falling back to 'MapAdapter'")
-				svc = adapter
-		return svc as Node
+		if svc != null:
+			return svc as Node
 	return null
 
 
@@ -296,8 +288,6 @@ func _map() -> MapData:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var ms: Object = registry.get_service("Map")
-		if ms == null:
-			ms = registry.get_service("MapAdapter")
 		if ms != null and ms.has_method("get_map"):
 			var m: MapData = ms.get_map() as MapData
 			if m != null:
@@ -891,11 +881,6 @@ func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			var fog_adapter: Object = registry.get_service("FogAdapter")
-			if fog_adapter != null:
-				push_warning("DMWindow: 'Fog' service missing — falling back to 'FogAdapter'")
-				fog_manager = fog_adapter
 	if not fog_state_png.is_empty() and fog_manager and fog_manager.has_method("set_fog_state"):
 		fog_manager.set_fog_state(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
@@ -1627,11 +1612,6 @@ func _profile_service() -> Node:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("Profile")
-		if svc == null:
-			var adapter: Object = registry.get_service("ProfileAdapter")
-			if adapter != null:
-				push_warning("DMWindow: 'Profile' service missing — falling back to 'ProfileAdapter'")
-				svc = adapter
 		if svc != null:
 			return svc as Node
 	return null
@@ -1935,8 +1915,6 @@ func _on_profiles_export_path_selected(path: String) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence == null:
-			persistence = registry.get_service("PersistenceAdapter") as Node
 		if persistence != null:
 			var payload := {"profiles": _profiles_to_array()}
 			# If adapter/service offers direct export, use it.
@@ -1969,8 +1947,6 @@ func _on_profiles_import_path_selected(path: String) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if path.begins_with("user://") and registry != null and registry.has_method("get_service"):
 		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence == null:
-			persistence = registry.get_service("PersistenceAdapter") as Node
 		if persistence != null and persistence.has_method("load_game"):
 			var save_name := path.get_file().get_basename()
 			var loaded: Variant = persistence.load_game(save_name)
@@ -2083,8 +2059,6 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	var copy_err := _copy_file(src_path, img_dest_abs)
 	if registry != null and registry.has_method("get_service"):
 		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence == null:
-			persistence = registry.get_service("PersistenceAdapter") as Node
 		if persistence != null and persistence.has_method("copy_file"):
 			copy_err = persistence.copy_file(src_path, img_dest_abs)
 	if copy_err != OK:
@@ -2192,8 +2166,6 @@ func _save_map_as_path(bundle_path: String) -> void:
 		var copy_err := _copy_file(map.image_path, new_img_abs)
 		if registry != null and registry.has_method("get_service"):
 			var persistence: Node = registry.get_service("Persistence") as Node
-			if persistence == null:
-				persistence = registry.get_service("PersistenceAdapter") as Node
 			if persistence != null and persistence.has_method("copy_file"):
 				copy_err = persistence.copy_file(map.image_path, new_img_abs)
 		if copy_err != OK:

@@ -58,12 +58,8 @@ func _fog_service() -> Object:
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.has_method("get_service"):
 		var svc: Object = registry.get_service("Fog")
-		if svc == null:
-			var adapter: Object = registry.get_service("FogAdapter")
-			if adapter != null:
-				push_warning("FogSystem: 'Fog' service missing — falling back to 'FogAdapter'")
-				return adapter
-		return svc
+		if svc != null:
+			return svc
 	return null
 
 
