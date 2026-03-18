@@ -16,6 +16,7 @@ const FOG_SNAPSHOT_B64_CHUNK_CHARS: int = 12000
 var _server: WebSocketMultiplayerPeer = null
 var ws_bindings: Dictionary = {}
 var ws_last_seen_token: Dictionary = {}
+var ws_peer_roles: Dictionary = {}
 var _display_peers: Array[int] = []
 var _input_peers: Array[int] = []
 var _fog_packet_bytes_by_type: Dictionary = {"fog_updated": 0, "fog_delta": 0}
@@ -76,12 +77,28 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
     if data == null or not data is Dictionary:
         return
 
+    # Protocol versioning: warn if client declares a non-default protocol_version
+    if data.has("protocol_version"):
+        var pv_raw: Variant = data.get("protocol_version")
+        var pv: int = 0
+        if pv_raw is int:
+            pv = pv_raw
+        else:
+            pv = int(str(pv_raw))
+        if pv != 1:
+            push_warning("NetworkService: warning: peer uses protocol_version %d" % pv)
     if data.has("player_id"):
         var seen_token: String = str(data.get("player_id", "")).strip_edges()
         if seen_token != "":
             ws_last_seen_token[peer_id] = seen_token
 
     if data.get("type", "") == "display":
+        var role := str(data.get("role", "")).strip_edges()
+        if role != "":
+            ws_peer_roles[peer_id] = role
+        else:
+            ws_peer_roles.erase(peer_id)
+        print("NetworkService: handshake role=%s from peer %d" % [role, peer_id])
         var vp := Vector2(
             float(data.get("viewport_width", 1920)),
             float(data.get("viewport_height", 1080)))
@@ -105,6 +122,19 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
     if data.get("type", "") == "display_sync_applied" and peer_id in _display_peers:
         emit_signal("display_sync_applied", peer_id, data)
         return
+
+    # Input packet validation: when clients send input vectors we should
+    # explicitly validate presence and numeric-ness of `x` and `y` and
+    # log a debug warning when malformed instead of silently crashing.
+    if data.get("type", "") == "input":
+        if not data.has("x") or not data.has("y"):
+            print_debug("NetworkService: ignoring malformed input packet from %d — missing x/y: %s" % [peer_id, str(data)])
+            return
+        var x_raw_check: Variant = data.get("x")
+        var y_raw_check: Variant = data.get("y")
+        if not _is_valid_axis_value(x_raw_check) or not _is_valid_axis_value(y_raw_check):
+            print_debug("NetworkService: ignoring malformed input packet from %d — non-numeric x/y: %s" % [peer_id, str(data)])
+            return
 
     if peer_id in _display_peers:
         return
@@ -195,6 +225,7 @@ func _on_peer_connected(peer_id: int) -> void:
 
 func _on_peer_disconnected(peer_id: int) -> void:
     ws_bindings.erase(peer_id)
+    ws_peer_roles.erase(peer_id)
     _display_peers.erase(peer_id)
     _input_peers.erase(peer_id)
     emit_signal("client_disconnected", peer_id)

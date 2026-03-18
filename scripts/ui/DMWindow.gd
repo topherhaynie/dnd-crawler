@@ -2336,12 +2336,12 @@ func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_ce
 		if revealed_chunk.is_empty() and hidden_chunk.is_empty():
 			break
 
-			_nm_broadcast_to_displays({
-				"msg": "fog_delta",
-				"fog_cell_px": cell_px,
-				"revealed_cells": _serialise_fog_cells(revealed_chunk),
-				"hidden_cells": _serialise_fog_cells(hidden_chunk),
-			})
+		_nm_broadcast_to_displays({
+			"msg": "fog_delta",
+			"fog_cell_px": cell_px,
+			"revealed_cells": _serialise_fog_cells(revealed_chunk),
+			"hidden_cells": _serialise_fog_cells(hidden_chunk),
+		})
 
 
 func _on_map_walls_changed(map: MapData) -> void:

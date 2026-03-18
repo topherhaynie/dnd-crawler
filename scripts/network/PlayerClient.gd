@@ -83,6 +83,7 @@ func _send_handshake() -> void:
 		"role": "player_window",
 		"viewport_width": vp_size.x,
 		"viewport_height": vp_size.y,
+		"protocol_version": 1,
 	})
 	_socket.send_text(packet)
 	# Watch for subsequent window resizes and report them to the DM so its
@@ -99,6 +100,7 @@ func _on_viewport_size_changed() -> void:
 		"type": "viewport_resize",
 		"viewport_width": vp_size.x,
 		"viewport_height": vp_size.y,
+		"protocol_version": 1,
 	}))
 
 
@@ -109,6 +111,7 @@ func send_display_sync_applied(payload: Dictionary) -> void:
 		"type": "display_sync_applied",
 		"snapshot_bytes": int(payload.get("snapshot_bytes", -1)),
 		"snapshot_hash": int(payload.get("snapshot_hash", -1)),
+		"protocol_version": 1,
 	}
 	_socket.send_text(JSON.stringify(packet))
 

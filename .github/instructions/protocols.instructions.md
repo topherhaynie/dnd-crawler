@@ -4,6 +4,10 @@ description: Loaded when authoring protocol/interface scripts
 applyTo: 'scripts/protocols/**/*.gd'
 ---
 
+See docs/protocols.md for runtime message schemas and examples.
+
+Existing guidance preserved below.
+
 Guidance for writing protocol (interface) scripts.
 
 - Use `class_name I<Name>Service` for protocols (e.g., `IFogService`).
