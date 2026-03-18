@@ -54,7 +54,7 @@ const WALL_HANDLE_SIZE_WORLD: float = 6.0
 @onready var wall_layer: Node2D = $WallLayer
 @onready var wall_visual_layer: Node2D = $WallVisualLayer
 @onready var object_layer: Node2D = get_node_or_null("ObjectLayer") as Node2D
-@onready var fog_overlay: Node2D = $FogOverlay
+@onready var fog_overlay: FogSystem = $FogSystem as FogSystem
 @onready var token_layer: Node2D = $TokenLayer
 
 enum RenderLayer {

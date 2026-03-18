@@ -1,4 +1,5 @@
 extends Node2D
+class_name FogSystem
 
 const VISION_LAYER_MASK: int = 2
 const PLAYER_ALPHA_SCALE: float = 1.00
@@ -116,7 +117,7 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
 		])
 
-
+# These are necessary, but I don't know why.
 func get_fog_state() -> PackedByteArray:
 	if _history_gpu_ready:
 		if _history_swap_pending or _history_seed_pending:
@@ -263,109 +264,109 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 	_history_dirty = true
 
 
-func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> bool:
-	_ensure_history_storage(_map_size)
-	if _history_image == null or _history_image.is_empty():
-		return false
+# func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> bool:
+# 	_ensure_history_storage(_map_size)
+# 	if _history_image == null or _history_image.is_empty():
+# 		return false
 
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("apply_history_brush"):
-			return svc.apply_history_brush(_history_image, world_pos, radius_px, reveal)
+# 	var registry := get_node_or_null("/root/ServiceRegistry")
+# 	if registry != null and registry.has_method("get_service"):
+# 		var svc := _fog_service() as FogService
+# 		if svc != null and svc.has_method("apply_history_brush"):
+# 			return svc.apply_history_brush(_history_image, world_pos, radius_px, reveal)
 
-	var safe_radius := maxf(1.0, radius_px)
-	var min_x := maxi(0, int(floor(world_pos.x - safe_radius)))
-	var min_y := maxi(0, int(floor(world_pos.y - safe_radius)))
-	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius)))
-	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
-	if min_x > max_x or min_y > max_y:
-		return false
-	var target := 1.0 if reveal else 0.0
-	var changed := false
-	for py in range(min_y, max_y + 1):
-		for px in range(min_x, max_x + 1):
-			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
-				continue
-			var current := _history_image.get_pixel(px, py).r
-			if absf(current - target) < 0.001:
-				continue
-			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-			changed = true
-	return changed
-
-
-func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
-	_ensure_history_storage(_map_size)
-	if _history_image == null or _history_image.is_empty():
-		return false
-
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	var changed := false
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("apply_history_rect"):
-			changed = svc.apply_history_rect(_history_image, a, b, reveal)
-			if changed:
-				_history_dirty = true
-			return changed
-
-	var min_x := maxi(0, int(floor(minf(a.x, b.x))))
-	var min_y := maxi(0, int(floor(minf(a.y, b.y))))
-	var max_x := mini(_history_image.get_width() - 1, int(ceil(maxf(a.x, b.x))))
-	var max_y := mini(_history_image.get_height() - 1, int(ceil(maxf(a.y, b.y))))
-	if min_x > max_x or min_y > max_y:
-		return false
-	var target := 1.0 if reveal else 0.0
-	changed = false
-	for py in range(min_y, max_y + 1):
-		for px in range(min_x, max_x + 1):
-			var current := _history_image.get_pixel(px, py).r
-			if absf(current - target) < 0.001:
-				continue
-			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-			changed = true
-	if changed:
-		_history_dirty = true
-	return changed
+# 	var safe_radius := maxf(1.0, radius_px)
+# 	var min_x := maxi(0, int(floor(world_pos.x - safe_radius)))
+# 	var min_y := maxi(0, int(floor(world_pos.y - safe_radius)))
+# 	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius)))
+# 	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
+# 	if min_x > max_x or min_y > max_y:
+# 		return false
+# 	var target := 1.0 if reveal else 0.0
+# 	var changed := false
+# 	for py in range(min_y, max_y + 1):
+# 		for px in range(min_x, max_x + 1):
+# 			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
+# 				continue
+# 			var current := _history_image.get_pixel(px, py).r
+# 			if absf(current - target) < 0.001:
+# 				continue
+# 			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
+# 			changed = true
+# 	return changed
 
 
-func collect_revealed_cells_from_candidates(_candidates: Array, _cell_px: int, _max_cells: int) -> Array:
-	return []
+# func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
+# 	_ensure_history_storage(_map_size)
+# 	if _history_image == null or _history_image.is_empty():
+# 		return false
+
+# 	var registry := get_node_or_null("/root/ServiceRegistry")
+# 	var changed := false
+# 	if registry != null and registry.has_method("get_service"):
+# 		var svc := _fog_service() as FogService
+# 		if svc != null and svc.has_method("apply_history_rect"):
+# 			changed = svc.apply_history_rect(_history_image, a, b, reveal)
+# 			if changed:
+# 				_history_dirty = true
+# 			return changed
+
+# 	var min_x := maxi(0, int(floor(minf(a.x, b.x))))
+# 	var min_y := maxi(0, int(floor(minf(a.y, b.y))))
+# 	var max_x := mini(_history_image.get_width() - 1, int(ceil(maxf(a.x, b.x))))
+# 	var max_y := mini(_history_image.get_height() - 1, int(ceil(maxf(a.y, b.y))))
+# 	if min_x > max_x or min_y > max_y:
+# 		return false
+# 	var target := 1.0 if reveal else 0.0
+# 	changed = false
+# 	for py in range(min_y, max_y + 1):
+# 		for px in range(min_x, max_x + 1):
+# 			var current := _history_image.get_pixel(px, py).r
+# 			if absf(current - target) < 0.001:
+# 				continue
+# 			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
+# 			changed = true
+# 	if changed:
+# 		_history_dirty = true
+# 	return changed
 
 
-func export_hidden_cells_from_gpu(_cell_px: int) -> Array:
-	return []
+# func collect_revealed_cells_from_candidates(_candidates: Array, _cell_px: int, _max_cells: int) -> Array:
+# 	return []
 
 
-func export_hidden_cells_from_runtime(_cell_px: int) -> Array:
-	return []
+# func export_hidden_cells_from_gpu(_cell_px: int) -> Array:
+# 	return []
 
 
-func export_hidden_cells_for_sync(_cell_px: int) -> Array:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("export_hidden_cells_for_sync"):
-			return svc.export_hidden_cells_for_sync(_history_image, _cell_px)
-	# Fallback: no-op
-	return []
+# func export_hidden_cells_from_runtime(_cell_px: int) -> Array:
+# 	return []
 
 
-func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("commit_runtime_history_to_seed"):
-			var res := svc.commit_runtime_history_to_seed(_history_image, _cell_px) as Dictionary
-			if res != null:
-				return res
-	# Fallback: no-op
-	return {
-		"grid_w": 0,
-		"grid_h": 0,
-		"revealed_added": 0,
-	}
+# func export_hidden_cells_for_sync(_cell_px: int) -> Array:
+# 	var registry := get_node_or_null("/root/ServiceRegistry")
+# 	if registry != null and registry.has_method("get_service"):
+# 		var svc := _fog_service() as FogService
+# 		if svc != null and svc.has_method("export_hidden_cells_for_sync"):
+# 			return svc.export_hidden_cells_for_sync(_history_image, _cell_px)
+# 	# Fallback: no-op
+# 	return []
+
+
+# func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
+# 	var registry := get_node_or_null("/root/ServiceRegistry")
+# 	if registry != null and registry.has_method("get_service"):
+# 		var svc := _fog_service() as FogService
+# 		if svc != null and svc.has_method("commit_runtime_history_to_seed"):
+# 			var res := svc.commit_runtime_history_to_seed(_history_image, _cell_px) as Dictionary
+# 			if res != null:
+# 				return res
+# 	# Fallback: no-op
+# 	return {
+# 		"grid_w": 0,
+# 		"grid_h": 0,
+# 		"revealed_added": 0,
+# 	}
 
 
 func sync_player_revealers(tokens: Array) -> void:
@@ -471,10 +472,10 @@ func set_wall_polygons(polygons: Array) -> void:
 	_queue_los_full_bake()
 
 
-func set_dm_reveals(_reveals: Array) -> void:
-	# History is now sourced from baked LOS viewport output only.
-	# DM reveal markers are intentionally ignored in this mode.
-	return
+# func set_dm_reveals(_reveals: Array) -> void:
+# 	# History is now sourced from baked LOS viewport output only.
+# 	# DM reveal markers are intentionally ignored in this mode.
+# 	return
 
 
 func _build_nodes() -> void:
@@ -545,9 +546,9 @@ func _build_history_gpu_pipeline() -> void:
 		return
 
 	var shader := load("res://assets/effects/fog_history_merge.gdshader") as Shader
-	if shader == null:
-		push_warning("FogSystem: fog_history_merge shader missing; falling back to CPU history")
-		return
+	# if shader == null:
+	# 	push_warning("FogSystem: fog_history_merge shader missing; falling back to CPU history")
+	# 	return
 
 	for i in range(2):
 		var vp := SubViewport.new()

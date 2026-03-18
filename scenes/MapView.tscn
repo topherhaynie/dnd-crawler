@@ -22,7 +22,7 @@ script = ExtResource("2_GridOverlay")
 
 [node name="ObjectLayer" type="Node2D" parent="."]
 
-[node name="FogOverlay" type="Node2D" parent="."]
+[node name="FogSystem" type="Node2D" parent="."]
 script = ExtResource("3_FogOverlay")
 
 [node name="TokenLayer" type="Node2D" parent="."]
