@@ -2,6 +2,7 @@ extends Node
 class_name ProfileService
 
 signal profiles_changed()
+const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
 
 var profiles: Array = []
 
@@ -39,11 +40,47 @@ func save_profiles() -> void:
 			data.append((profile as PlayerProfile).to_dict())
 		elif profile is Dictionary:
 			data.append(profile)
+	# Prefer using the Persistence service when available
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var persistence: Node = registry.get_service("Persistence") as Node
+		if persistence == null:
+			persistence = registry.get_service("PersistenceAdapter") as Node
+		if persistence != null and persistence.has_method("save_game"):
+			persistence.save_game("profiles", {"profiles": data})
+			emit_signal("profiles_changed")
+			return
+	# Fallback: write directly to profiles.json
 	_write_json("user://data/profiles.json", data)
 	emit_signal("profiles_changed")
 
 func load_profiles() -> void:
-	var raw = _read_json("user://data/profiles.json")
+	# Prefer loading via Persistence service when available
+	var raw: Variant = null
+	var registry: Node = get_node_or_null("/root/ServiceRegistry") as Node
+	if registry != null and registry.has_method("get_service"):
+		var persistence: Node = registry.get_service("Persistence") as Node
+		if persistence == null:
+			persistence = registry.get_service("PersistenceAdapter") as Node
+		if persistence != null and persistence.has_method("load_game"):
+			var loaded: Variant = persistence.load_game("profiles")
+			# If persistence returned nothing/empty (no saves yet), fall back to legacy path
+			if loaded == null or (loaded is Dictionary and loaded.size() == 0):
+				var legacy: Variant = _read_json("user://data/profiles.json")
+				if legacy is Dictionary and legacy.has("profiles"):
+					raw = legacy["profiles"]
+				else:
+					raw = legacy
+			else:
+				if loaded is Dictionary and loaded.has("profiles"):
+					raw = loaded["profiles"]
+				else:
+					raw = loaded
+	else:
+		raw = _read_json("user://data/profiles.json")
+		# Backwards-compat: accept either an array or a wrapper { "profiles": [...] }
+		if raw is Dictionary and raw.has("profiles"):
+			raw = raw["profiles"]
 	profiles.clear()
 	if raw == null:
 		emit_signal("profiles_changed")
@@ -82,7 +119,11 @@ func _read_json(path: String) -> Variant:
 		return null
 	var text := file.get_as_text()
 	file.close()
-	var result = JSON.parse_string(text)
-	if result == null:
+	var parsed: Variant = JsonUtils.parse_json_text(text)
+	if parsed == null:
 		push_error("ProfileService: JSON parse error in %s" % path)
-	return result
+		return null
+	# Handle Godot JSON parse wrapper { "result": <value> }
+	if parsed is Dictionary and parsed.has("result"):
+		return parsed["result"]
+	return parsed

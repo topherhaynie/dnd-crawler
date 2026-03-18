@@ -1,6 +1,8 @@
 extends Node
 class_name GameStateService
 signal profiles_changed()
+
+const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
 signal player_lock_changed(player_id, is_locked: bool)
 
 var profiles: Array = []
@@ -105,15 +107,4 @@ func _write_json(path: String, data: Variant) -> void:
 
 
 func _read_json(path: String) -> Variant:
-    if not FileAccess.file_exists(path):
-        return null
-    var file := FileAccess.open(path, FileAccess.READ)
-    if not file:
-        push_error("GameStateService: could not read %s" % path)
-        return null
-    var text := file.get_as_text()
-    file.close()
-    var result = JSON.parse_string(text)
-    if result == null:
-        push_error("GameStateService: JSON parse error in %s" % path)
-    return result
+    return JsonUtils.read_json(path)

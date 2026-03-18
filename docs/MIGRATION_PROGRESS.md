@@ -399,6 +399,90 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
 ## Update: DM UI & NetworkManager sweep (2026-03-16)
 ### MapService migration started (2026-03-16)
 
+## Update: PersistenceService implemented (2026-03-16)
+
+- Implemented `scripts/protocols/IPersistenceService.gd` defining the persistence protocol (`save_game`, `load_game`, `list_saves`, `delete_save`) and `persistence_changed` signal.
+- Added `scripts/services/PersistenceService.gd` — basic JSON-backed persistence using `user://data/saves/` with `save_game`, `load_game`, `list_saves`, and `delete_save` methods and a `persistence_changed` signal.
+- Added `scripts/registry/PersistenceAdapter.gd` — adapter shim exposing legacy-friendly calls and forwarding them to the registered `Persistence` service.
+- Wired the service and adapter into `scripts/autoloads/ServiceBootstrap.gd` and registered them with `ServiceRegistry` as `Persistence` / `PersistenceAdapter`.
+
+Notes: This is a lightweight persistence pilot for save/load flows and profile snapshots. It uses simple JSON files under `user://data/saves/` for portability. Consider adding serialization versioning and atomic write semantics in follow-up commits.
+
+## Update: Static scan & consumer integration (2026-03-16)
+
+- Performed a repository scan for file I/O and JSON usage to locate likely migration hotspots (looked for `FileAccess.open`, `FileAccess.file_exists`, `DirAccess.make_dir_recursive*`, `JSON.parse_string`, `JSON.stringify`).
+- Adjusted `scripts/services/ProfileService.gd` and `scripts/autoloads/GameState.gd` to prefer the registered `Persistence` service (via `ServiceRegistry.get_service("Persistence")` / `PersistenceAdapter`) for saving/loading profiles, falling back to legacy file I/O when the service is unavailable.
+- Updated `scripts/services/PersistenceService.gd` to use `FileAccess`/`DirAccess` and `JSON.stringify`/`JSON.parse_string` patterns consistent with other services.
+
+Findings (quick): many modules perform direct file I/O (profiles, maps, DM UI, GameState, MapService, ProfileService, DMWindow). Prefer routing these through `Persistence` in follow-up commits to centralize serialization and versioning.
+
+Next: continue migrating remaining direct file I/O call sites to use the `Persistence` service and add atomic write/versioning helpers in `PersistenceService`.
+
+## Update: DMWindow map-save delegation (2026-03-16)
+
+- Updated `scripts/ui/DMWindow.gd` `_save_map_data` to prefer the registered `Map` service (`MapService.save_map_to_bundle`) for writing `.map` bundles. This centralizes bundle serialization and keeps DM UI focused on UI concerns. The previous direct `FileAccess` write is retained as a fallback when the service is unavailable.
+
+Next: migrate additional direct file I/O in `DMWindow.gd` (profile export/import and arbitrary file operations) to the `Persistence` service or adapters where appropriate.
+
+## Update: Profile import prefers Persistence when applicable (2026-03-16)
+
+- Updated `scripts/ui/DMWindow.gd` `_on_profiles_import_path_selected` to prefer `Persistence.load_game` when the selected import path is inside `user://` and a `Persistence`/`PersistenceAdapter` is registered. When Persistence isn't applicable, the code falls back to reading the chosen file directly.
+
+Rationale: this centralizes saved-profile deserialization for internal saves while keeping the DM's ability to import arbitrary JSON profile files from disk.
+
+Next: sweep remaining direct `DMWindow.gd` file operations for opportunities to route through `Persistence` or `MapService` (e.g., arbitrary file copy helpers and temporary export paths). Consider adding `Persistence.export_to_path` to avoid temp-file copy steps.
+
+## Update: Persistence export & copy helpers (2026-03-16)
+
+- Added `export_to_path(save_name, dest_path)` and `copy_file(from_path, to_path)` to `scripts/protocols/IPersistenceService.gd`.
+- Implemented these helpers in `scripts/services/PersistenceService.gd` to allow direct export of saved JSON payloads to arbitrary filesystem locations and to provide a centralized copy helper that respects `user://` and absolute paths.
+- Exposed the same helpers through `scripts/registry/PersistenceAdapter.gd`.
+- Updated `scripts/autoloads/ServiceBootstrap.gd` registration to assert presence of `export_to_path` and `copy_file` on the registered `Persistence` service.
+
+This allows `DMWindow` to:
+- Use `Persistence.export_to_path` when exporting profile data instead of saving to a temporary save and copying the temp file.
+- Use `Persistence.copy_file` when copying map images into a `.map` bundle, centralizing file semantics and improving portability.
+
+Next: continue sweeping `DMWindow.gd` for any remaining direct file operations (other exports, imports, and ad-hoc copies) and route them to `Persistence` or `MapService` where appropriate. After that, add unit tests for `PersistenceService` behavior (atomic write and error cases).
+
+## Update: Static analysis and lint fixes (2026-03-16)
+
+- Ran workspace static analysis and fixed analyzer/lint errors introduced during the migration changes. Key fixes:
+  - Annotated registry lookups (`registry.get_service("...")`) as `Node` where appropriate to help the analyzer infer method availability.
+  - Added explicit `Variant` typing for values returned from dynamic `load_game` calls to avoid inferred-Variant warnings.
+  - Repaired accidental edit corruption in `scripts/autoloads/GameState.gd` (restored `push_notification` entry structure).
+  - Removed or silenced small unused-variable and unused-signal warnings (commented interface signal in `IPersistenceService.gd` to satisfy the analyzer; implementations still emit signals as before).
+  - Ensured `scripts/autoloads/ServiceBootstrap.gd` uses non-typed instantiation for newly-added services to avoid bootstrap-time analyzer scope issues.
+
+Result: static analysis now reports no errors across the workspace.
+
+Next: implement atomic write semantics in `PersistenceService.save_game` and add unit tests for persistence error conditions and atomic rename behavior.
+
+## Update: Atomic-write and persistence unit test (2026-03-16)
+
+- Implemented atomic-write semantics in `scripts/services/PersistenceService.gd`'s `save_game`:
+  - Writes to a temporary file in the same directory (`<name>.json.tmp`) then attempts an atomic rename to the final path.
+  - If an atomic rename call is unavailable, falls back to a safe copy-and-replace approach and removes the temp file.
+  - Ensures save directory exists before writing.
+- Added unit test `tests/unit/test_persistence.gd` which exercises `save_game`, `load_game`, `list_saves`, `export_to_path`, and `delete_save`.
+
+Notes: The implementation prefers `DirAccess.rename`/`rename_absolute` where available for the atomic replacement. The fallback copy path ensures correctness even on environments without the rename helper, though it is not strictly atomic on those platforms.
+
+## Update: Profiles load compatibility fix (2026-03-16)
+
+- Fixed a startup bug where `ProfileService` reported `profiles.json is not an array` when the on-disk `profiles.json` used the new wrapped format `{"profiles": [...]}` (written by the `Persistence` service) while the legacy loader expected a raw array.
+- Change: `scripts/services/ProfileService.gd::load_profiles` now accepts either an Array or the wrapper Dictionary `{ "profiles": [...] }` when reading `user://data/profiles.json`. This prevents startup errors when the persistence format differs from the legacy file layout.
+- Rationale: keep backward compatibility during migration; centralize canonical format later once all consumers use `Persistence` consistently.
+
+## Update: Profile export via Persistence (2026-03-16)
+
+- Updated `scripts/ui/DMWindow.gd` `_on_profiles_export_path_selected` to prefer the registered `Persistence` service when generating profile export content. The flow now:
+  - If `Persistence`/`PersistenceAdapter` is registered, save export payload to `user://data/saves/profiles_export.json` via `save_game`, copy that temporary file to the user-chosen export path, and remove the temporary save.
+  - Otherwise, fall back to the original direct `FileAccess` write to the chosen path.
+
+Rationale: centralizes serialization and formatting through `PersistenceService` while preserving the ability to export to arbitrary filesystem locations. Follow-up: add an explicit `export_to_path` helper on `PersistenceService` to avoid the temporary file copy step.
+
+
 ## Update: ProfileService migration & lint (2026-03-16)
 
 - **ProfileService scaffolded and registered:** added `IProfileService.gd`, `scripts/services/ProfileService.gd`, and `scripts/registry/ProfileAdapter.gd`, and registered them in `scripts/autoloads/ServiceBootstrap.gd`.
@@ -414,7 +498,31 @@ Status: `GameState` pilot — completed. Continuing with `Network` pilot (in-pro
   - Implemented `scripts/services/MapService.gd` to own `MapData` lifecycle, load/save bundle JSON, and emit `map_loaded` / `map_updated` signals.
   - Added `scripts/registry/MapAdapter.gd` to provide a backward-compatible shim that forwards legacy API calls to the registered Map service.
   - Wired `MapService` and `MapAdapter` into `scripts/autoloads/ServiceBootstrap.gd` and registered them with `ServiceRegistry` (required methods: `get_map`, `load_map`, `load_map_from_bundle`).
+
+## 2026-03-16 — JSON parsing audit & profile-load fix
+
+- Action: scanned the repository for risky JSON parsing and file-read patterns (`JSON.parse_string`, `get_as_text`, and `load_game` usage).
+- Files noted for review: `scripts/ui/DMWindow.gd`, `scripts/services/MapService.gd`, `scripts/services/GameStateService.gd`, `scripts/services/PersistenceService.gd`, `scripts/network/PlayerClient.gd`, `scripts/services/NetworkService.gd` and other DM/UI readers that call `JSON.parse_string` directly.
+- Issue found: `ProfileService` used a non-existent `Dictionary.empty()` call when handling `persistence.load_game("profiles")`, causing a runtime "Invalid call" and masking a subsequent "profiles.json is not an array" error.
+- Fix applied: replaced the invalid call with `Dictionary.size() == 0`, normalized `JSON.parse_string` handling to unwrap Godot parse wrappers, and added a legacy-file fallback to `user://data/profiles.json` when persistence returns null/empty.
+- Recommendation: centralize JSON read/validate logic (unwrap parse wrapper, validate type, return typed Variant) and then refactor callers to use that helper. Prioritize `GameStateService._read_json` and `DMWindow.gd` parse sites.
+- Follow-up: leave normalization and defensive checks for other parse sites to a separate patch (recorded in TODOs) so we can address them in small, reviewable commits.
   - Recorded these steps in the migration TODO list.
+
+## 2026-03-17 — JSON parse sweep completed
+
+- Action: completed a repository-wide replacement of direct `JSON.parse_string` usage with the centralized `JsonUtils.parse_json_text` helper where appropriate and preloaded the helper in affected modules.
+- Files updated in this sweep:
+  - `scripts/ui/DMWindow.gd`
+  - `scripts/ui/PlayerWindow.gd` (where applicable)
+  - `scripts/network/PlayerClient.gd`
+  - `scripts/services/NetworkService.gd`
+  - `scripts/services/MapService.gd`
+  - `scripts/services/PersistenceService.gd`
+  - `scripts/services/GameStateService.gd`
+  - `scripts/autoloads/GameState.gd`
+- Result: parsing now unwraps Godot parse wrappers, returns `null` for empty/invalid text, and callers validate the returned Variant before use. Static analysis and lint checks were run and report no errors.
+- Next: run the persistence unit test and sweep any remaining direct `JSON.parse_string` occurrences (if any remain) in smaller follow-up commits.
 
 - **Status:** in-progress — service implemented and registered; next tasks are migrating a consumer to use the registry and adding unit tests for map load/save and basic state emissions.
 

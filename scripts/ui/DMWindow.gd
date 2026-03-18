@@ -21,6 +21,7 @@ extends Node
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
 const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.gd")
+const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
@@ -1735,7 +1736,7 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	if extras_raw.is_empty():
 		p.extras = {}
 	else:
-		var parsed: Variant = JSON.parse_string(extras_raw)
+		var parsed: Variant = JsonUtils.parse_json_text(extras_raw)
 		if parsed == null or not parsed is Dictionary:
 			_set_status("Extras must be valid JSON object; profile not saved.")
 			return false
@@ -1915,6 +1916,23 @@ func _on_profiles_export_path_selected(path: String) -> void:
 		if mk_err != OK:
 			_set_status("Export failed: could not create directory.")
 			return
+	# Prefer using the Persistence service to generate export content when available.
+	# If Persistence supports `export_to_path` we can avoid writing a temp file.
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.has_method("get_service"):
+		var persistence: Node = registry.get_service("Persistence") as Node
+		if persistence == null:
+			persistence = registry.get_service("PersistenceAdapter") as Node
+		if persistence != null:
+			var payload := {"profiles": _profiles_to_array()}
+			# If adapter/service offers direct export, use it.
+			if persistence.has_method("save_game") and persistence.has_method("export_to_path"):
+				if persistence.save_game("profiles_export", payload) and persistence.export_to_path("profiles_export", target_path):
+					if persistence.has_method("delete_save"):
+						persistence.delete_save("profiles_export")
+					_set_status("Exported %d profiles." % payload["profiles"].size())
+					return
+			# Otherwise fallback to writing directly to the chosen path
 	var file := FileAccess.open(target_path, FileAccess.WRITE)
 	if file == null:
 		_set_status("Export failed: could not write file.")
@@ -1932,16 +1950,33 @@ func _on_profiles_export_path_selected(path: String) -> void:
 
 
 func _on_profiles_import_path_selected(path: String) -> void:
-	if not FileAccess.file_exists(path):
-		_set_status("Import failed: file not found.")
-		return
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		_set_status("Import failed: could not read file.")
-		return
-	var text := file.get_as_text()
-	file.close()
-	var parsed: Variant = JSON.parse_string(text)
+	var parsed: Variant = null
+	# If the selected path is under user:// and Persistence is available prefer it
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if path.begins_with("user://") and registry != null and registry.has_method("get_service"):
+		var persistence: Node = registry.get_service("Persistence") as Node
+		if persistence == null:
+			persistence = registry.get_service("PersistenceAdapter") as Node
+		if persistence != null and persistence.has_method("load_game"):
+			var save_name := path.get_file().get_basename()
+			var loaded: Variant = persistence.load_game(save_name)
+			if loaded is Array:
+				parsed = loaded
+			elif loaded is Dictionary and loaded.has("profiles"):
+				parsed = loaded["profiles"]
+			else:
+				parsed = null
+	if parsed == null:
+		if not FileAccess.file_exists(path):
+			_set_status("Import failed: file not found.")
+			return
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file == null:
+			_set_status("Import failed: could not read file.")
+			return
+		var text := file.get_as_text()
+		file.close()
+		parsed = JsonUtils.parse_json_text(text)
 	if parsed == null or not parsed is Array:
 		_set_status("Import failed: JSON must be an array of profiles.")
 		return
@@ -2029,9 +2064,17 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	var ext: String = src_path.get_extension().to_lower()
 	var img_dest_abs: String = _image_dest_path_abs(bundle_path, ext)
 
-	var err := _copy_file(src_path, img_dest_abs)
-	if err != OK:
-		push_error("DMWindow: failed to copy image to '%s' (err %d)" % [img_dest_abs, err])
+	# Prefer using Persistence copy API when available
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	var copy_err := _copy_file(src_path, img_dest_abs)
+	if registry != null and registry.has_method("get_service"):
+		var persistence: Node = registry.get_service("Persistence") as Node
+		if persistence == null:
+			persistence = registry.get_service("PersistenceAdapter") as Node
+		if persistence != null and persistence.has_method("copy_file"):
+			copy_err = persistence.copy_file(src_path, img_dest_abs)
+	if copy_err != OK:
+		push_error("DMWindow: failed to copy image to '%s' (err %d)" % [img_dest_abs, copy_err])
 		_set_status("Error: could not copy image.")
 		return
 
@@ -2130,9 +2173,17 @@ func _save_map_as_path(bundle_path: String) -> void:
 
 	# Only copy image if destination is different from source.
 	if new_img_abs != map.image_path:
-		var err := _copy_file(map.image_path, new_img_abs)
-		if err != OK:
-			push_error("DMWindow: failed to copy image for save-as (err %d)" % err)
+		# Prefer using Persistence copy API when available
+		var registry := get_node_or_null("/root/ServiceRegistry")
+		var copy_err := _copy_file(map.image_path, new_img_abs)
+		if registry != null and registry.has_method("get_service"):
+			var persistence: Node = registry.get_service("Persistence") as Node
+			if persistence == null:
+				persistence = registry.get_service("PersistenceAdapter") as Node
+			if persistence != null and persistence.has_method("copy_file"):
+				copy_err = persistence.copy_file(map.image_path, new_img_abs)
+		if copy_err != OK:
+			push_error("DMWindow: failed to copy image for save-as (err %d)" % copy_err)
 			_set_status("Error: could not duplicate image.")
 			return
 
@@ -2532,6 +2583,14 @@ func _save_map_data(map: MapData) -> void:
 	var path := _bundle_json_path_abs(_active_map_bundle_path)
 	var d := map.to_dict()
 	d["image_path"] = map.image_path.get_file()
+	var ms := _map_service()
+	if ms != null and ms.has_method("save_map_to_bundle"):
+		# Let MapService handle bundle serialization/consistency when available.
+		if ms.has_method("update_map"):
+			ms.update_map(map)
+		ms.save_map_to_bundle(_active_map_bundle_path)
+		return
+
 	var fa := FileAccess.open(path, FileAccess.WRITE)
 	if fa == null:
 		push_error("DMWindow: cannot write to '%s'" % path)
@@ -2549,7 +2608,7 @@ func _load_map_from_bundle(bundle_path: String) -> MapData:
 		return null
 	var text := fa.get_as_text()
 	fa.close()
-	var parsed: Variant = JSON.parse_string(text)
+	var parsed: Variant = JsonUtils.parse_json_text(text)
 	if not (parsed is Dictionary):
 		push_error("DMWindow: invalid JSON in '%s'" % json_path)
 		return null

@@ -21,6 +21,7 @@ var _input_peers: Array[int] = []
 var _fog_packet_bytes_by_type: Dictionary = {"fog_updated": 0, "fog_delta": 0}
 var _fog_packet_count_by_type: Dictionary = {"fog_updated": 0, "fog_delta": 0}
 var _last_fog_metrics_log_msec: int = 0
+const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
 
 
 func _game_state() -> Node:
@@ -75,7 +76,7 @@ func _drain_packets() -> void:
 
 func _handle_packet(raw: String, _peer_id: int) -> void:
     var peer_id: int = _peer_id
-    var data = JSON.parse_string(raw)
+    var data = JsonUtils.parse_json_text(raw)
     if data == null or not data is Dictionary:
         return
 

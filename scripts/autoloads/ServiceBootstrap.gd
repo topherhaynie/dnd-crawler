@@ -13,6 +13,8 @@ func _ready() -> void:
     var GameStateAdapterScript: Script = load("res://scripts/registry/GameStateAdapter.gd")
     var ProfileServiceScript: Script = load("res://scripts/services/ProfileService.gd")
     var ProfileAdapterScript: Script = load("res://scripts/registry/ProfileAdapter.gd")
+    var PersistenceServiceScript: Script = load("res://scripts/services/PersistenceService.gd")
+    var PersistenceAdapterScript: Script = load("res://scripts/registry/PersistenceAdapter.gd")
 
     var registry: ServiceRegistry = ServiceRegistryScript.new() as ServiceRegistry
     registry.name = "ServiceRegistry"
@@ -68,6 +70,16 @@ func _ready() -> void:
         ps_adapter.set_service(ps)
     get_tree().root.call_deferred("add_child", ps_adapter)
 
+    var persistence = PersistenceServiceScript.new()
+    persistence.name = "PersistenceService"
+    get_tree().root.call_deferred("add_child", persistence)
+
+    var persistence_adapter = PersistenceAdapterScript.new()
+    persistence_adapter.name = "PersistenceAdapter"
+    if persistence_adapter.has_method("set_service"):
+        persistence_adapter.set_service(persistence)
+    get_tree().root.call_deferred("add_child", persistence_adapter)
+
     # Register with runtime conformance checks (required methods list mirrors IFogService)
     registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])
     registry.register("FogAdapter", adapter)
@@ -79,5 +91,7 @@ func _ready() -> void:
     registry.register("GameStateAdapter", gs_adapter)
     registry.register("Profile", ps, ["get_profiles", "get_profile_by_id", "save_profiles", "load_profiles"])
     registry.register("ProfileAdapter", ps_adapter)
+    registry.register("Persistence", persistence, ["save_game", "load_game", "list_saves", "delete_save", "export_to_path", "copy_file"])
+    registry.register("PersistenceAdapter", persistence_adapter)
 
     print("ServiceBootstrap: registered Fog service and adapter")

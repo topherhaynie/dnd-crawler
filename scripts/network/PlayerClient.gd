@@ -20,6 +20,8 @@ const RECONNECT_DELAY := 2.0 ## seconds between reconnect attempts
 var _socket: WebSocketPeer = WebSocketPeer.new()
 var _connected: bool = false
 
+const JsonUtils = preload("res://scripts/utils/JsonUtils.gd")
+
 
 func _ready() -> void:
 	_connect_to_server()
@@ -127,7 +129,7 @@ func _drain_packets() -> void:
 
 
 func _handle_packet(raw: String) -> void:
-	var data = JSON.parse_string(raw)
+	var data = JsonUtils.parse_json_text(raw)
 	if not data is Dictionary:
 		push_warning("PlayerClient: received non-dict packet, ignoring")
 		return
