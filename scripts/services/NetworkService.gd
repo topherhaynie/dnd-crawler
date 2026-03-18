@@ -30,9 +30,6 @@ func _game_state() -> Node:
         var svc := registry.get_service("GameState") as Node
         if svc != null:
             return svc
-    # Fallback to legacy autoload if present
-    if has_node("/root/GameState"):
-        return get_node("/root/GameState")
     return null
 
 func _ready() -> void:

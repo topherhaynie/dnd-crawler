@@ -1,8 +1,25 @@
 extends Node
 class_name IPersistenceService
 
-# Protocol for persistence service
-# signal persistence_changed(save_name: String)
+"""
+Protocol: IPersistenceService
+
+Methods:
+- func save_game(save_name: String, state: Dictionary) -> bool
+- func load_game(save_name: String) -> Dictionary
+- func list_saves() -> Array
+- func delete_save(save_name: String) -> bool
+- func export_to_path(save_name: String, dest_path: String) -> bool
+- func copy_file(from_path: String, to_path: String) -> int
+
+Signals:
+- signal persistence_changed(save_name: String)
+
+Notes:
+- Minimal signatures only; implementations handle IO and platform specifics.
+"""
+
+signal persistence_changed(save_name: String)
 
 func save_game(_save_name: String, _state: Dictionary) -> bool:
     return false

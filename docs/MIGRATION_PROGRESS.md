@@ -364,6 +364,7 @@ Planned immediate pilots (first two weeks):
 - Bootstrap: updated `scripts/autoloads/ServiceBootstrap.gd` to add `ServiceRegistry` and `GameStateService` synchronously at startup so consumers using registry-only lookups find the service immediately.
 - Consumers: migrated core consumers to registry-only lookup for GameState (`Main.gd`, `BackendRuntime.gd`, `InputManager.gd`, and `DMWindow.gd` were updated to prefer `ServiceRegistry.get_service("GameState")` / adapter and no longer fall back to `/root/GameState`).
 - Cutover: removed the legacy autoload entry for `GameState` in `project.godot` to finalize the migration for that service.
+  - Removed legacy autoload file `scripts/autoloads/GameState.gd` from the repository after migrating callers to `ServiceRegistry` (2026-03-17).
 
 ## Update: Gamepad binding migration and verification (2026-03-16)
 

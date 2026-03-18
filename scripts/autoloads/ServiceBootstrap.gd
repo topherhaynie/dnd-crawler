@@ -54,7 +54,7 @@ func _ready() -> void:
     get_tree().root.call_deferred("add_child", input)
 
     # Register with runtime conformance checks (required methods list mirrors IFogService)
-    registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state"])
+    registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state", "get_fog_state_size", "set_fog_state"])
     registry.register("Map", map, ["get_map", "load_map", "load_map_from_bundle"])
     registry.register("Network", net, ["start_server", "stop_server", "broadcast_to_displays", "send_to_display"])
     registry.register("GameState", gs, ["get_profile_by_id"])
