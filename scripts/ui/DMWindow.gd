@@ -59,13 +59,21 @@ var _ui_root: VBoxContainer = null
 # Player profile form fields
 var _profile_orientation_spin: SpinBox = null
 
-var _toolbar: Control = null ## HBoxContainer — shown/hidden by View menu
+var _toolbar: Control = null ## PanelContainer palette — shown/hidden by View menu
 var _select_btn: Button = null
 var _pan_btn: Button = null
 var _view_menu: PopupMenu = null ## kept for checkmark management
 var _fog_tool_option: OptionButton = null
 var _fog_brush_spin: SpinBox = null
 var _fog_visible_check: CheckBox = null
+var _fog_btn: Button = null ## palette fog toggle button
+var _wall_mode_option: OptionButton = null ## context panel wall mode selector
+var _wall_tool_dropdown: OptionButton = null ## palette wall mode selector (kept for handler)
+var _context_panel: VBoxContainer = null ## dynamic tool-options area below button grid
+var _palette_window: Window = null ## non-null when palette is undocked
+var _palette_floating: bool = false
+var _undock_btn: Button = null
+
 ## Removed unused _wall_tool_dropdown variable
 # Handler for wall tool dropdown selection
 func _on_wall_tool_selected(index: int) -> void:
@@ -375,10 +383,11 @@ func _build_ui() -> void:
 	ui_layer.layer = 10
 	add_child(ui_layer)
 
-	# Root VBox pinned to the full top edge
+	# Root VBox fills the entire viewport
 	_ui_root = VBoxContainer.new()
-	_ui_root.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui_root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_ui_root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	ui_layer.add_child(_ui_root)
 
 	# ── Menu bar ─────────────────────────────────────────────────────────────
@@ -434,26 +443,53 @@ func _build_ui() -> void:
 	_view_menu.id_pressed.connect(_on_view_menu_id)
 	menu_bar.add_child(_view_menu)
 
-	# ── Toolbar ──────────────────────────────────────────────────────────────
-	_toolbar = PanelContainer.new()
-	_toolbar.name = "Toolbar"
-	_toolbar.custom_minimum_size = Vector2(0, 0)
-	_toolbar.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_ui_root.add_child(_toolbar)
+	# ── Content row: palette + map spacer ────────────────────────────────────
+	var content_row := HBoxContainer.new()
+	content_row.name = "ContentRow"
+	content_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_ui_root.add_child(content_row)
 
-	var toolbar_hbox := HFlowContainer.new()
-	toolbar_hbox.add_theme_constant_override("h_separation", 6)
-	toolbar_hbox.add_theme_constant_override("v_separation", 4)
-	var toolbar_margin := MarginContainer.new()
-	toolbar_margin.add_theme_constant_override("margin_left", 6)
-	toolbar_margin.add_theme_constant_override("margin_right", 6)
-	toolbar_margin.add_theme_constant_override("margin_top", 4)
-	toolbar_margin.add_theme_constant_override("margin_bottom", 4)
-	toolbar_margin.add_child(toolbar_hbox)
-	_toolbar.add_child(toolbar_margin)
+	# ── Tool palette (vertical side panel) ───────────────────────────────────
+	_toolbar = PanelContainer.new()
+	_toolbar.name = "ToolPalette"
+	_toolbar.size_flags_vertical = Control.SIZE_FILL
+	_toolbar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	content_row.add_child(_toolbar)
+
+	var palette_vbox := VBoxContainer.new()
+	palette_vbox.add_theme_constant_override("separation", 2)
+	var palette_margin := MarginContainer.new()
+	palette_margin.add_theme_constant_override("margin_left", 4)
+	palette_margin.add_theme_constant_override("margin_right", 4)
+	palette_margin.add_theme_constant_override("margin_top", 4)
+	palette_margin.add_theme_constant_override("margin_bottom", 4)
+	palette_margin.add_child(palette_vbox)
+	_toolbar.add_child(palette_margin)
+
+	# Undock toggle button at the top
+	_undock_btn = Button.new()
+	_undock_btn.text = "⇲"
+	_undock_btn.focus_mode = Control.FOCUS_NONE
+	_undock_btn.tooltip_text = "Detach / re-dock palette"
+	_undock_btn.custom_minimum_size = Vector2(roundi(56.0 * _ui_scale()), roundi(22.0 * _ui_scale()))
+	_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
+	_undock_btn.pressed.connect(_on_undock_btn_pressed)
+	palette_vbox.add_child(_undock_btn)
+
+	palette_vbox.add_child(HSeparator.new())
+
+	# ── Button grid (2-column HBoxContainer rows) ────────────────────────────
+	var btn_grid := VBoxContainer.new()
+	btn_grid.add_theme_constant_override("separation", 2)
+	palette_vbox.add_child(btn_grid)
 
 	# Tool toggle group (Select / Pan)
 	var tool_group := ButtonGroup.new()
+
+	# Row 1: Select | Pan
+	var row1 := HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row1)
 
 	_select_btn = Button.new()
 	_select_btn.text = "↖"
@@ -462,10 +498,10 @@ func _build_ui() -> void:
 	_select_btn.button_group = tool_group
 	_select_btn.focus_mode = Control.FOCUS_NONE
 	_select_btn.tooltip_text = "Select tool"
-	_select_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_select_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
-	_select_btn.pressed.connect(func(): _on_tool_changed(0))
-	toolbar_hbox.add_child(_select_btn)
+	_select_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_select_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_select_btn.pressed.connect(func(): _on_palette_tool_activated("select"))
+	row1.add_child(_select_btn)
 
 	_pan_btn = Button.new()
 	_pan_btn.text = "✋"
@@ -473,57 +509,58 @@ func _build_ui() -> void:
 	_pan_btn.button_group = tool_group
 	_pan_btn.focus_mode = Control.FOCUS_NONE
 	_pan_btn.tooltip_text = "Pan tool — left-drag to pan"
-	_pan_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_pan_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
-	_pan_btn.pressed.connect(func(): _on_tool_changed(1))
-	toolbar_hbox.add_child(_pan_btn)
+	_pan_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_pan_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_pan_btn.pressed.connect(func(): _on_palette_tool_activated("pan"))
+	row1.add_child(_pan_btn)
 
-	var sep1 := VSeparator.new()
-	toolbar_hbox.add_child(sep1)
+	btn_grid.add_child(HSeparator.new())
 
-	# Zoom controls
+	# Row 2: Zoom in | Zoom out
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row2)
+
 	var zoom_in_btn := _make_toolbar_btn("+", "Zoom in (scroll up)")
 	zoom_in_btn.pressed.connect(func(): if _map_view: _map_view.zoom_in())
-	toolbar_hbox.add_child(zoom_in_btn)
+	row2.add_child(zoom_in_btn)
 
 	var zoom_out_btn := _make_toolbar_btn("-", "Zoom out (scroll down)")
 	zoom_out_btn.pressed.connect(func(): if _map_view: _map_view.zoom_out())
-	toolbar_hbox.add_child(zoom_out_btn)
+	row2.add_child(zoom_out_btn)
+
+	# Row 3: Reset | (spacer)
+	var row3 := HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row3)
 
 	var reset_btn := _make_toolbar_btn("⌂", "Reset view")
 	reset_btn.pressed.connect(func(): if _map_view: _map_view._reset_camera())
-	toolbar_hbox.add_child(reset_btn)
+	row3.add_child(reset_btn)
 
-	var sep2 := VSeparator.new()
-	toolbar_hbox.add_child(sep2)
+	btn_grid.add_child(HSeparator.new())
 
-	# Grid type selector
-	_grid_option = OptionButton.new()
-	_grid_option.add_item("□", MapData.GridType.SQUARE)
-	_grid_option.add_item("⬢", MapData.GridType.HEX_FLAT)
-	_grid_option.add_item("⬣", MapData.GridType.HEX_POINTY)
-	_grid_option.disabled = true
-	_grid_option.focus_mode = Control.FOCUS_NONE
-	_grid_option.custom_minimum_size = Vector2(roundi(44.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_grid_option.add_theme_font_size_override("font_size", roundi(22.0 * _ui_scale()))
-	_grid_option.tooltip_text = "Grid type: square, hex flat-top, hex pointy-top"
-	_grid_option.item_selected.connect(_on_grid_type_selected)
-	toolbar_hbox.add_child(_grid_option)
-
-	var sep3 := VSeparator.new()
-	toolbar_hbox.add_child(sep3)
+	# Row 4: PV Zoom in | PV Zoom out
+	var row4 := HBoxContainer.new()
+	row4.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row4)
 
 	var pv_zoom_in_btn := _make_toolbar_btn("▣+", "Zoom player viewport in")
 	pv_zoom_in_btn.pressed.connect(func(): _change_player_zoom(0.15))
-	toolbar_hbox.add_child(pv_zoom_in_btn)
+	row4.add_child(pv_zoom_in_btn)
 
 	var pv_zoom_out_btn := _make_toolbar_btn("▣-", "Zoom player viewport out")
 	pv_zoom_out_btn.pressed.connect(func(): _change_player_zoom(-0.15))
-	toolbar_hbox.add_child(pv_zoom_out_btn)
+	row4.add_child(pv_zoom_out_btn)
+
+	# Row 5: Sync | Rot CCW
+	var row5 := HBoxContainer.new()
+	row5.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row5)
 
 	var pv_sync_btn := _make_toolbar_btn("◎", "Sync player view to DM")
 	pv_sync_btn.pressed.connect(_sync_player_to_dm_view)
-	toolbar_hbox.add_child(pv_sync_btn)
+	row5.add_child(pv_sync_btn)
 
 	var pv_rot_ccw_btn := _make_toolbar_btn("↺", "Rotate player view CCW 90°")
 	pv_rot_ccw_btn.pressed.connect(func():
@@ -533,7 +570,12 @@ func _build_ui() -> void:
 			m.camera_rotation = _player_cam_rotation
 		_update_viewport_indicator()
 		_broadcast_player_viewport())
-	toolbar_hbox.add_child(pv_rot_ccw_btn)
+	row5.add_child(pv_rot_ccw_btn)
+
+	# Row 6: Rot CW | (spacer)
+	var row6 := HBoxContainer.new()
+	row6.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row6)
 
 	var pv_rot_cw_btn := _make_toolbar_btn("↻", "Rotate player view CW 90°")
 	pv_rot_cw_btn.pressed.connect(func():
@@ -543,23 +585,92 @@ func _build_ui() -> void:
 			m.camera_rotation = _player_cam_rotation
 		_update_viewport_indicator()
 		_broadcast_player_viewport())
-	toolbar_hbox.add_child(pv_rot_cw_btn)
+	row6.add_child(pv_rot_cw_btn)
 
-	var sep4 := VSeparator.new()
-	toolbar_hbox.add_child(sep4)
+	btn_grid.add_child(HSeparator.new())
 
+	# Row 7: Fog btn | Fog vis
+	var row7 := HBoxContainer.new()
+	row7.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row7)
+
+	_fog_btn = Button.new()
+	_fog_btn.text = "☁"
+	_fog_btn.toggle_mode = true
+	_fog_btn.button_group = tool_group
+	_fog_btn.focus_mode = Control.FOCUS_NONE
+	_fog_btn.tooltip_text = "Fog tool (activate to paint fog)"
+	_fog_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_fog_btn.pressed.connect(func(): _on_palette_tool_activated("fog"))
+	row7.add_child(_fog_btn)
+
+	_fog_visible_check = CheckBox.new()
+	_fog_visible_check.text = "🔦"
+	_fog_visible_check.button_pressed = true
+	_fog_visible_check.focus_mode = Control.FOCUS_NONE
+	_fog_visible_check.tooltip_text = "Show/hide DM fog overlay"
+	_fog_visible_check.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_visible_check.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
+	_fog_visible_check.toggled.connect(_on_dm_fog_visible_toggled)
+	row7.add_child(_fog_visible_check)
+
+	# Row 8: Wall btn | Delete wall
+	var row8 := HBoxContainer.new()
+	row8.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row8)
+
+	var wall_btn := Button.new()
+	wall_btn.text = "▭"
+	wall_btn.toggle_mode = true
+	wall_btn.button_group = tool_group
+	wall_btn.focus_mode = Control.FOCUS_NONE
+	wall_btn.tooltip_text = "Wall tool"
+	wall_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	wall_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	wall_btn.pressed.connect(func(): _on_palette_tool_activated("wall"))
+	row8.add_child(wall_btn)
+
+	_wall_delete_btn = _make_toolbar_btn("⌫", "Delete selected wall (or press Delete)")
+	_wall_delete_btn.pressed.connect(_on_delete_wall_pressed)
+	row8.add_child(_wall_delete_btn)
+
+	btn_grid.add_child(HSeparator.new())
+
+	# Row 9: Launch player
+	var row9 := HBoxContainer.new()
+	row9.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row9)
+
+	_play_mode_btn = Button.new()
+	_play_mode_btn.text = "▶"
+	_play_mode_btn.toggle_mode = true
+	_play_mode_btn.focus_mode = Control.FOCUS_NONE
+	_play_mode_btn.tooltip_text = "Launch the Player display window"
+	_play_mode_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_play_mode_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_play_mode_btn.pressed.connect(_on_play_mode_pressed)
+	row9.add_child(_play_mode_btn)
+
+	palette_vbox.add_child(HSeparator.new())
+
+	# ── Context panel (tool-specific options below button grid) ───────────────
+	_context_panel = VBoxContainer.new()
+	_context_panel.name = "ContextPanel"
+	_context_panel.add_theme_constant_override("separation", 4)
+	palette_vbox.add_child(_context_panel)
+
+	# Build the fog tool option and brush spin (hidden until fog tool is active)
 	_fog_tool_option = OptionButton.new()
 	_fog_tool_option.focus_mode = Control.FOCUS_NONE
-	_fog_tool_option.add_item("☁", 0)
 	_fog_tool_option.add_item("R◯", 1)
 	_fog_tool_option.add_item("H◯", 2)
 	_fog_tool_option.add_item("R▭", 3)
 	_fog_tool_option.add_item("H▭", 4)
-	_fog_tool_option.custom_minimum_size = Vector2(roundi(50.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_fog_tool_option.add_theme_font_size_override("font_size", roundi(12.0 * _ui_scale()))
-	_fog_tool_option.tooltip_text = "Fog tools: ☁=Off  R◯=Reveal brush  H◯=Hide brush  R▭=Reveal rect  H▭=Hide rect"
+	_fog_tool_option.custom_minimum_size = Vector2(roundi(60.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_tool_option.add_theme_font_size_override("font_size", roundi(11.0 * _ui_scale()))
+	_fog_tool_option.tooltip_text = "Fog mode: R◯=Reveal brush  H◯=Hide brush  R▭=Reveal rect  H▭=Hide rect"
 	_fog_tool_option.item_selected.connect(_on_fog_tool_selected)
-	toolbar_hbox.add_child(_fog_tool_option)
 
 	_fog_brush_spin = SpinBox.new()
 	_fog_brush_spin.min_value = 8
@@ -567,54 +678,46 @@ func _build_ui() -> void:
 	_fog_brush_spin.step = 8
 	_fog_brush_spin.value = 64
 	_fog_brush_spin.suffix = " px"
-	_fog_brush_spin.custom_minimum_size = Vector2(roundi(74.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_fog_brush_spin.add_theme_font_size_override("font_size", roundi(15.0 * _ui_scale()))
+	_fog_brush_spin.custom_minimum_size = Vector2(roundi(60.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_brush_spin.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
 	_fog_brush_spin.value_changed.connect(_on_fog_brush_size_changed)
-	toolbar_hbox.add_child(_fog_brush_spin)
 
-	_fog_visible_check = CheckBox.new()
-	_fog_visible_check.text = "🔦"
-	_fog_visible_check.button_pressed = true
-	_fog_visible_check.focus_mode = Control.FOCUS_NONE
-	_fog_visible_check.tooltip_text = "Show/hide DM fog overlay"
-	_fog_visible_check.custom_minimum_size = Vector2(roundi(38.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_fog_visible_check.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
-	_fog_visible_check.toggled.connect(_on_dm_fog_visible_toggled)
-	toolbar_hbox.add_child(_fog_visible_check)
+	# Build the wall mode option (hidden until wall tool is active)
+	_wall_mode_option = OptionButton.new()
+	_wall_mode_option.name = "WallToolDropdown"
+	_wall_mode_option.focus_mode = Control.FOCUS_NONE
+	_wall_mode_option.custom_minimum_size = Vector2(roundi(60.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_wall_mode_option.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
+	_wall_mode_option.tooltip_text = "Wall mode: ▭=Rectangle  ▲=Polygon"
+	_wall_mode_option.add_item("▭ Rect", 0)
+	_wall_mode_option.add_item("▲ Poly", 1)
+	_wall_mode_option.select(0)
+	_wall_mode_option.item_selected.connect(_on_wall_tool_selected)
+	# Keep the old member ref pointing to the same node for _on_wall_tool_selected compatibility
+	_wall_tool_dropdown = _wall_mode_option
 
-	# Wall tool dropdown
-	var wall_tool_dropdown := OptionButton.new()
-	wall_tool_dropdown.name = "WallToolDropdown"
-	wall_tool_dropdown.focus_mode = Control.FOCUS_NONE
-	wall_tool_dropdown.custom_minimum_size = Vector2(roundi(50.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	wall_tool_dropdown.add_theme_font_size_override("font_size", roundi(16.0 * _ui_scale()))
-	wall_tool_dropdown.tooltip_text = "Wall tools: ▭=Rectangle  ▲=Polygon"
-	wall_tool_dropdown.add_item("▭", 0)
-	wall_tool_dropdown.add_item("▲", 1)
-	wall_tool_dropdown.select(0)
-	wall_tool_dropdown.item_selected.connect(_on_wall_tool_selected)
-	wall_tool_dropdown.pressed.connect(func():
-		var idx := wall_tool_dropdown.selected
-		_on_wall_tool_selected(idx)
-	)
-	toolbar_hbox.add_child(wall_tool_dropdown)
+	# Build the grid type option (context area, shown for Select/Pan/view tools)
+	_grid_option = OptionButton.new()
+	_grid_option.add_item("□", MapData.GridType.SQUARE)
+	_grid_option.add_item("⬢", MapData.GridType.HEX_FLAT)
+	_grid_option.add_item("⬣", MapData.GridType.HEX_POINTY)
+	_grid_option.disabled = true
+	_grid_option.focus_mode = Control.FOCUS_NONE
+	_grid_option.custom_minimum_size = Vector2(roundi(60.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_grid_option.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_grid_option.tooltip_text = "Grid type: square, hex flat-top, hex pointy-top"
+	_grid_option.item_selected.connect(_on_grid_type_selected)
 
-	_wall_delete_btn = _make_toolbar_btn("⌫", "Delete selected wall (or press Delete)")
-	_wall_delete_btn.pressed.connect(_on_delete_wall_pressed)
-	toolbar_hbox.add_child(_wall_delete_btn)
+	# Show default context (select tool)
+	_refresh_context_panel("select")
 
-	var sep5 := VSeparator.new()
-	toolbar_hbox.add_child(sep5)
-
-	_play_mode_btn = Button.new()
-	_play_mode_btn.text = "▶"
-	_play_mode_btn.toggle_mode = true
-	_play_mode_btn.focus_mode = Control.FOCUS_NONE
-	_play_mode_btn.tooltip_text = "Launch the Player display window"
-	_play_mode_btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	_play_mode_btn.add_theme_font_size_override("font_size", roundi(20.0 * _ui_scale()))
-	_play_mode_btn.pressed.connect(_on_play_mode_pressed)
-	toolbar_hbox.add_child(_play_mode_btn)
+	# ── Map area spacer (passes mouse through to the map) ────────────────────
+	var map_spacer := Control.new()
+	map_spacer.name = "MapSpacer"
+	map_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	map_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content_row.add_child(map_spacer)
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -1001,9 +1104,147 @@ func _make_toolbar_btn(label: String, tip: String) -> Button:
 	b.text = label
 	b.tooltip_text = tip
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
-	b.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	b.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	b.add_theme_font_size_override("font_size", roundi(16.0 * _ui_scale()))
 	return b
+
+
+# ---------------------------------------------------------------------------
+# Context panel — swap contents based on active tool group
+# ---------------------------------------------------------------------------
+
+## Clears and repopulates _context_panel for the given tool key.
+## Keys: "select", "pan", "fog", "wall"
+func _refresh_context_panel(tool_key: String) -> void:
+	if _context_panel == null:
+		return
+	# Detach all context children (without freeing reusable nodes)
+	for child in _context_panel.get_children():
+		_context_panel.remove_child(child)
+
+	match tool_key:
+		"fog":
+			# Fog mode selector + brush size
+			if _fog_tool_option != null:
+				_context_panel.add_child(_fog_tool_option)
+			if _fog_brush_spin != null:
+				_context_panel.add_child(_fog_brush_spin)
+		"wall":
+			# Wall mode selector
+			if _wall_mode_option != null:
+				_context_panel.add_child(_wall_mode_option)
+		_:
+			# Select / Pan / default — show grid type
+			if _grid_option != null:
+				_context_panel.add_child(_grid_option)
+
+
+# ---------------------------------------------------------------------------
+# Palette tool activation — drives MapView tool + context panel swap
+# ---------------------------------------------------------------------------
+
+func _on_palette_tool_activated(tool_key: String) -> void:
+	_refresh_context_panel(tool_key)
+	if _map_view == null:
+		return
+	match tool_key:
+		"select":
+			# Turn off fog painting before switching
+			_map_view.set_fog_tool(0, 64.0)
+			_map_view._set_active_tool(_map_view.Tool.SELECT)
+			_set_status("Tool: Select")
+		"pan":
+			_map_view.set_fog_tool(0, 64.0)
+			_map_view._set_active_tool(_map_view.Tool.PAN)
+			_set_status("Tool: Pan  (left-drag to pan)")
+		"fog":
+			# Activate the last chosen fog mode (default: reveal brush, id=1)
+			var fog_id := 1
+			if _fog_tool_option != null:
+				fog_id = _fog_tool_option.get_item_id(_fog_tool_option.selected)
+			var brush_size := 64.0
+			if _fog_brush_spin != null:
+				brush_size = _fog_brush_spin.value
+			_map_view._set_active_tool(_map_view.Tool.SELECT)
+			_map_view.set_fog_tool(fog_id, brush_size)
+			if _fog_tool_option != null:
+				_set_status("Fog tool: %s" % _fog_tool_option.get_item_text(_fog_tool_option.selected))
+			else:
+				_set_status("Fog tool active")
+		"wall":
+			# Turn off fog painting before switching
+			_map_view.set_fog_tool(0, 64.0)
+			# Default to rect mode
+			var wall_idx := 0
+			if _wall_mode_option != null:
+				wall_idx = _wall_mode_option.selected
+			_on_wall_tool_selected(wall_idx)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Palette undock / redock
+# ---------------------------------------------------------------------------
+
+func _on_undock_btn_pressed() -> void:
+	if _palette_floating:
+		_dock_palette()
+	else:
+		_undock_palette()
+
+
+func _undock_palette() -> void:
+	if _palette_floating or _toolbar == null:
+		return
+	_palette_floating = true
+	if _undock_btn:
+		_undock_btn.text = "⇱"
+		_undock_btn.tooltip_text = "Re-dock palette"
+
+	_palette_window = Window.new()
+	_palette_window.title = "Tools"
+	_palette_window.always_on_top = true
+	_palette_window.wrap_controls = true
+	_palette_window.min_size = Vector2i(90, 300)
+	add_child(_palette_window)
+
+	# Reparent palette into the floating window
+	var old_parent := _toolbar.get_parent()
+	if old_parent:
+		old_parent.remove_child(_toolbar)
+	_palette_window.add_child(_toolbar)
+	_toolbar.position = Vector2.ZERO
+	_toolbar.set_anchors_preset(Control.PRESET_FULL_RECT)
+
+	_palette_window.close_requested.connect(_dock_palette)
+	_palette_window.popup_centered(Vector2i(90, 400))
+
+
+func _dock_palette() -> void:
+	if not _palette_floating or _toolbar == null:
+		return
+	_palette_floating = false
+	if _undock_btn:
+		_undock_btn.text = "⇲"
+		_undock_btn.tooltip_text = "Detach / re-dock palette"
+
+	# Reparent palette back into the content row
+	if _palette_window:
+		_palette_window.remove_child(_toolbar)
+
+	# Restore normal sizing
+	_toolbar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_toolbar.size_flags_vertical = Control.SIZE_FILL
+	_toolbar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+
+	# Insert at index 0 inside the content_row HBoxContainer
+	var content_row := _ui_root.get_node_or_null("ContentRow") as HBoxContainer
+	if content_row:
+		content_row.add_child(_toolbar)
+		content_row.move_child(_toolbar, 0)
+
+	if _palette_window:
+		_palette_window.queue_free()
+		_palette_window = null
 
 
 # ---------------------------------------------------------------------------
@@ -1066,7 +1307,6 @@ func _on_fog_tool_selected(index: int) -> void:
 		return
 	var tool_id := _fog_tool_option.get_item_id(index)
 	_map_view.set_fog_tool(tool_id, _fog_brush_spin.value if _fog_brush_spin else 64.0)
-	# Tool enum assignment handled in set_fog_tool
 	_set_status("Fog tool: %s" % _fog_tool_option.get_item_text(index))
 
 
@@ -2463,8 +2703,8 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 func _apply_ui_scale() -> void:
 	var scale := _ui_scale()
 	if _toolbar:
-		# HFlowContainer drives height; no minimum needed.
-		_toolbar.custom_minimum_size = Vector2(0, 0)
+		# Width is auto-sized by content; only ensure vertical fill is respected.
+		_toolbar.custom_minimum_size = Vector2(roundi(72.0 * scale), 0)
 	if _ui_root:
 		_ui_root.scale = Vector2(scale, scale)
 	if _profiles_dialog:
