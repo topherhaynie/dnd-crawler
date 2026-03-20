@@ -36,8 +36,6 @@ enum Tool {
 	PAN,
 	ZOOM,
 	PLAYER_ZOOM,
-	FOG_BRUSH,
-	FOG_RECT,
 	WALL
 }
 
@@ -83,7 +81,9 @@ var _render_profile: int = RenderProfile.DM
 
 var _fog_hidden_cells: Dictionary = {}
 var _fog_rect_dragging: bool = false
-## var _fog_rect_start: Vector2 = Vector2.ZERO
+var _fog_rect_start: Vector2 = Vector2.ZERO
+var _fog_brush_cursor_ring: Line2D = null
+var _fog_brush_cursor_last_radius: float = -1.0
 var _wall_rect_dragging: bool = false
 var _wall_rect_start: Vector2 = Vector2.ZERO
 var _wall_rect_preview: Line2D = null
@@ -217,6 +217,11 @@ func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
 	if fog_tool != FogTool.REVEAL_RECT and fog_tool != FogTool.HIDE_RECT:
 		_fog_rect_dragging = false
 		_clear_fog_rect_preview()
+	if fog_tool == FogTool.NONE:
+		_hide_fog_brush_cursor()
+	elif fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.HIDE_BRUSH:
+		_build_fog_brush_cursor()
+		_update_fog_brush_cursor_style()
 
 
 func apply_fog_state(cell_px: int, hidden_cells: Array) -> void:
@@ -363,6 +368,9 @@ func zoom_out() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	# print("[DEBUG] _unhandled_input: event=", event, "active_tool=", active_tool, "wall_subtool=", wall_subtool)
+	if _handle_fog_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _handle_fog_wall_input(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -620,6 +628,106 @@ func _apply_wall_polygon(points: Array) -> void:
 	# Removed unreachable/incorrect event handling and return statements from void function
 
 
+# ---------------------------------------------------------------------------
+# Fog tool input dispatch
+# ---------------------------------------------------------------------------
+
+func _handle_fog_input(event: InputEvent) -> bool:
+	if fog_tool == FogTool.NONE or not is_dm_view or _map == null:
+		return false
+
+	var is_reveal := fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.REVEAL_RECT
+
+	if fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.HIDE_BRUSH:
+		if event is InputEventMouseButton:
+			var mb := event as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+				_apply_fog_brush(get_global_mouse_position(), is_reveal)
+				return true
+		if event is InputEventMouseMotion:
+			var world_pos := get_global_mouse_position()
+			_update_fog_brush_cursor(world_pos)
+			if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+				_apply_fog_brush(world_pos, is_reveal)
+			return true
+		return false
+
+	if fog_tool == FogTool.REVEAL_RECT or fog_tool == FogTool.HIDE_RECT:
+		if event is InputEventMouseButton:
+			var mb := event as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				if mb.pressed:
+					_fog_rect_start = get_global_mouse_position()
+					_fog_rect_dragging = true
+					_update_fog_rect_preview(_fog_rect_start, _fog_rect_start, is_reveal)
+				else:
+					if _fog_rect_dragging:
+						_fog_rect_dragging = false
+						_clear_fog_rect_preview()
+						_apply_fog_rect(_fog_rect_start, get_global_mouse_position(), is_reveal)
+				return true
+		if _fog_rect_dragging and event is InputEventMouseMotion:
+			_update_fog_rect_preview(_fog_rect_start, get_global_mouse_position(), is_reveal)
+			return true
+		return false
+
+	return false
+
+
+# ---------------------------------------------------------------------------
+# Fog brush cursor ring
+# ---------------------------------------------------------------------------
+
+func _build_fog_brush_cursor() -> void:
+	if _fog_brush_cursor_ring != null and is_instance_valid(_fog_brush_cursor_ring):
+		return
+	_fog_brush_cursor_ring = Line2D.new()
+	_fog_brush_cursor_ring.name = "FogBrushCursor"
+	_fog_brush_cursor_ring.width = 2.0
+	_fog_brush_cursor_ring.closed = true
+	_fog_brush_cursor_ring.z_index = RenderLayer.FOG + 1
+	_rebuild_fog_brush_cursor_points()
+	add_child(_fog_brush_cursor_ring)
+
+
+func _rebuild_fog_brush_cursor_points() -> void:
+	if _fog_brush_cursor_ring == null or not is_instance_valid(_fog_brush_cursor_ring):
+		return
+	const RING_POINTS: int = 32
+	var pts := PackedVector2Array()
+	pts.resize(RING_POINTS)
+	for i in RING_POINTS:
+		var angle := (float(i) / float(RING_POINTS)) * TAU
+		pts[i] = Vector2(cos(angle) * fog_brush_radius_px, sin(angle) * fog_brush_radius_px)
+	_fog_brush_cursor_ring.points = pts
+	_fog_brush_cursor_last_radius = fog_brush_radius_px
+
+
+func _update_fog_brush_cursor(world_pos: Vector2) -> void:
+	_build_fog_brush_cursor()
+	if _fog_brush_cursor_ring == null or not is_instance_valid(_fog_brush_cursor_ring):
+		return
+	_fog_brush_cursor_ring.position = world_pos
+	_fog_brush_cursor_ring.visible = true
+	if absf(_fog_brush_cursor_last_radius - fog_brush_radius_px) > 0.5:
+		_rebuild_fog_brush_cursor_points()
+	_update_fog_brush_cursor_style()
+
+
+func _update_fog_brush_cursor_style() -> void:
+	if _fog_brush_cursor_ring == null or not is_instance_valid(_fog_brush_cursor_ring):
+		return
+	if fog_tool == FogTool.REVEAL_BRUSH:
+		_fog_brush_cursor_ring.default_color = Color(0.2, 1.0, 0.35, 0.9)
+	else:
+		_fog_brush_cursor_ring.default_color = Color(1.0, 0.35, 0.3, 0.9)
+
+
+func _hide_fog_brush_cursor() -> void:
+	if _fog_brush_cursor_ring != null and is_instance_valid(_fog_brush_cursor_ring):
+		_fog_brush_cursor_ring.visible = false
+
+
 func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	if _map == null:
 		return
@@ -631,28 +739,6 @@ func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	else:
 		registry.fog.hide_brush(world_pos, fog_brush_radius_px)
 	fog_changed.emit(_map)
-
-
-func _paint_fog_brush(world_pos: Vector2, reveal: bool, revealed: Array, hidden_cells_changed: Array) -> void:
-	if _map == null:
-		return
-	var cell_px: int = maxi(1, _map.fog_cell_px)
-	var radius_cells := int(ceil(fog_brush_radius_px / float(cell_px)))
-	var center := Vector2i(floori(world_pos.x / cell_px), floori(world_pos.y / cell_px))
-	for y in range(center.y - radius_cells, center.y + radius_cells + 1):
-		for x in range(center.x - radius_cells, center.x + radius_cells + 1):
-			var cell := Vector2i(x, y)
-			var cell_center := Vector2((x + 0.5) * cell_px, (y + 0.5) * cell_px)
-			if cell_center.distance_to(world_pos) > fog_brush_radius_px:
-				continue
-			if reveal:
-				if _fog_hidden_cells.has(cell):
-					_fog_hidden_cells.erase(cell)
-					revealed.append(cell)
-			else:
-				if not _fog_hidden_cells.has(cell):
-					_fog_hidden_cells[cell] = true
-					hidden_cells_changed.append(cell)
 
 
 func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
@@ -917,16 +1003,18 @@ func _clear_wall_rect_preview() -> void:
 
 
 func _update_fog_rect_preview(a: Vector2, b: Vector2, reveal: bool) -> void:
-	if wall_visual_layer == null or not is_dm_view:
+	if not is_dm_view:
 		return
 	if _fog_rect_preview == null or not is_instance_valid(_fog_rect_preview):
 		_fog_rect_preview_fill = Polygon2D.new()
-		wall_visual_layer.add_child(_fog_rect_preview_fill)
+		_fog_rect_preview_fill.z_index = RenderLayer.FOG + 1
+		add_child(_fog_rect_preview_fill)
 
 		_fog_rect_preview = Line2D.new()
 		_fog_rect_preview.width = 2.0
 		_fog_rect_preview.closed = true
-		wall_visual_layer.add_child(_fog_rect_preview)
+		_fog_rect_preview.z_index = RenderLayer.FOG + 1
+		add_child(_fog_rect_preview)
 
 	var edge_color := Color(0.2, 1.0, 0.35, 0.95) if reveal else Color(1.0, 0.35, 0.3, 0.95)
 	var fill_color := Color(0.2, 1.0, 0.35, 0.20) if reveal else Color(1.0, 0.35, 0.3, 0.20)

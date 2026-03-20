@@ -11,6 +11,7 @@ class_name FogManager
 
 signal fog_changed
 signal fog_enabled_changed(is_enabled: bool)
+signal fog_stroke_applied(stroke: Dictionary)
 
 var service: IFogService = null
 var model: FogModel = null
@@ -80,28 +81,28 @@ func reveal_brush(world_pos: Vector2, radius_px: float) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
 	service.apply_history_brush(model.history_image, world_pos, radius_px, true)
-	fog_changed.emit()
+	fog_stroke_applied.emit({"type": "brush", "center": world_pos, "radius": radius_px, "reveal": true})
 
 
 func hide_brush(world_pos: Vector2, radius_px: float) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
 	service.apply_history_brush(model.history_image, world_pos, radius_px, false)
-	fog_changed.emit()
+	fog_stroke_applied.emit({"type": "brush", "center": world_pos, "radius": radius_px, "reveal": false})
 
 
 func reveal_rect(a: Vector2, b: Vector2) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
 	service.apply_history_rect(model.history_image, a, b, true)
-	fog_changed.emit()
+	fog_stroke_applied.emit({"type": "rect", "a": a, "b": b, "reveal": true})
 
 
 func hide_rect(a: Vector2, b: Vector2) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
 	service.apply_history_rect(model.history_image, a, b, false)
-	fog_changed.emit()
+	fog_stroke_applied.emit({"type": "rect", "a": a, "b": b, "reveal": false})
 
 
 func apply_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int) -> void:

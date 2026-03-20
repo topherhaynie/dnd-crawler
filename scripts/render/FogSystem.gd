@@ -1,6 +1,10 @@
 extends Node2D
 class_name FogSystem
 
+# === Constants ===
+
+const FogPaintCanvasScript := preload("res://scripts/render/FogPaintCanvas.gd")
+
 const VISION_LAYER_MASK: int = 2
 const PLAYER_ALPHA_SCALE: float = 1.00
 const DM_HISTORY_ALPHA_SCALE: float = 0.80
@@ -16,10 +20,13 @@ const MAX_LIGHT_RADIUS_PX: float = 320.0
 const DIRTY_REGION_MERGE_PADDING_PX: int = 12
 const MAX_DIRTY_REGIONS: int = 12
 
+# === State ===
+
 var _map_size: Vector2 = Vector2(1920, 1080)
 var _is_dm: bool = true
 var _fog_enabled: bool = false
 
+# --- GPU history ping-pong ---
 var _history_texture: Texture2D = null
 var _prev_los_data: PackedByteArray = PackedByteArray()
 var _prev_los_width: int = 0
@@ -33,6 +40,16 @@ var _history_seed_texture: ImageTexture = null
 var _history_gpu_ready: bool = false
 var _history_seed_pending: bool = false
 
+# --- GPU paint canvas ---
+var _paint_canvas: FogPaintCanvasScript = null
+var _paint_viewport: SubViewport = null
+var _paint_merge_pending: bool = false
+var _paint_clear_pending: bool = false
+# Set in _apply_gpu_stroke; cleared in _process to ensure paint viewport
+# renders before the bake samples its texture (input + _process run before rendering).
+var _paint_bake_deferred: bool = false
+
+# --- Scene nodes ---
 var _mask_host: SubViewportContainer = null
 var _live_lights_viewport: SubViewport = null
 var _live_base_rect: ColorRect = null
@@ -42,6 +59,7 @@ var _live_occluder_layer: Node2D = null
 var _fog_rect: ColorRect = null
 var _radial_texture: Texture2D = null
 
+# --- Light tracking ---
 var _live_light_by_token_id: Dictionary = {}
 var _live_light_state_by_token_id: Dictionary = {}
 var _fallback_black_texture: ImageTexture = null
@@ -51,6 +69,8 @@ var _los_bake_pending: bool = true
 var _last_los_bake_msec: int = 0
 var _los_dirty_regions: Array = []
 
+
+# === Registry Helpers ===
 
 func _fog_service() -> IFogService:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -75,6 +95,8 @@ func _fog_model() -> FogModel:
 	return mgr.model
 
 
+# === Signal Handlers ===
+
 func _on_fog_model_changed() -> void:
 	var model := _fog_model()
 	if model == null or model.history_image == null or model.history_image.is_empty():
@@ -86,6 +108,33 @@ func _on_fog_model_changed() -> void:
 		_seed_gpu_history_from_image(model.history_image)
 	_queue_los_full_bake()
 
+
+func _on_fog_stroke_applied(stroke: Dictionary) -> void:
+	if not _fog_enabled or not _history_gpu_ready:
+		return
+	# Use the GPU paint canvas so we compose on top of the existing GPU history.
+	# This preserves LOS-accumulated reveals that only exist in GPU memory and
+	# never in the CPU history_image.
+	_apply_gpu_stroke(stroke)
+
+
+# === GPU Paint Pipeline ===
+
+func _apply_gpu_stroke(stroke: Dictionary) -> void:
+	if _paint_canvas == null or _paint_viewport == null:
+		return
+	_paint_canvas.queue_stroke(stroke)
+	_paint_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if not _paint_merge_pending:
+		# First stroke since the canvas was last cleared: the paint viewport hasn't
+		# rendered this stroke yet, so defer the bake by one frame. Subsequent drag
+		# strokes will leave _paint_merge_pending=true and skip the deferral, letting
+		# the bake fire every ~2 frames during a continuous drag.
+		_paint_bake_deferred = true
+	_paint_merge_pending = true
+
+
+# === Lifecycle ===
 
 func _ready() -> void:
 	_build_nodes()
@@ -109,10 +158,24 @@ func _process(_delta: float) -> void:
 		_history_active_index = _history_pending_target_index
 		_history_pending_target_index = -1
 		_history_swap_pending = false
+		if _paint_clear_pending:
+			# Only clear the canvas if no new strokes arrived after the last bake.
+			# If _paint_merge_pending is true, new strokes are queued and will be
+			# included in the next bake — clearing now would silently discard them.
+			if _paint_canvas != null and not _paint_merge_pending:
+				_paint_canvas.clear_strokes()
+			_paint_clear_pending = false
 		_apply_shader_uniforms()
 	if _history_seed_pending:
 		_history_seed_pending = false
 		_apply_shader_uniforms()
+	# Paint-deferred: the paint viewport queued an UPDATE_ONCE this frame but
+	# hasn't rendered yet (rendering follows _process). Mark the LOS bake pending
+	# and return — the bake will fire next frame with a fresh paint texture.
+	if _paint_bake_deferred:
+		_paint_bake_deferred = false
+		_los_bake_pending = true
+		return
 	if _should_bake_los_now():
 		_bake_live_los_into_history()
 	if DEBUG_FOG_TELEMETRY:
@@ -134,6 +197,8 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 	if mgr != null:
 		if not mgr.fog_changed.is_connected(_on_fog_model_changed):
 			mgr.fog_changed.connect(_on_fog_model_changed)
+		if not mgr.fog_stroke_applied.is_connected(_on_fog_stroke_applied):
+			mgr.fog_stroke_applied.connect(_on_fog_stroke_applied)
 		mgr.configure(Vector2i(roundi(_map_size.x), roundi(_map_size.y)), _is_dm, _fog_enabled)
 	if DEBUG_FOG_TELEMETRY:
 		print("FogSystem: configure (is_dm=%s fog_enabled=%s map_size=%s viewport=%s)" % [
@@ -143,7 +208,8 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
 		])
 
-# These are necessary, but I don't know why.
+# === Public API ===
+
 func get_fog_state() -> PackedByteArray:
 	if _history_gpu_ready:
 		if _history_swap_pending or _history_seed_pending:
@@ -198,6 +264,8 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 	mgr.apply_seed_delta(revealed_cells, hidden_cells, safe_cell_px)
 
 
+# === Light / Token Management ===
+
 func sync_player_revealers(tokens: Array) -> void:
 	if _live_lights_viewport == null or not _fog_enabled:
 		return
@@ -212,70 +280,86 @@ func sync_player_revealers(tokens: Array) -> void:
 		var token_id := token.get_instance_id()
 		seen_ids[token_id] = true
 
-		var light := _live_light_by_token_id.get(token_id, null) as PointLight2D
-		if light == null or not is_instance_valid(light):
-			light = PointLight2D.new()
-			light.name = "VisionLight_%d" % token_id
-			light.enabled = true
-			light.shadow_enabled = true
-			light.range_item_cull_mask = VISION_LAYER_MASK
-			light.shadow_item_cull_mask = VISION_LAYER_MASK
-			light.visibility_layer = VISION_LAYER_MASK
-			_live_lights_viewport.add_child(light)
-			_live_light_by_token_id[token_id] = light
-
+		var light := _sync_or_create_vision_light(token_id)
 		var src := token.get_node_or_null("PointLight2D") as PointLight2D
-		if src:
-			if light.texture != src.texture:
-				light.texture = src.texture
-			if absf(light.texture_scale - src.texture_scale) > 0.0001:
-				light.texture_scale = src.texture_scale
-			var scaled_energy := maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
-			if absf(light.energy - scaled_energy) > 0.0001:
-				light.energy = scaled_energy
-		else:
-			if absf(light.energy - LIVE_LIGHT_MIN_ENERGY) > 0.0001:
-				light.energy = LIVE_LIGHT_MIN_ENERGY
-		# Always bake LOS from additive lights for stable reveal mask intensity.
-		if light.blend_mode != Light2D.BLEND_MODE_ADD:
-			light.blend_mode = Light2D.BLEND_MODE_ADD
-		if not light.shadow_enabled:
-			light.shadow_enabled = true
-		if light.range_item_cull_mask != VISION_LAYER_MASK:
-			light.range_item_cull_mask = VISION_LAYER_MASK
-		if light.shadow_item_cull_mask != VISION_LAYER_MASK:
-			light.shadow_item_cull_mask = VISION_LAYER_MASK
-		if light.visibility_layer != VISION_LAYER_MASK:
-			light.visibility_layer = VISION_LAYER_MASK
-		if light.texture == null:
-			light.texture = _get_or_create_radial_texture()
-
-		var reveal_world := token.global_position
-		if token.has_method("get_fog_reveal_position"):
-			reveal_world = token.call("get_fog_reveal_position") as Vector2
-		var reveal_local := reveal_world
-		if token.get_parent() is Node2D:
-			reveal_local = (token.get_parent() as Node2D).to_local(reveal_world)
-		if light.position.distance_to(reveal_local) > 0.0001:
-			light.position = reveal_local
-		if absf(light.rotation - token.rotation) > 0.0001:
-			light.rotation = token.rotation
+		_configure_vision_light(light, src, token)
 
 		var radius_px := _estimate_light_radius_px(light, src)
-		_mark_light_movement_dirty(token_id, reveal_local, radius_px)
+		_mark_light_movement_dirty(token_id, light.position, radius_px)
 
+	_remove_stale_lights(seen_ids)
+
+
+func _sync_or_create_vision_light(token_id: int) -> PointLight2D:
+	var light := _live_light_by_token_id.get(token_id, null) as PointLight2D
+	if light == null or not is_instance_valid(light):
+		light = PointLight2D.new()
+		light.name = "VisionLight_%d" % token_id
+		light.enabled = true
+		light.shadow_enabled = true
+		light.range_item_cull_mask = VISION_LAYER_MASK
+		light.shadow_item_cull_mask = VISION_LAYER_MASK
+		light.visibility_layer = VISION_LAYER_MASK
+		_live_lights_viewport.add_child(light)
+		_live_light_by_token_id[token_id] = light
+	return light
+
+
+func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: Node2D) -> void:
+	if src != null:
+		if light.texture != src.texture:
+			light.texture = src.texture
+		if absf(light.texture_scale - src.texture_scale) > 0.0001:
+			light.texture_scale = src.texture_scale
+		var scaled_energy := maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
+		if absf(light.energy - scaled_energy) > 0.0001:
+			light.energy = scaled_energy
+	else:
+		if absf(light.energy - LIVE_LIGHT_MIN_ENERGY) > 0.0001:
+			light.energy = LIVE_LIGHT_MIN_ENERGY
+	if light.blend_mode != Light2D.BLEND_MODE_ADD:
+		light.blend_mode = Light2D.BLEND_MODE_ADD
+	if not light.shadow_enabled:
+		light.shadow_enabled = true
+	if light.range_item_cull_mask != VISION_LAYER_MASK:
+		light.range_item_cull_mask = VISION_LAYER_MASK
+	if light.shadow_item_cull_mask != VISION_LAYER_MASK:
+		light.shadow_item_cull_mask = VISION_LAYER_MASK
+	if light.visibility_layer != VISION_LAYER_MASK:
+		light.visibility_layer = VISION_LAYER_MASK
+	if light.texture == null:
+		light.texture = _get_or_create_radial_texture()
+
+	var reveal_world := token.global_position
+	if token.has_method("get_fog_reveal_position"):
+		reveal_world = token.call("get_fog_reveal_position") as Vector2
+	var reveal_local := reveal_world
+	if token.get_parent() is Node2D:
+		reveal_local = (token.get_parent() as Node2D).to_local(reveal_world)
+	if light.position.distance_to(reveal_local) > 0.0001:
+		light.position = reveal_local
+	if absf(light.rotation - token.rotation) > 0.0001:
+		light.rotation = token.rotation
+
+
+func _remove_stale_lights(seen_ids: Dictionary) -> void:
 	var stale_ids: Array = []
 	for token_id in _live_light_by_token_id.keys():
 		if seen_ids.has(token_id):
 			continue
 		stale_ids.append(token_id)
 	for token_id in stale_ids:
-		var stale = _live_light_by_token_id.get(token_id, null)
+		var stale: Variant = _live_light_by_token_id.get(token_id, null)
 		if stale and is_instance_valid(stale):
-			stale.queue_free()
+			(stale as Node).queue_free()
 		_live_light_by_token_id.erase(token_id)
 		_live_light_state_by_token_id.erase(token_id)
 
+
+# === Wall / Occluder Management ===
+
+
+# === Wall / Occluder Management ===
 
 func set_wall_polygons(polygons: Array) -> void:
 	if _live_occluder_layer == null:
@@ -301,6 +385,8 @@ func set_wall_polygons(polygons: Array) -> void:
 	_queue_los_full_bake()
 
 
+# === Scene Construction ===
+
 func _build_nodes() -> void:
 	if _mask_host != null:
 		return
@@ -311,6 +397,15 @@ func _build_nodes() -> void:
 	_mask_host.visible = false
 	add_child(_mask_host)
 
+	_build_live_los_viewport()
+	_build_fog_composite_rect()
+	_build_history_gpu_pipeline()
+	_build_paint_viewport()
+
+	_resize_buffers_and_nodes()
+
+
+func _build_live_los_viewport() -> void:
 	_live_lights_viewport = SubViewport.new()
 	_live_lights_viewport.name = "LiveLightsViewport"
 	_live_lights_viewport.transparent_bg = false
@@ -344,16 +439,14 @@ func _build_nodes() -> void:
 	_live_occluder_layer.visibility_layer = VISION_LAYER_MASK
 	_live_lights_viewport.add_child(_live_occluder_layer)
 
+
+func _build_fog_composite_rect() -> void:
 	_fog_rect = ColorRect.new()
 	_fog_rect.name = "FogCompositeRect"
 	_fog_rect.color = Color(0.0, 0.0, 0.0, 1.0)
 	_fog_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fog_rect.visible = false
 	add_child(_fog_rect)
-
-	_build_history_gpu_pipeline()
-
-	_resize_buffers_and_nodes()
 
 
 func _build_history_gpu_pipeline() -> void:
@@ -402,6 +495,25 @@ func _build_history_gpu_pipeline() -> void:
 
 	_history_gpu_ready = _history_viewports.size() == 2 and _history_merge_rects.size() == 2
 
+
+func _build_paint_viewport() -> void:
+	if _mask_host == null:
+		return
+	_paint_viewport = SubViewport.new()
+	_paint_viewport.name = "FogPaintViewport"
+	_paint_viewport.transparent_bg = true
+	_paint_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+	_paint_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_paint_viewport.disable_3d = true
+	_paint_viewport.handle_input_locally = false
+	_mask_host.add_child(_paint_viewport)
+
+	_paint_canvas = FogPaintCanvasScript.new()
+	_paint_canvas.name = "FogPaintCanvas"
+	_paint_viewport.add_child(_paint_canvas)
+
+
+# === GPU Bake Pipeline ===
 
 func _get_active_history_texture() -> Texture2D:
 	if not _history_gpu_ready:
@@ -469,6 +581,8 @@ func _resize_buffers_and_nodes() -> void:
 		if merge:
 			merge.position = Vector2.ZERO
 			merge.size = _map_size
+	if _paint_viewport:
+		_paint_viewport.size = target_size
 	_queue_los_full_bake()
 
 
@@ -498,6 +612,13 @@ func _bake_live_los_into_history() -> void:
 		mat.set_shader_parameter("prev_history_tex", src_vp.get_texture())
 		mat.set_shader_parameter("live_lights_tex", _live_lights_viewport.get_texture())
 		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		if _paint_merge_pending and _paint_viewport != null:
+			mat.set_shader_parameter("has_paint_tex", true)
+			mat.set_shader_parameter("paint_tex", _paint_viewport.get_texture())
+			_paint_merge_pending = false
+			_paint_clear_pending = true
+		else:
+			mat.set_shader_parameter("has_paint_tex", false)
 		dst_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 		_history_swap_pending = true
@@ -587,6 +708,8 @@ func _compact_los_dirty_regions() -> void:
 	_los_dirty_regions = svc.compact_los_dirty_regions(_los_dirty_regions, DIRTY_REGION_MERGE_PADDING_PX, MAX_DIRTY_REGIONS)
 
 
+# === Shader Uniforms ===
+
 func _apply_shader_uniforms() -> void:
 	if _fog_rect == null:
 		return
@@ -614,6 +737,8 @@ func _apply_shader_uniforms() -> void:
 	_fog_rect.visible = _fog_enabled
 	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
+
+# === Helpers ===
 
 func _new_occluder(points: PackedVector2Array) -> LightOccluder2D:
 	var occ_poly := OccluderPolygon2D.new()
