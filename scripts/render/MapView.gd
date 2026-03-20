@@ -164,10 +164,11 @@ func load_map(map: MapData) -> void:
 	_refresh_fog_overlay()
 	_rebuild_wall_occluders(map)
 	var applied_cached_snapshot := _apply_cached_fog_snapshot_if_compatible()
-	if not applied_cached_snapshot and fog_overlay and fog_overlay.has_method("reset_history"):
-		fog_overlay.reset_history()
-	if not applied_cached_snapshot and fog_overlay and fog_overlay.has_method("set_history_seed_from_hidden"):
-		fog_overlay.set_history_seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
+	if not applied_cached_snapshot:
+		var _reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _reg != null and _reg.fog != null:
+			_reg.fog.reset()
+			_reg.fog.seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
 	if fog_overlay and fog_overlay.has_method("set_dm_reveals"):
 		fog_overlay.set_dm_reveals(_build_dm_reveal_sources(map))
 
@@ -622,11 +623,14 @@ func _apply_wall_polygon(points: Array) -> void:
 func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	if _map == null:
 		return
-	if fog_overlay and fog_overlay.has_method("apply_history_brush"):
-		var changed := bool(fog_overlay.call("apply_history_brush", world_pos, fog_brush_radius_px, reveal))
-		if changed:
-			fog_changed.emit(_map)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
 		return
+	if reveal:
+		registry.fog.reveal_brush(world_pos, fog_brush_radius_px)
+	else:
+		registry.fog.hide_brush(world_pos, fog_brush_radius_px)
+	fog_changed.emit(_map)
 
 
 func _paint_fog_brush(world_pos: Vector2, reveal: bool, revealed: Array, hidden_cells_changed: Array) -> void:
@@ -654,11 +658,14 @@ func _paint_fog_brush(world_pos: Vector2, reveal: bool, revealed: Array, hidden_
 func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 	if _map == null:
 		return
-	if fog_overlay and fog_overlay.has_method("apply_history_rect"):
-		var changed := bool(fog_overlay.call("apply_history_rect", a, b, reveal))
-		if changed:
-			fog_changed.emit(_map)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
 		return
+	if reveal:
+		registry.fog.reveal_rect(a, b)
+	else:
+		registry.fog.hide_rect(a, b)
+	fog_changed.emit(_map)
 
 
 func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
@@ -721,49 +728,31 @@ func _sync_fog_to_map(emit_change_signal: bool = true) -> void:
 func get_fog_state() -> PackedByteArray:
 	if fog_overlay == null:
 		return PackedByteArray()
-	if fog_overlay.has_method("get_fog_state"):
-		return await fog_overlay.call("get_fog_state") as PackedByteArray
-	return PackedByteArray()
-
-
-func set_fog_state(data: PackedByteArray) -> bool:
-	if fog_overlay == null:
-		return false
-	if not fog_overlay.has_method("set_fog_state"):
-		return false
-	var applied := bool(fog_overlay.call("set_fog_state", data))
-	return applied
+	return await fog_overlay.get_fog_state()
 
 
 func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
-	if fog_overlay == null:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
 		return false
-	if fog_overlay.has_method("apply_fog_snapshot"):
-		return bool(fog_overlay.call("apply_fog_snapshot", buffer))
-	return set_fog_state(buffer)
+	return registry.fog.apply_snapshot(buffer)
+
+
+func set_fog_state(data: PackedByteArray) -> bool:
+	return apply_fog_snapshot(data)
 
 
 func _apply_cached_fog_snapshot_if_compatible() -> bool:
-	if fog_overlay == null or _map == null:
+	if _map == null:
 		return false
-	if not fog_overlay.has_method("apply_fog_snapshot"):
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null or registry.fog.service == null:
 		return false
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
+	var stamp_size := registry.fog.service.get_fog_state_size()
+	if stamp_size == Vector2i.ZERO:
 		return false
-	var cached := fog_manager.get_fog_state() as PackedByteArray
-	if cached.is_empty():
-		return false
-	if fog_manager.has_method("get_fog_state_size"):
-		var stamp_size := fog_manager.get_fog_state_size() as Vector2i
-		var map_size := map_image.texture.get_size() if map_image and map_image.texture else Vector2(1920, 1080)
-		if stamp_size != Vector2i(roundi(map_size.x), roundi(map_size.y)):
-			return false
-	fog_overlay.call("apply_fog_snapshot", cached)
-	return true
+	var map_size := map_image.texture.get_size() if map_image and map_image.texture else Vector2(1920, 1080)
+	return stamp_size == Vector2i(roundi(map_size.x), roundi(map_size.y))
 
 
 func _refresh_fog_overlay() -> void:
@@ -820,15 +809,13 @@ func _apply_layer_visibility() -> void:
 
 
 func _apply_fog_overlay_delta(revealed_cells: Array, hidden_cells: Array) -> void:
-	if fog_overlay == null:
-		return
 	if revealed_cells.is_empty() and hidden_cells.is_empty():
 		return
-	if fog_overlay.has_method("apply_history_seed_delta"):
-		var cell_px := maxi(1, _map.fog_cell_px) if _map else 1
-		fog_overlay.apply_history_seed_delta(revealed_cells, hidden_cells, cell_px)
-	else:
-		_refresh_fog_overlay()
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
+		return
+	var cell_px := maxi(1, _map.fog_cell_px) if _map else 1
+	registry.fog.apply_seed_delta(revealed_cells, hidden_cells, cell_px)
 
 
 func _rebuild_wall_occluders(map: MapData) -> void:

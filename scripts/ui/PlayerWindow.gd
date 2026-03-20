@@ -158,15 +158,6 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 		_pending_fog_snapshot = data.duplicate(true)
 		return
 	var fog_state_b64 := str(data.get("fog_state_png_b64", ""))
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			var fog_adapter: Object = registry.get_service("FogAdapter")
-			if fog_adapter != null:
-				push_warning("PlayerWindow: 'Fog' service missing — falling back to 'FogAdapter'")
-				fog_manager = fog_adapter
 	if fog_state_b64.is_empty():
 		push_warning("PlayerWindow: fog_state_snapshot missing fog_state_png_b64")
 		return
@@ -180,12 +171,8 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 	if DEBUG_FOG_SNAPSHOT:
 		print("PlayerWindow: fog snapshot recv (stamp_bytes=%d stamp_hash=%d)" % [fog_state_png.size(), snapshot_hash])
 
-	if fog_manager and fog_manager.has_method("set_fog_state"):
-		fog_manager.set_fog_state(fog_state_png)
 	if _map_view and _map_view.has_method("apply_fog_snapshot"):
 		_map_view.apply_fog_snapshot(fog_state_png)
-	elif _map_view and _map_view.has_method("set_fog_state"):
-		_map_view.set_fog_state(fog_state_png)
 
 	print("PlayerWindow: fog_state_snapshot applied (stamp_bytes=%d)" % fog_state_png.size())
 	fog_snapshot_applied.emit({
@@ -278,21 +265,13 @@ func _handle_fog_delta(data: Dictionary) -> void:
 func _apply_cached_fog_stamp() -> void:
 	if _map_view == null:
 		return
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			fog_manager = registry.get_service("FogAdapter")
-	if fog_manager == null or not fog_manager.has_method("get_fog_state"):
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null or registry.fog.service == null:
 		return
-	var cached := fog_manager.get_fog_state() as PackedByteArray
+	var cached := registry.fog.service.get_fog_state()
 	if cached.is_empty():
 		return
-	if _map_view.has_method("apply_fog_snapshot"):
-		_map_view.apply_fog_snapshot(cached)
-	elif _map_view.has_method("set_fog_state"):
-		_map_view.set_fog_state(cached)
+	_map_view.apply_fog_snapshot(cached)
 
 
 func _handle_player_state(data: Dictionary) -> void:

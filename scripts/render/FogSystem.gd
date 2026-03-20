@@ -20,13 +20,10 @@ var _map_size: Vector2 = Vector2(1920, 1080)
 var _is_dm: bool = true
 var _fog_enabled: bool = false
 
-var _history_image: Image = null
 var _history_texture: Texture2D = null
-var _history_dirty: bool = false
 var _prev_los_data: PackedByteArray = PackedByteArray()
 var _prev_los_width: int = 0
 var _prev_los_height: int = 0
-var _history_seed_cell_px: int = 1
 var _history_viewports: Array = []
 var _history_merge_rects: Array = []
 var _history_active_index: int = 0
@@ -64,6 +61,32 @@ func _fog_service() -> IFogService:
 	return registry.fog.service
 
 
+func _fog_manager() -> FogManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null:
+		return null
+	return registry.fog
+
+
+func _fog_model() -> FogModel:
+	var mgr := _fog_manager()
+	if mgr == null:
+		return null
+	return mgr.model
+
+
+func _on_fog_model_changed() -> void:
+	var model := _fog_model()
+	if model == null or model.history_image == null or model.history_image.is_empty():
+		return
+	_prev_los_data = PackedByteArray()
+	_prev_los_width = 0
+	_prev_los_height = 0
+	if _history_gpu_ready:
+		_seed_gpu_history_from_image(model.history_image)
+	_queue_los_full_bake()
+
+
 func _ready() -> void:
 	_build_nodes()
 	if _live_lights_viewport:
@@ -90,8 +113,6 @@ func _process(_delta: float) -> void:
 	if _history_seed_pending:
 		_history_seed_pending = false
 		_apply_shader_uniforms()
-	if _history_dirty:
-		_upload_history_texture()
 	if _should_bake_los_now():
 		_bake_live_los_into_history()
 	if DEBUG_FOG_TELEMETRY:
@@ -108,7 +129,12 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 	_apply_shader_uniforms()
 	if _live_lights_viewport:
 		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _fog_enabled else SubViewport.UPDATE_DISABLED
-	_queue_los_full_bake()
+	# Connect FogManager signal and configure model after GPU pipeline is resized.
+	var mgr := _fog_manager()
+	if mgr != null:
+		if not mgr.fog_changed.is_connected(_on_fog_model_changed):
+			mgr.fog_changed.connect(_on_fog_model_changed)
+		mgr.configure(Vector2i(roundi(_map_size.x), roundi(_map_size.y)), _is_dm, _fog_enabled)
 	if DEBUG_FOG_TELEMETRY:
 		print("FogSystem: configure (is_dm=%s fog_enabled=%s map_size=%s viewport=%s)" % [
 			str(_is_dm),
@@ -135,9 +161,10 @@ func get_fog_state() -> PackedByteArray:
 			if image and not image.is_empty():
 				image.convert(Image.FORMAT_L8)
 				return image.save_png_to_buffer()
-	if _history_image == null or _history_image.is_empty():
+	var model := _fog_model()
+	if model == null or model.history_image == null or model.history_image.is_empty():
 		return PackedByteArray()
-	return _history_image.save_png_to_buffer()
+	return model.history_image.save_png_to_buffer()
 
 
 func set_fog_state(data: PackedByteArray) -> bool:
@@ -145,82 +172,30 @@ func set_fog_state(data: PackedByteArray) -> bool:
 
 
 func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
-	if buffer.is_empty():
+	var mgr := _fog_manager()
+	if mgr == null:
 		return false
-	var image := Image.new()
-	var err := image.load_png_from_buffer(buffer)
-	if err != OK or image.is_empty():
-		push_warning("FogSystem: apply_fog_snapshot failed to decode PNG (err=%d bytes=%d)" % [err, buffer.size()])
-		return false
-	image.convert(Image.FORMAT_L8)
-	_ensure_history_storage(_map_size)
-	if _history_image == null:
-		return false
-	if image.get_width() != _history_image.get_width() or image.get_height() != _history_image.get_height():
-		image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
-	_history_image = image
-	if _history_gpu_ready:
-		_seed_gpu_history_from_image(image)
-	else:
-		_history_dirty = true
-	_prev_los_data = PackedByteArray()
-	_prev_los_width = 0
-	_prev_los_height = 0
-	return true
+	return mgr.apply_snapshot(buffer)
 
 
 func reset_history() -> void:
-	_ensure_history_storage(_map_size)
-	if _history_image == null:
-		return
-	_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
-	_prev_los_data = PackedByteArray()
-	_prev_los_width = 0
-	_prev_los_height = 0
-	if _history_gpu_ready:
-		_seed_gpu_history_from_image(_history_image)
-	else:
-		_history_dirty = true
-	_queue_los_full_bake()
+	var mgr := _fog_manager()
+	if mgr != null:
+		mgr.reset()
 
 
 func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> void:
-	_ensure_history_storage(_map_size)
-	if _history_image == null or _history_image.is_empty():
-		return
-
-	var svc := _fog_service()
-	if svc == null:
-		return
-	var res := svc.set_history_seed_from_hidden(_history_image, cell_px, hidden_cells)
-	if res.is_empty():
-		return
-	_history_image = res.get("history_image", _history_image) as Image
-	_history_seed_cell_px = int(res.get("seed_cell_px", _history_seed_cell_px))
-	_prev_los_data = PackedByteArray()
-	_prev_los_width = 0
-	_prev_los_height = 0
-	if _history_gpu_ready:
-		_seed_gpu_history_from_image(_history_image)
-	else:
-		_history_dirty = true
-	_queue_los_full_bake()
+	var mgr := _fog_manager()
+	if mgr != null:
+		mgr.seed_from_hidden(cell_px, hidden_cells)
 
 
 func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int = -1) -> void:
-	_ensure_history_storage(_map_size)
-	if _history_image == null or _history_image.is_empty():
+	var mgr := _fog_manager()
+	if mgr == null:
 		return
-	if revealed_cells.is_empty() and hidden_cells.is_empty():
-		return
-
-	var safe_cell_px := maxi(1, cell_px if cell_px > 0 else _history_seed_cell_px)
-	var svc := _fog_service()
-	if svc == null:
-		return
-	var changed := svc.apply_history_seed_delta(_history_image, revealed_cells, hidden_cells, safe_cell_px)
-	if changed:
-		_history_dirty = true
+	var safe_cell_px := maxi(1, cell_px if cell_px > 0 else 1)
+	mgr.apply_seed_delta(revealed_cells, hidden_cells, safe_cell_px)
 
 
 func sync_player_revealers(tokens: Array) -> void:
@@ -379,7 +354,6 @@ func _build_nodes() -> void:
 	_build_history_gpu_pipeline()
 
 	_resize_buffers_and_nodes()
-	reset_history()
 
 
 func _build_history_gpu_pipeline() -> void:
@@ -470,7 +444,6 @@ func _create_or_update_image_texture(existing: ImageTexture, image: Image) -> Im
 
 func _resize_buffers_and_nodes() -> void:
 	var target_size := Vector2i(maxi(1, roundi(_map_size.x)), maxi(1, roundi(_map_size.y)))
-	_ensure_history_storage(_map_size)
 
 	if _live_lights_viewport:
 		_live_lights_viewport.size = target_size
@@ -497,33 +470,6 @@ func _resize_buffers_and_nodes() -> void:
 			merge.position = Vector2.ZERO
 			merge.size = _map_size
 	_queue_los_full_bake()
-
-
-func _ensure_history_storage(size: Vector2) -> void:
-	var target_w := maxi(1, roundi(size.x))
-	var target_h := maxi(1, roundi(size.y))
-	if _history_image == null or _history_image.is_empty() or _history_image.get_width() != target_w or _history_image.get_height() != target_h:
-		_history_image = Image.create(target_w, target_h, false, Image.FORMAT_L8)
-		_history_image.fill(Color(0.0, 0.0, 0.0, 1.0))
-		if _history_texture == null or not (_history_texture is ImageTexture):
-			_history_texture = ImageTexture.create_from_image(_history_image)
-		else:
-			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
-		_history_dirty = false
-		if DEBUG_FOG_TELEMETRY:
-			print("FogSystem: history buffer resized (%dx%d)" % [target_w, target_h])
-
-
-func _upload_history_texture() -> void:
-	var svc := _fog_service()
-	if svc == null:
-		return
-	var res := svc.upload_history_texture(_history_image, _history_gpu_ready, _history_texture as ImageTexture, _history_viewports, _history_merge_rects)
-	if not res.get("ok", false):
-		return
-	_history_texture = res.get("history_texture", _history_texture) as Texture2D
-	_history_seed_texture = res.get("seed_texture", _history_seed_texture) as ImageTexture
-	_history_dirty = bool(res.get("history_dirty", false))
 
 
 func _bake_live_los_into_history() -> void:
@@ -624,8 +570,9 @@ func _queue_los_dirty_rect(rect: Rect2i) -> void:
 
 
 func _queue_los_full_bake() -> void:
-	if _history_image and not _history_image.is_empty():
-		_los_dirty_regions = [Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())]
+	var model := _fog_model()
+	if model != null and model.history_image != null and not model.history_image.is_empty():
+		_los_dirty_regions = [Rect2i(0, 0, model.history_image.get_width(), model.history_image.get_height())]
 	else:
 		_los_dirty_regions.clear()
 	_los_bake_pending = true
@@ -681,19 +628,17 @@ func _new_occluder(points: PackedVector2Array) -> LightOccluder2D:
 func _get_or_create_radial_texture() -> Texture2D:
 	if _radial_texture != null:
 		return _radial_texture
-	var size := 256
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0.0, 0.0, 0.0, 0.0))
-	var center := Vector2(size * 0.5, size * 0.5)
-	var radius := size * 0.5
-	for y in range(size):
-		for x in range(size):
-			var dist := center.distance_to(Vector2(x, y))
-			if dist > radius:
-				continue
-			var t := 1.0 - (dist / radius)
-			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, t * t))
-	_radial_texture = ImageTexture.create_from_image(img)
+	var gradient := Gradient.new()
+	gradient.colors = PackedColorArray([Color(1.0, 1.0, 1.0, 1.0), Color(1.0, 1.0, 1.0, 0.0)])
+	gradient.offsets = PackedFloat32Array([0.0, 1.0])
+	var grad_tex := GradientTexture2D.new()
+	grad_tex.width = 256
+	grad_tex.height = 256
+	grad_tex.fill = GradientTexture2D.FILL_RADIAL
+	grad_tex.fill_from = Vector2(0.5, 0.5)
+	grad_tex.fill_to = Vector2(1.0, 0.5)
+	grad_tex.gradient = gradient
+	_radial_texture = grad_tex
 	return _radial_texture
 
 
@@ -704,40 +649,6 @@ func _get_or_create_fallback_black_texture() -> Texture2D:
 	img.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_fallback_black_texture = ImageTexture.create_from_image(img)
 	return _fallback_black_texture
-
-
-func _paint_cell_block(cell: Vector2i, cell_px: int, value: float) -> void:
-	if _history_image == null:
-		return
-	var x0 := cell.x * cell_px
-	var y0 := cell.y * cell_px
-	var x1 := x0 + cell_px
-	var y1 := y0 + cell_px
-	var w := _history_image.get_width()
-	var h := _history_image.get_height()
-	if x1 <= 0 or y1 <= 0 or x0 >= w or y0 >= h:
-		return
-	x0 = maxi(0, x0)
-	y0 = maxi(0, y0)
-	x1 = mini(w, x1)
-	y1 = mini(h, y1)
-	for py in range(y0, y1):
-		for px in range(x0, x1):
-			_history_image.set_pixel(px, py, Color(value, 0.0, 0.0, 1.0))
-
-
-func _to_cell(v: Variant) -> Vector2i:
-	if v is Vector2i:
-		return v as Vector2i
-	if v is Vector2:
-		var p := v as Vector2
-		return Vector2i(int(round(p.x)), int(round(p.y)))
-	if v is Dictionary:
-		return Vector2i(int(v.get("x", -1)), int(v.get("y", -1)))
-	if v is Array and (v as Array).size() >= 2:
-		var arr := v as Array
-		return Vector2i(int(arr[0]), int(arr[1]))
-	return Vector2i(-1, -1)
 
 
 func _verify_live_viewport_no_camera() -> void:
@@ -758,14 +669,15 @@ func _log_debug_metrics() -> void:
 		return
 
 	var hist_size := Vector2i.ZERO
-	if _history_image and not _history_image.is_empty():
-		hist_size = Vector2i(_history_image.get_width(), _history_image.get_height())
+	var dbg_model := _fog_model()
+	if dbg_model != null and dbg_model.history_image != null and not dbg_model.history_image.is_empty():
+		hist_size = dbg_model.size
 	var live_size := Vector2i.ZERO
 	if _live_lights_viewport:
 		live_size = _live_lights_viewport.size
 	var light_count := _live_light_by_token_id.size()
 
-	print("FogSystem metrics: is_dm=%s hist=%s live=%s lights=%d los_bakes_last_sec=%d pending=%s dirty_regions=%d history_dirty=%s" % [
+	print("FogSystem metrics: is_dm=%s hist=%s live=%s lights=%d los_bakes_last_sec=%d pending=%s dirty_regions=%d" % [
 		str(_is_dm),
 		str(hist_size),
 		str(live_size),
@@ -773,7 +685,6 @@ func _log_debug_metrics() -> void:
 		_debug_los_bakes_frame,
 		str(_los_bake_pending),
 		_los_dirty_regions.size(),
-		str(_history_dirty),
 	])
 
 	_debug_los_bakes_frame = 0

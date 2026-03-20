@@ -137,107 +137,7 @@ func should_bake_los_now(los_bake_pending: bool, last_msec: int, interval_msec: 
     return (now - last_msec) >= interval_msec
 
 
-func merge_live_los_into_history(history_image: Image, live_viewport: SubViewport, prev_los_data: PackedByteArray, prev_width: int, prev_height: int, los_dirty_regions: Array, los_bake_gain: float) -> Dictionary:
-    # Performs CPU-side LOS merge: reads the live viewport to Image, scales and
-    # merges into the provided history_image, and returns updated state.
-    if history_image == null or history_image.is_empty():
-        return {
-            "changed": false,
-            "history_image": history_image,
-            "prev_los_data": PackedByteArray(),
-            "prev_width": 0,
-            "prev_height": 0,
-        }
-    if live_viewport == null:
-        return {
-            "changed": false,
-            "history_image": history_image,
-            "prev_los_data": prev_los_data,
-            "prev_width": prev_width,
-            "prev_height": prev_height,
-        }
-
-    var live_tex := live_viewport.get_texture()
-    if live_tex == null:
-        return {
-            "changed": false,
-            "history_image": history_image,
-            "prev_los_data": prev_los_data,
-            "prev_width": prev_width,
-            "prev_height": prev_height,
-        }
-    var los_image := live_tex.get_image()
-    if los_image == null or los_image.is_empty():
-        return {
-            "changed": false,
-            "history_image": history_image,
-            "prev_los_data": prev_los_data,
-            "prev_width": prev_width,
-            "prev_height": prev_height,
-        }
-    los_image.convert(Image.FORMAT_L8)
-    if los_image.get_width() != history_image.get_width() or los_image.get_height() != history_image.get_height():
-        los_image.resize(history_image.get_width(), history_image.get_height(), Image.INTERPOLATE_NEAREST)
-
-    var width := history_image.get_width()
-    var height := history_image.get_height()
-    var history_data := history_image.get_data()
-    var los_data := los_image.get_data()
-    var can_use_prev := (
-        not prev_los_data.is_empty()
-        and prev_width == width
-        and prev_height == height
-        and prev_los_data.size() == los_data.size()
-    )
-
-    var bounds := Rect2i(0, 0, width, height)
-    var bake_regions: Array = []
-    if los_dirty_regions == null or los_dirty_regions.is_empty():
-        bake_regions.append(bounds)
-    else:
-        for raw_region in los_dirty_regions:
-            if not raw_region is Rect2i:
-                continue
-            var clipped := (raw_region as Rect2i).intersection(bounds)
-            if clipped.size.x <= 0 or clipped.size.y <= 0:
-                continue
-            bake_regions.append(clipped)
-    if bake_regions.is_empty():
-        return {
-            "changed": false,
-            "history_image": history_image,
-            "prev_los_data": los_data.duplicate(),
-            "prev_width": width,
-            "prev_height": height,
-        }
-
-    var changed := false
-    for bake_rect in bake_regions:
-        for y in range(bake_rect.position.y, bake_rect.end.y):
-            var row_base := y * width
-            for x in range(bake_rect.position.x, bake_rect.end.x):
-                var idx := row_base + x
-                var existing_u8 := int(history_data[idx])
-                var live_u8 := int(los_data[idx])
-                if can_use_prev:
-                    live_u8 = maxi(live_u8, int(prev_los_data[idx]))
-                var scaled_u8 := mini(255, int(round(float(live_u8) * los_bake_gain)))
-                if scaled_u8 > existing_u8:
-                    history_data[idx] = scaled_u8
-                    changed = true
-
-    var new_prev := los_data.duplicate()
-    if changed:
-        history_image.set_data(width, height, false, Image.FORMAT_L8, history_data)
-
-    return {
-        "changed": changed,
-        "history_image": history_image,
-        "prev_los_data": new_prev,
-        "prev_width": width,
-        "prev_height": height,
-    }
-
+# merge_live_los_into_history removed — GPU-only; no CPU fallback permitted.
 
 func _create_or_update_image_texture(existing: ImageTexture, image: Image) -> ImageTexture:
     if image == null or image.is_empty():
@@ -366,18 +266,12 @@ func apply_history_brush(history_image: Image, world_pos: Vector2, radius_px: fl
     var max_y := mini(history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
     if min_x > max_x or min_y > max_y:
         return false
-    var target := 1.0 if reveal else 0.0
-    var changed := false
+    var target := Color(1.0 if reveal else 0.0, 0.0, 0.0, 1.0)
     for py in range(min_y, max_y + 1):
         for px in range(min_x, max_x + 1):
-            if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
-                continue
-            var current := history_image.get_pixel(px, py).r
-            if absf(current - target) < 0.001:
-                continue
-            history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-            changed = true
-    return changed
+            if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) <= safe_radius:
+                history_image.set_pixel(px, py, target)
+    return true
 
 
 func apply_history_rect(history_image: Image, a: Vector2, b: Vector2, reveal: bool) -> bool:
@@ -389,55 +283,14 @@ func apply_history_rect(history_image: Image, a: Vector2, b: Vector2, reveal: bo
     var max_y := mini(history_image.get_height() - 1, int(ceil(maxf(a.y, b.y))))
     if min_x > max_x or min_y > max_y:
         return false
-    var target := 1.0 if reveal else 0.0
-    var changed := false
-    for py in range(min_y, max_y + 1):
-        for px in range(min_x, max_x + 1):
-            var current := history_image.get_pixel(px, py).r
-            if absf(current - target) < 0.001:
-                continue
-            history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-            changed = true
-    return changed
+    history_image.fill_rect(
+            Rect2i(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1),
+            Color(1.0 if reveal else 0.0, 0.0, 0.0, 1.0))
+    return true
 
 
-func export_hidden_cells_for_sync(history_image: Image, cell_px: int) -> Array:
-    var out: Array = []
-    if history_image == null or history_image.is_empty():
-        return out
-    var grid_w := int(ceil(float(history_image.get_width()) / float(maxi(1, cell_px))))
-    var grid_h := int(ceil(float(history_image.get_height()) / float(maxi(1, cell_px))))
-    for gy in range(grid_h):
-        for gx in range(grid_w):
-            var hidden := true
-            var x0 := gx * cell_px
-            var y0 := gy * cell_px
-            var x1: int = min(history_image.get_width(), x0 + cell_px)
-            var y1: int = min(history_image.get_height(), y0 + cell_px)
-            for py in range(y0, y1):
-                for px in range(x0, x1):
-                    if history_image.get_pixel(px, py).r > 0.5:
-                        hidden = false
-                        break
-                if not hidden:
-                    break
-            if hidden:
-                out.append(Vector2i(gx, gy))
-    return out
-
-
-func commit_runtime_history_to_seed(history_image: Image, cell_px: int) -> Dictionary:
-    if history_image == null or history_image.is_empty():
-        return {"grid_w": 0, "grid_h": 0, "revealed_added": 0}
-    var grid_w := int(ceil(float(history_image.get_width()) / float(maxi(1, cell_px))))
-    var grid_h := int(ceil(float(history_image.get_height()) / float(maxi(1, cell_px))))
-    # Simple implementation: count revealed pixels as a heuristic
-    var revealed_added := 0
-    for y in range(history_image.get_height()):
-        for x in range(history_image.get_width()):
-            if history_image.get_pixel(x, y).r > 0.5:
-                revealed_added += 1
-    return {"grid_w": grid_w, "grid_h": grid_h, "revealed_added": revealed_added}
+# export_hidden_cells_for_sync removed — fog state is managed as GPU texture snapshot.
+# commit_runtime_history_to_seed removed — legacy stats, unused.
 
 
 func _paint_cell_block_internal(history_image: Image, cell: Vector2i, cell_px: int, value: float) -> void:
@@ -455,9 +308,7 @@ func _paint_cell_block_internal(history_image: Image, cell: Vector2i, cell_px: i
     y0 = maxi(0, y0)
     x1 = mini(w, x1)
     y1 = mini(h, y1)
-    for py in range(y0, y1):
-        for px in range(x0, x1):
-            history_image.set_pixel(px, py, Color(value, 0.0, 0.0, 1.0))
+    history_image.fill_rect(Rect2i(x0, y0, x1 - x0, y1 - y0), Color(value, 0.0, 0.0, 1.0))
 
 
 func _to_cell_internal(v: Variant) -> Vector2i:

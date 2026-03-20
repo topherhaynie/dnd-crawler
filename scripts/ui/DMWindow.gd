@@ -869,14 +869,11 @@ func _on_client_disconnected(peer_id: int) -> void:
 
 func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 	var fog_state_png: PackedByteArray = PackedByteArray()
-	if _map_view and _map_view.has_method("get_fog_state"):
+	if _map_view != null:
 		fog_state_png = await _map_view.get_fog_state()
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-	if not fog_state_png.is_empty() and fog_manager and fog_manager.has_method("set_fog_state"):
-		fog_manager.set_fog_state(fog_state_png)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if not fog_state_png.is_empty() and registry != null and registry.fog != null:
+		registry.fog.service.set_fog_state(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
 	if DEBUG_FOG_SNAPSHOT:
 		print("DMWindow: fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [

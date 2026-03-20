@@ -10,12 +10,13 @@ class_name IFogService
 ##   reveal_area, set_fog_enabled, get_fog_state, get_fog_state_size,
 ##   set_fog_state, capture_fog_state
 ##
-## FogSystem delegation contract (called from FogSystem renderer only):
+## FogManager delegation contract (image mutation, called from FogManager):
+##   apply_history_brush, apply_history_rect, apply_history_seed_delta,
+##   set_history_seed_from_hidden
+##
+## FogSystem GPU delegation contract (called from FogSystem renderer only):
 ##   rect_from_circle, compact_los_dirty_regions, should_bake_los_now,
-##   merge_live_los_into_history, seed_gpu_history_from_image, upload_history_texture,
-##   set_history_seed_from_hidden, apply_history_seed_delta,
-##   apply_history_brush, apply_history_rect,
-##   export_hidden_cells_for_sync, commit_runtime_history_to_seed
+##   seed_gpu_history_from_image, upload_history_texture
 
 @warning_ignore("unused_signal")
 signal fog_updated(state: Dictionary)
@@ -62,10 +63,6 @@ func should_bake_los_now(_los_bake_pending: bool, _last_msec: int, _interval_mse
 	push_error("IFogService.should_bake_los_now: not implemented")
 	return false
 
-func merge_live_los_into_history(_history_image: Image, _live_viewport: SubViewport, _prev_los_data: PackedByteArray, _prev_width: int, _prev_height: int, _los_dirty_regions: Array, _los_bake_gain: float) -> Dictionary:
-	push_error("IFogService.merge_live_los_into_history: not implemented")
-	return {}
-
 func seed_gpu_history_from_image(_history_viewports: Array, _history_merge_rects: Array, _history_image: Image, _existing_seed_texture: ImageTexture, _los_bake_gain: float) -> Dictionary:
 	push_error("IFogService.seed_gpu_history_from_image: not implemented")
 	return {}
@@ -89,11 +86,3 @@ func apply_history_brush(_history_image: Image, _world_pos: Vector2, _radius_px:
 func apply_history_rect(_history_image: Image, _a: Vector2, _b: Vector2, _reveal: bool) -> bool:
 	push_error("IFogService.apply_history_rect: not implemented")
 	return false
-
-func export_hidden_cells_for_sync(_history_image: Image, _cell_px: int) -> Array:
-	push_error("IFogService.export_hidden_cells_for_sync: not implemented")
-	return []
-
-func commit_runtime_history_to_seed(_history_image: Image, _cell_px: int) -> Dictionary:
-	push_error("IFogService.commit_runtime_history_to_seed: not implemented")
-	return {}

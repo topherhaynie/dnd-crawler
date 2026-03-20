@@ -36,6 +36,7 @@ func _ready() -> void:
 
 	var fog_mgr := FogManager.new()
 	fog_mgr.service = fog_svc
+	fog_mgr.model = FogModel.new()
 	registry.fog = fog_mgr
 
 	var map_mgr := MapManager.new()
