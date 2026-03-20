@@ -41,9 +41,9 @@ func _draw() -> void:
 	var angle := deg_to_rad(_rotation_deg)
 	var corners := PackedVector2Array([
 		center + Vector2(-half.x, -half.y).rotated(angle),
-		center + Vector2( half.x, -half.y).rotated(angle),
-		center + Vector2( half.x,  half.y).rotated(angle),
-		center + Vector2(-half.x,  half.y).rotated(angle),
+		center + Vector2(half.x, -half.y).rotated(angle),
+		center + Vector2(half.x, half.y).rotated(angle),
+		center + Vector2(-half.x, half.y).rotated(angle),
 	])
 	draw_polygon(corners, PackedColorArray([_VI_FILL, _VI_FILL, _VI_FILL, _VI_FILL]))
 	var poly_line := PackedVector2Array(corners)
