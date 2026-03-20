@@ -1,7 +1,6 @@
-extends Node
+extends IPersistenceService
 class_name PersistenceService
 
-signal persistence_changed(save_name: String)
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 func _init() -> void:

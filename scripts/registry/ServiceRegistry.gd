@@ -1,18 +1,45 @@
 extends Node
 class_name ServiceRegistry
 
-var _services: Dictionary = {}
+## Service locator with typed manager properties.
+##
+## Access services via typed manager properties:
+##   get_node("/root/ServiceRegistry").fog.service.get_fog_state()
+##
+## Swap implementations at runtime:
+##   registry.fog.service = DebugFogService.new()
+##
+## Backwards-compat shim: get_service(String) remains available during the
+## migration from string-keyed lookups. Once all callers use typed manager
+## properties, get_service can be removed.
 
-func register(svc_name: String, instance: Object, required_methods: Array = []) -> void:
-    assert(svc_name != "")
-    assert(instance != null)
-    if required_methods.size() > 0:
-        for m in required_methods:
-            assert(instance.has_method(m), "Service '%s' missing required method '%s'" % [svc_name, m])
-    _services[svc_name] = instance
+var fog: FogManager = null
+var map: MapManager = null
+var network: NetworkManager = null
+var game_state: GameStateManager = null
+var profile: ProfileManager = null
+var persistence: PersistenceManager = null
+var input: InputManager = null
 
+## Backwards-compat shim — returns the typed service for string-keyed callers.
+## @deprecated Use typed manager properties instead.
 func get_service(svc_name: String) -> Object:
-    return _services.get(svc_name, null)
-
-func unregister(svc_name: String) -> void:
-    _services.erase(svc_name)
+	match svc_name:
+		"Fog":
+			return fog.service if fog != null else null
+		"Map":
+			return map.service if map != null else null
+		"Network":
+			return network.service if network != null else null
+		"GameState":
+			return game_state.service if game_state != null else null
+		"GameStateAdapter":
+			return game_state.service if game_state != null else null
+		"Profile":
+			return profile.service if profile != null else null
+		"Persistence":
+			return persistence.service if persistence != null else null
+		"Input":
+			return input.service if input != null else null
+	push_warning("ServiceRegistry.get_service: unknown service key '%s'" % svc_name)
+	return null

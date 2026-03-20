@@ -37,10 +37,8 @@ var grid_offset: Vector2 = Vector2.ZERO ## Pixel offset so grid aligns to tiles
 var wall_polygons: Array = []
 
 # --- Fog data (Phase 4) ----------------------------------------------------
-# Fog is stored as hidden grid cells. Revealed cells are absent from this list.
-# Each entry serializes as {"x": int, "y": int} cell coordinates.
+# Cell pixel size used by GPU fog seed/delta operations.
 var fog_cell_px: int = 4
-var fog_hidden_cells: Array = []
 
 # --- Map objects (Phase 6) ------------------------------------------------
 # Array of serialised MapObject dictionaries placed by DM in editor mode.
@@ -66,7 +64,6 @@ func to_dict() -> Dictionary:
 		"grid_offset": {"x": grid_offset.x, "y": grid_offset.y},
 		"wall_polygons": _serialise_polygons(wall_polygons),
 		"fog_cell_px": fog_cell_px,
-		"fog_hidden_cells": _serialise_fog_cells(fog_hidden_cells),
 		"map_objects": map_objects.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
@@ -84,7 +81,6 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.grid_offset = Vector2(float(go.get("x", 0.0)), float(go.get("y", 0.0)))
 	m.wall_polygons = _deserialise_polygons(d.get("wall_polygons", []))
 	m.fog_cell_px = int(d.get("fog_cell_px", 4))
-	m.fog_hidden_cells = _deserialise_fog_cells(d.get("fog_hidden_cells", []))
 	m.map_objects = d.get("map_objects", []).duplicate(true)
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
@@ -111,26 +107,6 @@ static func _deserialise_polygons(raw: Array) -> Array:
 		for pt in poly:
 			pts.append(Vector2(float(pt.get("x", 0.0)), float(pt.get("y", 0.0))))
 		out.append(pts)
-	return out
-
-
-static func _serialise_fog_cells(cells: Array) -> Array:
-	var out: Array = []
-	for c in cells:
-		if c is Vector2i:
-			out.append({"x": c.x, "y": c.y})
-		elif c is Dictionary:
-			out.append({"x": int(c.get("x", 0)), "y": int(c.get("y", 0))})
-	return out
-
-
-static func _deserialise_fog_cells(raw: Array) -> Array:
-	var out: Array = []
-	for cell in raw:
-		if cell is Vector2i:
-			out.append(cell)
-		elif cell is Dictionary:
-			out.append(Vector2i(int(cell.get("x", 0)), int(cell.get("y", 0))))
 	return out
 
 

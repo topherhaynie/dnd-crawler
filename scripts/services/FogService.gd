@@ -1,7 +1,5 @@
-extends Node
+extends IFogService
 class_name FogService
-
-signal fog_updated(state: Dictionary)
 
 var _fog_state: Dictionary = {
     "enabled": true,

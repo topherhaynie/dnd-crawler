@@ -222,8 +222,7 @@ func apply_fog_state(cell_px: int, hidden_cells: Array) -> void:
 	if _map == null:
 		return
 	_map.fog_cell_px = maxi(1, cell_px)
-	_map.fog_hidden_cells = hidden_cells.duplicate(true)
-	_set_fog_hidden_from_array(_map.fog_hidden_cells)
+	_set_fog_hidden_from_array(hidden_cells)
 	_refresh_fog_overlay()
 
 
@@ -687,21 +686,17 @@ func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 
 func _load_fog_from_map(map: MapData) -> void:
 	_fog_hidden_cells.clear()
-	if map.fog_hidden_cells.is_empty():
-		if is_dm_view:
-			# Authoritative DM side: new maps start fully hidden.
-			var cell_px: int = maxi(1, map.fog_cell_px)
-			var size := map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
-			for y in range(0, int(ceil(size.y / cell_px))):
-				for x in range(0, int(ceil(size.x / cell_px))):
-					_fog_hidden_cells[Vector2i(x, y)] = true
-			_sync_fog_to_map()
-		else:
-			# Player map bootstrap omits fog arrays intentionally; wait for
-			# fog_updated/fog_delta rather than forcing full-cover here.
-			_sync_fog_to_map(false)
-		return
-	_set_fog_hidden_from_array(map.fog_hidden_cells)
+	if is_dm_view:
+		# Authoritative DM side: new maps start fully hidden.
+		var cell_px: int = maxi(1, map.fog_cell_px)
+		var size := map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
+		for y in range(0, int(ceil(size.y / cell_px))):
+			for x in range(0, int(ceil(size.x / cell_px))):
+				_fog_hidden_cells[Vector2i(x, y)] = true
+		_sync_fog_to_map()
+	else:
+		# Player side: wait for fog_updated snapshot from DM.
+		_sync_fog_to_map(false)
 
 
 func _set_fog_hidden_from_array(raw_cells: Array) -> void:
@@ -719,11 +714,6 @@ func _set_fog_hidden_from_array(raw_cells: Array) -> void:
 func _sync_fog_to_map(emit_change_signal: bool = true) -> void:
 	if _map == null:
 		return
-	var cells: Array = []
-	for cell in _fog_hidden_cells.keys():
-		if cell is Vector2i:
-			cells.append(cell)
-	_map.fog_hidden_cells = cells
 	if emit_change_signal:
 		fog_changed.emit(_map)
 

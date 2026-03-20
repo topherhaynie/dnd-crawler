@@ -1,48 +1,45 @@
-extends RefCounted
+extends Node
 class_name INetworkService
 
-"""
-Protocol: INetworkService
+## Protocol: INetworkService
+##
+## Base class for WebSocket server implementations. Handles DM-to-player
+## display peer management and input peer routing.
+##
+## Signals:
+##   client_connected, client_disconnected, display_peer_registered,
+##   display_viewport_resized, display_sync_applied
 
-Methods:
-- func start_server() -> void
-- func stop_server() -> void
-- func broadcast_to_displays(data: Dictionary) -> void
-- func send_to_display(peer_id: int, data: Dictionary) -> void
-- func bind_peer(peer_id: int, player_id: Variant) -> void
-- func get_connected_input_peers() -> Array
-- func get_peer_bound_player(peer_id: int) -> String
-
-Signals:
-- signal client_connected(peer_id: int)
-- signal client_disconnected(peer_id: int)
-- signal display_peer_registered(peer_id: int, viewport_size: Vector2)
-
-Notes:
-- Keep implementations minimal; this file documents expected signatures.
-"""
-
+@warning_ignore("unused_signal")
 signal client_connected(peer_id: int)
+@warning_ignore("unused_signal")
 signal client_disconnected(peer_id: int)
+@warning_ignore("unused_signal")
 signal display_peer_registered(peer_id: int, viewport_size: Vector2)
+@warning_ignore("unused_signal")
+signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
+@warning_ignore("unused_signal")
+signal display_sync_applied(peer_id: int, payload: Dictionary)
 
 func start_server() -> void:
-	pass
+	push_error("INetworkService.start_server: not implemented")
 
 func stop_server() -> void:
-	pass
+	push_error("INetworkService.stop_server: not implemented")
 
 func broadcast_to_displays(_data: Dictionary) -> void:
-	pass
+	push_error("INetworkService.broadcast_to_displays: not implemented")
 
 func send_to_display(_peer_id: int, _data: Dictionary) -> void:
-	pass
+	push_error("INetworkService.send_to_display: not implemented")
 
 func bind_peer(_peer_id: int, _player_id: Variant) -> void:
-	pass
+	push_error("INetworkService.bind_peer: not implemented")
 
 func get_connected_input_peers() -> Array:
+	push_error("INetworkService.get_connected_input_peers: not implemented")
 	return []
 
 func get_peer_bound_player(_peer_id: int) -> String:
+	push_error("INetworkService.get_peer_bound_player: not implemented")
 	return ""

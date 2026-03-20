@@ -1,65 +1,76 @@
 extends Node
 
+## ServiceBootstrap — instantiates all services, wires them into typed managers,
+## and registers them via ServiceRegistry.
+##
+## All add_child calls are deferred so that service _ready() methods run after
+## the scene tree is stable. The registry object is fully configured before
+## it enters the tree.
+
 func _ready() -> void:
-    # Load service scripts explicitly to avoid analyzer scope issues during headless/test runs.
-    var ServiceRegistryScript: Script = load("res://scripts/registry/ServiceRegistry.gd")
-    var FogServiceScript: Script = load("res://scripts/services/FogService.gd")
-    var MapServiceScript: Script = load("res://scripts/services/MapService.gd")
-    var NetworkServiceScript: Script = load("res://scripts/services/NetworkService.gd")
-    var GameStateServiceScript: Script = load("res://scripts/services/GameStateService.gd")
-    var ProfileServiceScript: Script = load("res://scripts/services/ProfileService.gd")
-    var PersistenceServiceScript: Script = load("res://scripts/services/PersistenceService.gd")
-    var InputServiceScript: Script = load("res://scripts/services/InputService.gd")
+	# --- Instantiate services ---
+	var fog_svc := FogService.new()
+	fog_svc.name = "FogService"
 
-    var registry: ServiceRegistry = ServiceRegistryScript.new() as ServiceRegistry
-    registry.name = "ServiceRegistry"
-    get_tree().root.call_deferred("add_child", registry)
+	var map_svc := MapService.new()
+	map_svc.name = "MapService"
 
-    var fog: FogService = FogServiceScript.new() as FogService
-    fog.name = "FogService"
-    get_tree().root.call_deferred("add_child", fog)
+	var net_svc := NetworkService.new()
+	net_svc.name = "NetworkService"
 
-    var map: MapService = MapServiceScript.new() as MapService
-    map.name = "MapService"
-    get_tree().root.call_deferred("add_child", map)
+	var gs_svc := GameStateService.new()
+	gs_svc.name = "GameStateService"
 
-    # Adapters removed: services are now authoritative implementations.
+	var ps_svc := ProfileService.new()
+	ps_svc.name = "ProfileService"
 
-    var net: Node = NetworkServiceScript.new() as Node
-    net.name = "NetworkService"
-    get_tree().root.call_deferred("add_child", net)
+	var persistence_svc := PersistenceService.new()
+	persistence_svc.name = "PersistenceService"
 
-    # Network adapter removed
+	var input_svc := InputService.new()
+	input_svc.name = "InputService"
 
-    var gs: Node = GameStateServiceScript.new() as Node
-    gs.name = "GameStateService"
-    get_tree().root.call_deferred("add_child", gs)
+	# --- Build registry and wire managers ---
+	var registry := ServiceRegistry.new()
+	registry.name = "ServiceRegistry"
 
-    # GameState adapter removed
+	var fog_mgr := FogManager.new()
+	fog_mgr.service = fog_svc
+	registry.fog = fog_mgr
 
-    var ps: Node = ProfileServiceScript.new() as Node
-    ps.name = "ProfileService"
-    get_tree().root.call_deferred("add_child", ps)
+	var map_mgr := MapManager.new()
+	map_mgr.service = map_svc
+	registry.map = map_mgr
 
-    # Profile adapter removed
+	var net_mgr := NetworkManager.new()
+	net_mgr.service = net_svc
+	registry.network = net_mgr
 
-    var persistence = PersistenceServiceScript.new()
-    persistence.name = "PersistenceService"
-    get_tree().root.call_deferred("add_child", persistence)
+	var gs_mgr := GameStateManager.new()
+	gs_mgr.service = gs_svc
+	registry.game_state = gs_mgr
 
-    # Persistence adapter removed
+	var ps_mgr := ProfileManager.new()
+	ps_mgr.service = ps_svc
+	registry.profile = ps_mgr
 
-    var input = InputServiceScript.new()
-    input.name = "InputService"
-    get_tree().root.call_deferred("add_child", input)
+	var persistence_mgr := PersistenceManager.new()
+	persistence_mgr.service = persistence_svc
+	registry.persistence = persistence_mgr
 
-    # Register with runtime conformance checks (required methods list mirrors IFogService)
-    registry.register("Fog", fog, ["reveal_area", "set_fog_enabled", "get_fog_state", "get_fog_state_size", "set_fog_state"])
-    registry.register("Map", map, ["get_map", "load_map", "load_map_from_bundle"])
-    registry.register("Network", net, ["start_server", "stop_server", "broadcast_to_displays", "send_to_display"])
-    registry.register("GameState", gs, ["get_profile_by_id"])
-    registry.register("Profile", ps, ["get_profiles", "get_profile_by_id", "save_profiles", "load_profiles"])
-    registry.register("Persistence", persistence, ["save_game", "load_game", "list_saves", "delete_save", "export_to_path", "copy_file"])
-    registry.register("Input", input, ["get_vector", "set_network_vector", "set_gamepad_vector", "set_dm_vector", "bind_gamepad", "unbind_gamepad", "bind_peer", "clear_all_bindings", "get_gamepad_bindings", "has_gamepad_binding"])
+	var input_mgr := InputManager.new()
+	input_mgr.service = input_svc
+	registry.input = input_mgr
 
-    print("ServiceBootstrap: registered Fog service and adapter")
+	# --- Add to scene tree (deferred to avoid ready-order races) ---
+	var root := get_tree().root
+	root.call_deferred("add_child", registry)
+	root.call_deferred("add_child", fog_svc)
+	root.call_deferred("add_child", map_svc)
+	root.call_deferred("add_child", net_svc)
+	root.call_deferred("add_child", gs_svc)
+	root.call_deferred("add_child", ps_svc)
+	root.call_deferred("add_child", persistence_svc)
+	root.call_deferred("add_child", input_svc)
+
+	print("ServiceBootstrap: all services registered")

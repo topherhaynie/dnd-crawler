@@ -1,9 +1,5 @@
-extends Node
+extends IInputService
 class_name InputService
-
-# Signals
-signal input_vector_changed(player_id, vector)
-signal input_binding_changed(player_id)
 
 # InputService — moves responsibilities from legacy InputManager autoload
 

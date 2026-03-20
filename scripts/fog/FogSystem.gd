@@ -55,13 +55,13 @@ var _last_los_bake_msec: int = 0
 var _los_dirty_regions: Array = []
 
 
-func _fog_service() -> Object:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Fog")
-		if svc != null:
-			return svc
-	return null
+func _fog_service() -> IFogService:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null:
+		return null
+	if registry.fog == null:
+		return null
+	return registry.fog.service
 
 
 func _ready() -> void:
@@ -166,10 +166,6 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
-
-	var fog_manager: Object = _fog_service()
-	if fog_manager and fog_manager.has_method("set_fog_state"):
-		fog_manager.set_fog_state(buffer)
 	return true
 
 
@@ -194,30 +190,13 @@ func set_history_seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> voi
 		return
 
 	var svc := _fog_service()
-	if svc != null and svc.has_method("set_history_seed_from_hidden"):
-			var res := svc.set_history_seed_from_hidden(_history_image, cell_px, hidden_cells) as Dictionary
-			if res != null:
-				_history_image = res.get("history_image", _history_image) as Image
-				_history_seed_cell_px = int(res.get("seed_cell_px", _history_seed_cell_px))
-				_prev_los_data = PackedByteArray()
-				_prev_los_width = 0
-				_prev_los_height = 0
-				if _history_gpu_ready:
-					_seed_gpu_history_from_image(_history_image)
-				else:
-					_history_dirty = true
-				_queue_los_full_bake()
-				return
-
-	# Fallback: original implementation
-	_history_image.fill(Color(1.0, 0.0, 0.0, 1.0))
-	var safe_cell_px := maxi(1, cell_px)
-	_history_seed_cell_px = safe_cell_px
-	for key in hidden_cells.keys():
-		if not key is Vector2i:
-			continue
-		_paint_cell_block(key as Vector2i, safe_cell_px, 0.0)
-
+	if svc == null:
+		return
+	var res := svc.set_history_seed_from_hidden(_history_image, cell_px, hidden_cells)
+	if res.is_empty():
+		return
+	_history_image = res.get("history_image", _history_image) as Image
+	_history_seed_cell_px = int(res.get("seed_cell_px", _history_seed_cell_px))
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0
@@ -236,137 +215,12 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 		return
 
 	var safe_cell_px := maxi(1, cell_px if cell_px > 0 else _history_seed_cell_px)
-	var changed := false
 	var svc := _fog_service()
-	if svc != null and svc.has_method("apply_history_seed_delta"):
-		changed = svc.apply_history_seed_delta(_history_image, revealed_cells, hidden_cells, safe_cell_px)
-		if changed:
-			_history_dirty = true
+	if svc == null:
 		return
-
-	# Fallback: original implementation
-
-	for raw in revealed_cells:
-		var cell := _to_cell(raw)
-		if cell.x < 0 or cell.y < 0:
-			continue
-		_paint_cell_block(cell, safe_cell_px, 1.0)
-		changed = true
-	for raw in hidden_cells:
-		var cell := _to_cell(raw)
-		if cell.x < 0 or cell.y < 0:
-			continue
-		_paint_cell_block(cell, safe_cell_px, 0.0)
-		changed = true
-
-	if not changed:
-		return
-	_history_dirty = true
-
-
-# func apply_history_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> bool:
-# 	_ensure_history_storage(_map_size)
-# 	if _history_image == null or _history_image.is_empty():
-# 		return false
-
-# 	var registry := get_node_or_null("/root/ServiceRegistry")
-# 	if registry != null and registry.has_method("get_service"):
-# 		var svc := _fog_service() as FogService
-# 		if svc != null and svc.has_method("apply_history_brush"):
-# 			return svc.apply_history_brush(_history_image, world_pos, radius_px, reveal)
-
-# 	var safe_radius := maxf(1.0, radius_px)
-# 	var min_x := maxi(0, int(floor(world_pos.x - safe_radius)))
-# 	var min_y := maxi(0, int(floor(world_pos.y - safe_radius)))
-# 	var max_x := mini(_history_image.get_width() - 1, int(ceil(world_pos.x + safe_radius)))
-# 	var max_y := mini(_history_image.get_height() - 1, int(ceil(world_pos.y + safe_radius)))
-# 	if min_x > max_x or min_y > max_y:
-# 		return false
-# 	var target := 1.0 if reveal else 0.0
-# 	var changed := false
-# 	for py in range(min_y, max_y + 1):
-# 		for px in range(min_x, max_x + 1):
-# 			if Vector2(float(px) + 0.5, float(py) + 0.5).distance_to(world_pos) > safe_radius:
-# 				continue
-# 			var current := _history_image.get_pixel(px, py).r
-# 			if absf(current - target) < 0.001:
-# 				continue
-# 			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-# 			changed = true
-# 	return changed
-
-
-# func apply_history_rect(a: Vector2, b: Vector2, reveal: bool) -> bool:
-# 	_ensure_history_storage(_map_size)
-# 	if _history_image == null or _history_image.is_empty():
-# 		return false
-
-# 	var registry := get_node_or_null("/root/ServiceRegistry")
-# 	var changed := false
-# 	if registry != null and registry.has_method("get_service"):
-# 		var svc := _fog_service() as FogService
-# 		if svc != null and svc.has_method("apply_history_rect"):
-# 			changed = svc.apply_history_rect(_history_image, a, b, reveal)
-# 			if changed:
-# 				_history_dirty = true
-# 			return changed
-
-# 	var min_x := maxi(0, int(floor(minf(a.x, b.x))))
-# 	var min_y := maxi(0, int(floor(minf(a.y, b.y))))
-# 	var max_x := mini(_history_image.get_width() - 1, int(ceil(maxf(a.x, b.x))))
-# 	var max_y := mini(_history_image.get_height() - 1, int(ceil(maxf(a.y, b.y))))
-# 	if min_x > max_x or min_y > max_y:
-# 		return false
-# 	var target := 1.0 if reveal else 0.0
-# 	changed = false
-# 	for py in range(min_y, max_y + 1):
-# 		for px in range(min_x, max_x + 1):
-# 			var current := _history_image.get_pixel(px, py).r
-# 			if absf(current - target) < 0.001:
-# 				continue
-# 			_history_image.set_pixel(px, py, Color(target, 0.0, 0.0, 1.0))
-# 			changed = true
-# 	if changed:
-# 		_history_dirty = true
-# 	return changed
-
-
-# func collect_revealed_cells_from_candidates(_candidates: Array, _cell_px: int, _max_cells: int) -> Array:
-# 	return []
-
-
-# func export_hidden_cells_from_gpu(_cell_px: int) -> Array:
-# 	return []
-
-
-# func export_hidden_cells_from_runtime(_cell_px: int) -> Array:
-# 	return []
-
-
-# func export_hidden_cells_for_sync(_cell_px: int) -> Array:
-# 	var registry := get_node_or_null("/root/ServiceRegistry")
-# 	if registry != null and registry.has_method("get_service"):
-# 		var svc := _fog_service() as FogService
-# 		if svc != null and svc.has_method("export_hidden_cells_for_sync"):
-# 			return svc.export_hidden_cells_for_sync(_history_image, _cell_px)
-# 	# Fallback: no-op
-# 	return []
-
-
-# func commit_runtime_history_to_seed(_cell_px: int) -> Dictionary:
-# 	var registry := get_node_or_null("/root/ServiceRegistry")
-# 	if registry != null and registry.has_method("get_service"):
-# 		var svc := _fog_service() as FogService
-# 		if svc != null and svc.has_method("commit_runtime_history_to_seed"):
-# 			var res := svc.commit_runtime_history_to_seed(_history_image, _cell_px) as Dictionary
-# 			if res != null:
-# 				return res
-# 	# Fallback: no-op
-# 	return {
-# 		"grid_w": 0,
-# 		"grid_h": 0,
-# 		"revealed_added": 0,
-# 	}
+	var changed := svc.apply_history_seed_delta(_history_image, revealed_cells, hidden_cells, safe_cell_px)
+	if changed:
+		_history_dirty = true
 
 
 func sync_player_revealers(tokens: Array) -> void:
@@ -470,12 +324,6 @@ func set_wall_polygons(polygons: Array) -> void:
 
 	# Wall topology changes alter LOS shape across the viewport.
 	_queue_los_full_bake()
-
-
-# func set_dm_reveals(_reveals: Array) -> void:
-# 	# History is now sourced from baked LOS viewport output only.
-# 	# DM reveal markers are intentionally ignored in this mode.
-# 	return
 
 
 func _build_nodes() -> void:
@@ -591,50 +439,18 @@ func _get_active_history_texture() -> Texture2D:
 
 
 func _seed_gpu_history_from_image(image: Image) -> void:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("seed_gpu_history_from_image"):
-			var res := svc.seed_gpu_history_from_image(_history_viewports, _history_merge_rects, image, _history_seed_texture, LOS_BAKE_GAIN)
-			if res != null and res.get("ok", false):
-				_history_seed_texture = res.get("seed_texture", _history_seed_texture) as ImageTexture
-				_history_active_index = int(res.get("active_index", _history_active_index))
-				_history_swap_pending = bool(res.get("swap_pending", _history_swap_pending))
-				_history_pending_target_index = int(res.get("pending_target_index", _history_pending_target_index))
-				_history_seed_pending = bool(res.get("seed_pending", _history_seed_pending))
-				_history_texture = res.get("history_texture", _history_texture) as Texture2D
-				_apply_shader_uniforms()
-				return
-
-	# Fallback: original implementation
-	if not _history_gpu_ready:
-		_history_dirty = true
+	var svc := _fog_service()
+	if svc == null:
 		return
-	if image == null or image.is_empty():
+	var res := svc.seed_gpu_history_from_image(_history_viewports, _history_merge_rects, image, _history_seed_texture, LOS_BAKE_GAIN)
+	if not res.get("ok", false):
 		return
-
-	_history_seed_texture = _create_or_update_image_texture(_history_seed_texture, image)
-
-	for i in range(_history_viewports.size()):
-		var merge := _history_merge_rects[i] as ColorRect
-		var vp := _history_viewports[i] as SubViewport
-		if merge == null or vp == null:
-			continue
-		var mat := merge.material as ShaderMaterial
-		if mat == null:
-			continue
-		mat.set_shader_parameter("seed_mode", true)
-		mat.set_shader_parameter("seed_tex", _history_seed_texture)
-		mat.set_shader_parameter("prev_history_tex", _history_seed_texture)
-		mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
-		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-
-	_history_active_index = 0
-	_history_swap_pending = false
-	_history_pending_target_index = -1
-	_history_seed_pending = true
-	_history_texture = _get_active_history_texture()
+	_history_seed_texture = res.get("seed_texture", _history_seed_texture) as ImageTexture
+	_history_active_index = int(res.get("active_index", _history_active_index))
+	_history_swap_pending = bool(res.get("swap_pending", _history_swap_pending))
+	_history_pending_target_index = int(res.get("pending_target_index", _history_pending_target_index))
+	_history_seed_pending = bool(res.get("seed_pending", _history_seed_pending))
+	_history_texture = res.get("history_texture", _history_texture) as Texture2D
 	_apply_shader_uniforms()
 
 
@@ -699,29 +515,15 @@ func _ensure_history_storage(size: Vector2) -> void:
 
 
 func _upload_history_texture() -> void:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("upload_history_texture"):
-			var res := svc.upload_history_texture(_history_image, _history_gpu_ready, _history_texture as ImageTexture, _history_viewports, _history_merge_rects)
-			if res != null and res.get("ok", false):
-				_history_texture = res.get("history_texture", _history_texture) as Texture2D
-				_history_seed_texture = res.get("seed_texture", _history_seed_texture) as ImageTexture
-				_history_dirty = bool(res.get("history_dirty", false))
-				return
-
-	if _history_image == null:
+	var svc := _fog_service()
+	if svc == null:
 		return
-	if _history_gpu_ready:
-		_seed_gpu_history_from_image(_history_image)
-		_history_dirty = false
+	var res := svc.upload_history_texture(_history_image, _history_gpu_ready, _history_texture as ImageTexture, _history_viewports, _history_merge_rects)
+	if not res.get("ok", false):
 		return
-	if _history_texture == null:
-		_history_texture = ImageTexture.create_from_image(_history_image)
-	else:
-		if _history_texture is ImageTexture:
-			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
-	_history_dirty = false
+	_history_texture = res.get("history_texture", _history_texture) as Texture2D
+	_history_seed_texture = res.get("seed_texture", _history_seed_texture) as ImageTexture
+	_history_dirty = bool(res.get("history_dirty", false))
 
 
 func _bake_live_los_into_history() -> void:
@@ -761,116 +563,12 @@ func _bake_live_los_into_history() -> void:
 			_debug_los_bakes_frame += 1
 		return
 
-	if _history_image == null or _history_texture == null:
-		return
-
-	# If a Fog service is registered, prefer delegating the CPU-side LOS merge
-	# to the service implementation. This allows migration of mutation logic
-	# into the service while preserving the existing FogSystem fallback.
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("merge_live_los_into_history"):
-			var result := svc.merge_live_los_into_history(_history_image, _live_lights_viewport, _prev_los_data, _prev_los_width, _prev_los_height, _los_dirty_regions, LOS_BAKE_GAIN) as Dictionary
-			if result != null:
-				_history_image = result.get("history_image", _history_image) as Image
-				_prev_los_data = result.get("prev_los_data", _prev_los_data) as PackedByteArray
-				_prev_los_width = int(result.get("prev_width", _prev_los_width))
-				_prev_los_height = int(result.get("prev_height", _prev_los_height))
-				var svc_changed := bool(result.get("changed", false))
-				if svc_changed:
-					if _history_texture is ImageTexture:
-						_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
-				_los_bake_pending = false
-				_los_dirty_regions.clear()
-				_last_los_bake_msec = Time.get_ticks_msec()
-				if DEBUG_FOG_TELEMETRY:
-					_debug_los_bakes_frame += 1
-				return
-	var live_tex := _live_lights_viewport.get_texture()
-	if live_tex == null:
-		return
-	var los_image := live_tex.get_image()
-	if los_image == null or los_image.is_empty():
-		return
-	los_image.convert(Image.FORMAT_L8)
-	if los_image.get_width() != _history_image.get_width() or los_image.get_height() != _history_image.get_height():
-		los_image.resize(_history_image.get_width(), _history_image.get_height(), Image.INTERPOLATE_NEAREST)
-	var width := _history_image.get_width()
-	var height := _history_image.get_height()
-	var history_data := _history_image.get_data()
-	var los_data := los_image.get_data()
-	var can_use_prev := (
-		not _prev_los_data.is_empty()
-		and _prev_los_width == width
-		and _prev_los_height == height
-		and _prev_los_data.size() == los_data.size()
-	)
-
-	var bounds := Rect2i(0, 0, _history_image.get_width(), _history_image.get_height())
-	var bake_regions: Array = []
-	if _los_dirty_regions.is_empty():
-		bake_regions.append(bounds)
-	else:
-		for raw_region in _los_dirty_regions:
-			if not raw_region is Rect2i:
-				continue
-			var clipped := (raw_region as Rect2i).intersection(bounds)
-			if clipped.size.x <= 0 or clipped.size.y <= 0:
-				continue
-			bake_regions.append(clipped)
-	if bake_regions.is_empty():
-		_los_bake_pending = false
-		_los_dirty_regions.clear()
-		return
-
-	# Preserve history monotonically: never allow a new frame to hide already
-	# revealed pixels. Merge using max(existing, live_los).
-	var changed := false
-	for bake_rect in bake_regions:
-		for y in range(bake_rect.position.y, bake_rect.end.y):
-			var row_base := y * width
-			for x in range(bake_rect.position.x, bake_rect.end.x):
-				var idx := row_base + x
-				var existing_u8 := int(history_data[idx])
-				var live_u8 := int(los_data[idx])
-				if can_use_prev:
-					live_u8 = maxi(live_u8, int(_prev_los_data[idx]))
-				var scaled_u8 := mini(255, int(round(float(live_u8) * LOS_BAKE_GAIN)))
-				if scaled_u8 > existing_u8:
-					history_data[idx] = scaled_u8
-					changed = true
-
-	_prev_los_data = los_data.duplicate()
-	_prev_los_width = width
-	_prev_los_height = height
-
-	if changed:
-		_history_image.set_data(width, height, false, Image.FORMAT_L8, history_data)
-		if _history_texture is ImageTexture:
-			_history_texture = _create_or_update_image_texture(_history_texture as ImageTexture, _history_image)
-	_los_bake_pending = false
-	_los_dirty_regions.clear()
-	_last_los_bake_msec = Time.get_ticks_msec()
-	if DEBUG_FOG_TELEMETRY:
-		_debug_los_bakes_frame += 1
-
 
 func _should_bake_los_now() -> bool:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := _fog_service() as FogService
-		if svc != null and svc.has_method("should_bake_los_now"):
-			return svc.should_bake_los_now(_los_bake_pending, _last_los_bake_msec, LOS_BAKE_INTERVAL_MSEC)
-
-	if not _los_bake_pending:
+	var svc := _fog_service()
+	if svc == null:
 		return false
-	if LOS_BAKE_INTERVAL_MSEC <= 0:
-		return true
-	var now := Time.get_ticks_msec()
-	if _last_los_bake_msec == 0:
-		return true
-	return (now - _last_los_bake_msec) >= LOS_BAKE_INTERVAL_MSEC
+	return svc.should_bake_los_now(_los_bake_pending, _last_los_bake_msec, LOS_BAKE_INTERVAL_MSEC)
 
 
 func _estimate_light_radius_px(light: PointLight2D, src: PointLight2D) -> float:
@@ -911,18 +609,10 @@ func _mark_light_movement_dirty(token_id: int, position_px: Vector2, radius_px: 
 
 
 func _rect_from_circle(center_px: Vector2, radius_px: float) -> Rect2i:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
-		if svc != null and svc.has_method("rect_from_circle"):
-			return svc.rect_from_circle(center_px, radius_px, MIN_LIGHT_RADIUS_PX)
-
-	var safe_radius := maxf(radius_px, MIN_LIGHT_RADIUS_PX)
-	var x0 := floori(center_px.x - safe_radius)
-	var y0 := floori(center_px.y - safe_radius)
-	var x1 := ceili(center_px.x + safe_radius)
-	var y1 := ceili(center_px.y + safe_radius)
-	return Rect2i(x0, y0, maxi(1, x1 - x0 + 1), maxi(1, y1 - y0 + 1))
+	var svc := _fog_service()
+	if svc == null:
+		return Rect2i()
+	return svc.rect_from_circle(center_px, radius_px, MIN_LIGHT_RADIUS_PX)
 
 
 func _queue_los_dirty_rect(rect: Rect2i) -> void:
@@ -944,47 +634,10 @@ func _queue_los_full_bake() -> void:
 func _compact_los_dirty_regions() -> void:
 	if _los_dirty_regions.size() <= 1:
 		return
-
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("Fog") as FogService
-		if svc != null and svc.has_method("compact_los_dirty_regions"):
-			var res := svc.compact_los_dirty_regions(_los_dirty_regions, DIRTY_REGION_MERGE_PADDING_PX, MAX_DIRTY_REGIONS) as Array
-			if res != null:
-				_los_dirty_regions = res
-				return
-
-	var merge_padding := DIRTY_REGION_MERGE_PADDING_PX
-	var i := 0
-	while i < _los_dirty_regions.size():
-		if not _los_dirty_regions[i] is Rect2i:
-			_los_dirty_regions.remove_at(i)
-			continue
-		var current := _los_dirty_regions[i] as Rect2i
-		var j := i + 1
-		while j < _los_dirty_regions.size():
-			if not _los_dirty_regions[j] is Rect2i:
-				_los_dirty_regions.remove_at(j)
-				continue
-			var other := _los_dirty_regions[j] as Rect2i
-			var current_padded := current.grow(merge_padding)
-			var other_padded := other.grow(merge_padding)
-			if current_padded.intersects(other) or other_padded.intersects(current):
-				current = current.merge(other)
-				_los_dirty_regions[i] = current
-				_los_dirty_regions.remove_at(j)
-				continue
-			j += 1
-		i += 1
-
-	if _los_dirty_regions.size() <= MAX_DIRTY_REGIONS:
+	var svc := _fog_service()
+	if svc == null:
 		return
-
-	var merged := _los_dirty_regions[0] as Rect2i
-	for idx in range(1, _los_dirty_regions.size()):
-		if _los_dirty_regions[idx] is Rect2i:
-			merged = merged.merge(_los_dirty_regions[idx] as Rect2i)
-	_los_dirty_regions = [merged]
+	_los_dirty_regions = svc.compact_los_dirty_regions(_los_dirty_regions, DIRTY_REGION_MERGE_PADDING_PX, MAX_DIRTY_REGIONS)
 
 
 func _apply_shader_uniforms() -> void:

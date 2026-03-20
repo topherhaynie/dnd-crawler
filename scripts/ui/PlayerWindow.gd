@@ -23,7 +23,6 @@ var _has_loaded_map: bool = false
 var _pending_fog_snapshot: Dictionary = {}
 var _pending_fog_deltas: Array = []
 var _incoming_fog_snapshot_chunks: Dictionary = {}
-var _incoming_fog_truth_chunks: Dictionary = {}
 
 
 func _ready() -> void:
@@ -36,15 +35,11 @@ func _ready() -> void:
 
 
 func _map() -> MapData:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var ms: Object = registry.get_service("Map")
-		if ms == null:
-			ms = registry.get_service("MapAdapter")
-		if ms != null and ms.has_method("get_map"):
-			var m: MapData = ms.get_map() as MapData
-			if m != null:
-				return m
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.map != null and registry.map.service != null:
+		var m: MapData = registry.map.service.get_map() as MapData
+		if m != null:
+			return m
 	if _map_view != null and _map_view.has_method("get_map"):
 		return _map_view.get_map() as MapData
 	return null
@@ -69,12 +64,6 @@ func on_state(data: Dictionary) -> void:
 			_handle_fog_state_snapshot_chunk(data)
 		"fog_state_snapshot_end":
 			_handle_fog_state_snapshot_end(data)
-		"fog_truth_begin":
-			_handle_fog_truth_begin(data)
-		"fog_truth_chunk":
-			_handle_fog_truth_chunk(data)
-		"fog_truth_end":
-			_handle_fog_truth_end(data)
 		"fog_updated":
 			_handle_fog_updated(data)
 		"fog_delta":
@@ -261,55 +250,6 @@ func _handle_fog_state_snapshot_end(data: Dictionary) -> void:
 	}
 	_incoming_fog_snapshot_chunks.clear()
 	_handle_fog_state_snapshot(snapshot)
-
-
-func _handle_fog_truth_begin(data: Dictionary) -> void:
-	var chunks := maxi(1, int(data.get("chunks", 1)))
-	var parts: Array = []
-	parts.resize(chunks)
-	for i in range(chunks):
-		parts[i] = []
-	_incoming_fog_truth_chunks = {
-		"chunks": chunks,
-		"fog_cell_px": int(data.get("fog_cell_px", 32)),
-		"parts": parts,
-	}
-
-
-func _handle_fog_truth_chunk(data: Dictionary) -> void:
-	if _incoming_fog_truth_chunks.is_empty():
-		_handle_fog_truth_begin(data)
-	var expected_chunks := int(_incoming_fog_truth_chunks.get("chunks", 1))
-	var chunk_count := int(data.get("chunks", expected_chunks))
-	if chunk_count != expected_chunks:
-		return
-	var index := int(data.get("index", -1))
-	if index < 0 or index >= expected_chunks:
-		return
-	var parts: Array = _incoming_fog_truth_chunks.get("parts", []) as Array
-	parts[index] = data.get("hidden_cells", [])
-	_incoming_fog_truth_chunks["parts"] = parts
-
-
-func _handle_fog_truth_end(data: Dictionary) -> void:
-	if _incoming_fog_truth_chunks.is_empty():
-		return
-	var expected_chunks := int(_incoming_fog_truth_chunks.get("chunks", 1))
-	var chunk_count := int(data.get("chunks", expected_chunks))
-	if chunk_count != expected_chunks:
-		_incoming_fog_truth_chunks.clear()
-		return
-	var parts: Array = _incoming_fog_truth_chunks.get("parts", []) as Array
-	var merged_hidden: Array = []
-	for part in parts:
-		if not part is Array:
-			_incoming_fog_truth_chunks.clear()
-			return
-		merged_hidden.append_array(part as Array)
-	var fog_cell_px := int(_incoming_fog_truth_chunks.get("fog_cell_px", 32))
-	_incoming_fog_truth_chunks.clear()
-	if _map_view and _map_view.has_method("apply_fog_state"):
-		_map_view.apply_fog_state(fog_cell_px, merged_hidden)
 
 
 func _handle_fog_updated(data: Dictionary) -> void:

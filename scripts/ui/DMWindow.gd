@@ -137,8 +137,6 @@ const _PLAYER_STATE_BROADCAST_DEBOUNCE: float = 0.0
 const _FOG_BROADCAST_DEBOUNCE: float = 1.5
 const _FOG_AUTO_SYNC_DEBOUNCE: float = 0.0
 const _FOG_DELTA_MAX_CELLS: int = 1200
-const _FOG_TRUTH_MAX_CELLS_PER_CHUNK: int = 400
-const _FOG_TRUTH_CHUNKS_PER_FRAME: int = 100000
 const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
 const DEBUG_FOG_SNAPSHOT: bool = false
 const DEBUG_FOG_TELEMETRY: bool = false
@@ -150,8 +148,6 @@ var _fog_dirty: bool = false
 var _fog_countdown: float = 0.0
 var _fog_snapshot_in_flight: bool = false
 var _fog_snapshot_queued: bool = false
-var _fog_truth_send_queue: Array = []
-var _fog_truth_send_index: int = 0
 var _backend: Node = null
 var _dm_override_player_id: String = ""
 var _initial_sync_ack_pending: Dictionary = {}
@@ -334,10 +330,8 @@ func _process(delta: float) -> void:
 		_fog_countdown = maxf(0.0, _fog_countdown - delta)
 	if _fog_dirty and _fog_countdown <= 0.0:
 		_fog_dirty = false
-		_broadcast_fog_truth_state()
+		_broadcast_fog_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
-
-	_pump_fog_truth_send_queue()
 
 	_update_dm_override_input()
 	if _simulate_player_movement(delta):
@@ -2270,7 +2264,7 @@ func _on_map_fog_changed(_map_data: MapData) -> void:
 	_fog_dirty = true
 	if _fog_countdown <= 0.0:
 		_fog_dirty = false
-		_broadcast_fog_truth_state()
+		_broadcast_fog_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
 
 
@@ -2305,7 +2299,7 @@ func _queue_fog_snapshot_sync(delay: float) -> void:
 func _manual_fog_sync_now() -> void:
 	_fog_dirty = false
 	_fog_countdown = 0.0
-	_broadcast_fog_truth_state()
+	_broadcast_fog_state()
 	_set_status("Fog sync queued to player displays.")
 
 
@@ -2382,84 +2376,6 @@ func _broadcast_fog_state_after_frame() -> void:
 	if _fog_snapshot_queued:
 		_fog_snapshot_queued = false
 		_queue_fog_snapshot_sync(0.1)
-
-
-func _broadcast_fog_truth_state() -> void:
-	if _map_view == null:
-		return
-	if _nm_displays_under_backpressure():
-		_queue_fog_snapshot_sync(0.5)
-		return
-	var map: MapData = _map()
-	if map == null:
-		return
-	_queue_fog_truth_chunked(map)
-
-
-func _queue_fog_truth_chunked(map: MapData) -> void:
-	var queue: Array = []
-	var serial_cells := _serialise_fog_cells(map.fog_hidden_cells)
-	var total_cells := serial_cells.size()
-	var chunk_size := maxi(1, _FOG_TRUTH_MAX_CELLS_PER_CHUNK)
-	var chunks := int(ceil(float(total_cells) / float(chunk_size)))
-	chunks = maxi(1, chunks)
-
-	queue.append({
-		"msg": "fog_truth_begin",
-		"fog_cell_px": int(maxi(1, map.fog_cell_px)),
-		"chunks": chunks,
-	})
-
-	if total_cells == 0:
-		queue.append({
-			"msg": "fog_truth_chunk",
-			"index": 0,
-			"chunks": 1,
-			"hidden_cells": [],
-		})
-		queue.append({
-			"msg": "fog_truth_end",
-			"chunks": 1,
-		})
-		_fog_truth_send_queue = queue
-		_fog_truth_send_index = 0
-		return
-
-	for i in range(chunks):
-		var start := i * chunk_size
-		var end := mini(total_cells, start + chunk_size)
-		var chunk := serial_cells.slice(start, end)
-		queue.append({
-			"msg": "fog_truth_chunk",
-			"index": i,
-			"chunks": chunks,
-			"hidden_cells": chunk,
-		})
-
-	queue.append({
-		"msg": "fog_truth_end",
-		"chunks": chunks,
-	})
-	_fog_truth_send_queue = queue
-	_fog_truth_send_index = 0
-
-
-func _pump_fog_truth_send_queue() -> void:
-	if _fog_truth_send_index >= _fog_truth_send_queue.size():
-		if _fog_truth_send_queue.size() > 0:
-			_fog_truth_send_queue.clear()
-			_fog_truth_send_index = 0
-		return
-	if _nm_displays_under_backpressure():
-		return
-	var sent := 0
-	var per_frame := maxi(1, _FOG_TRUTH_CHUNKS_PER_FRAME)
-	while sent < per_frame and _fog_truth_send_index < _fog_truth_send_queue.size():
-		var msg: Variant = _fog_truth_send_queue[_fog_truth_send_index]
-		if msg is Dictionary:
-			_nm_broadcast_to_displays(msg as Dictionary)
-		_fog_truth_send_index += 1
-		sent += 1
 
 
 func _serialise_fog_cells(cells: Array) -> Array:

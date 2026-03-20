@@ -26,38 +26,26 @@ var _cached_wall_signature: String = ""
 var _los_prev_origin_by_token: Dictionary = {}
 
 
-func _game_state() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc := registry.get_service("GameState") as Node
-		if svc == null:
-			svc = registry.get_service("GameStateAdapter") as Node
-		return svc
-	return null
+func _game_state() -> IGameState:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.game_state == null:
+		return null
+	return registry.game_state.service
 
 
-func _input_manager() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Node = registry.get_service("Input") as Node
-		if svc == null:
-			svc = registry.get_service("InputAdapter") as Node
-		if svc != null:
-			return svc
-	# Do not fallback to legacy autoload; prefer registry-only services/adapters.
-	return null
+func _input_manager() -> IInputService:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.input == null:
+		return null
+	return registry.input.service
 
 
 func _map() -> MapData:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var ms: Object = registry.get_service("Map")
-		if ms == null:
-			ms = registry.get_service("MapAdapter")
-		if ms != null and ms.has_method("get_map"):
-			var m: MapData = ms.get_map() as MapData
-			if m != null:
-				return m
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.map != null and registry.map.service != null:
+		var m: MapData = registry.map.service.get_map() as MapData
+		if m != null:
+			return m
 	if _map_view != null and _map_view.has_method("get_map"):
 		return _map_view.get_map() as MapData
 	return null
@@ -80,7 +68,7 @@ func sync_profiles() -> void:
 	if _map_view == null:
 		return
 	var active: Dictionary = {}
-	for profile in _game_state().profiles:
+	for profile in _game_state().list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -113,7 +101,7 @@ func step(delta: float) -> bool:
 	if _map_view.map_image and _map_view.map_image.texture:
 		max_bounds = _map_view.map_image.texture.get_size()
 
-	for profile in _game_state().profiles:
+	for profile in _game_state().list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -129,7 +117,7 @@ func step(delta: float) -> bool:
 			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = Vector2.ZERO
 		var imgr := _input_manager()
-		if imgr != null and imgr.has_method("get_vector"):
+		if imgr != null:
 			vec = imgr.get_vector(p.id)
 		# if vec != Vector2.ZERO:
 		# 	print("BackendRuntime: input for %s => %s" % [p.id, str(vec)])
@@ -186,7 +174,7 @@ func build_player_state_payload() -> Array:
 		return players
 	var map: MapData = _map()
 	var token_diameter_px := _token_diameter_px_for_map(map) if map else 48.0
-	for profile in _game_state().profiles:
+	for profile in _game_state().list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -220,7 +208,7 @@ func _ensure_spawn_positions() -> void:
 	var map_size: Vector2 = _map_view.map_image.texture.get_size() if _map_view.map_image and _map_view.map_image.texture else Vector2(1920, 1080)
 	var origin: Vector2 = map_size * 0.5
 	var idx := 0
-	for profile in _game_state().profiles:
+	for profile in _game_state().list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -309,19 +297,6 @@ func _pixels_per_5ft(map: MapData) -> float:
 func _vision_scale_for_profile(profile: PlayerProfile) -> float:
 	var dash := bool(profile.extras.get("is_dashing", false))
 	var scale := 0.5 if dash else 1.0
-	var fog_manager: Object = null
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		fog_manager = registry.get_service("Fog")
-		if fog_manager == null:
-			var fog_adapter: Object = registry.get_service("FogAdapter")
-			if fog_adapter != null:
-				push_warning("BackendRuntime: 'Fog' service missing — falling back to 'FogAdapter'")
-				fog_manager = fog_adapter
-	if fog_manager and fog_manager.has_method("compute_dash_vision_scale"):
-		scale = float(fog_manager.compute_dash_vision_scale(dash))
-	if fog_manager and fog_manager.has_method("set_vision_scale"):
-		return float(fog_manager.set_vision_scale(profile.id, scale))
 	return clampf(scale, 0.1, 4.0)
 
 

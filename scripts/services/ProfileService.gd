@@ -1,7 +1,6 @@
-extends Node
+extends IProfileService
 class_name ProfileService
 
-signal profiles_changed()
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
 var profiles: Array = []

@@ -1,8 +1,5 @@
-extends Node
+extends IMapService
 class_name MapService
-
-signal map_loaded(map: Object)
-signal map_updated(map: Object)
 
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 

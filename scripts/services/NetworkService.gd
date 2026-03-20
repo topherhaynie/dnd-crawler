@@ -1,13 +1,7 @@
-extends Node
+extends INetworkService
 class_name NetworkService
 
-signal client_connected(peer_id: int)
-signal client_disconnected(peer_id: int)
-signal display_peer_registered(peer_id: int, viewport_size: Vector2)
-signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
-signal display_sync_applied(peer_id: int, payload: Dictionary)
-
-# WebSocket server defaults (matches legacy NetworkManager)
+# WebSocket server defaults
 const WS_PORT: int = 9090
 const OUTBOUND_PRESSURE_WARN_BYTES: int = 262144
 const FOG_OUTBOUND_SOFT_LIMIT_BYTES: int = 786432
@@ -328,7 +322,6 @@ func send_map_to_display(peer_id: int, map: Object, is_update: bool = false, fog
     if map == null:
         return
     var map_payload: Dictionary = map.to_dict()
-    map_payload["fog_hidden_cells"] = []
     send_to_display(peer_id, {
         "msg": "map_updated" if is_update else "map_loaded",
         "map": map_payload,
@@ -340,14 +333,12 @@ func broadcast_map(map: Object) -> void:
     if map == null:
         return
     var map_payload: Dictionary = map.to_dict()
-    map_payload["fog_hidden_cells"] = []
     broadcast_to_displays({"msg": "map_loaded", "map": map_payload})
 
 func broadcast_map_update(map: Object) -> void:
     if map == null:
         return
     var map_payload: Dictionary = map.to_dict()
-    map_payload["fog_hidden_cells"] = []
     broadcast_to_displays({"msg": "map_updated", "map": map_payload})
 
 func _send_fog_snapshot_to_display(peer_id: int, fog_snapshot: Dictionary) -> void:
