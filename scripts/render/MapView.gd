@@ -123,6 +123,7 @@ var _map_rotation: int = 0 ## Current map rotation in degrees (0, 90, 180, 270)
 
 func _set_active_tool(tool: Tool) -> void:
 	# Clear transient input state when switching tools to avoid "stuck" drags
+	_cancel_token_drag()
 	active_tool = tool
 	_panning = false
 	_dragging_indicator = false
@@ -131,17 +132,28 @@ func _set_active_tool(tool: Tool) -> void:
 	_wall_dragging_handle = -1
 	if typeof(_wall_drag_start_points) == TYPE_ARRAY:
 		_wall_drag_start_points.clear()
+	_reset_cursor()
 
 signal viewport_indicator_moved(new_center: Vector2)
 signal fog_changed(map: MapData)
 @warning_ignore("unused_signal")
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
+signal token_drag_started(token_id: Variant)
+signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
 
 ## World-space rect — kept in sync with _indicator_overlay for hit-testing.
 var _viewport_indicator: Rect2 = Rect2()
 var _indicator_rotation_deg: float = 0.0
 var _dragging_indicator: bool = false
+
+## Token drag state (DM drag-to-reposition)
+var _dragging_token_id: Variant = null
+var _dragging_token_node: Node2D = null
+var _dragging_token_offset: Vector2 = Vector2.ZERO
+var _draggable_tokens: Dictionary = {}
+var _token_drag_order: Array = []
+var _current_cursor_shape: int = DisplayServer.CURSOR_ARROW
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
@@ -341,6 +353,90 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 	camera.rotation_degrees = float(_map_rotation)
 
 
+func set_draggable_tokens(tokens: Dictionary) -> void:
+	_draggable_tokens = tokens
+	# Rebuild drag order: preserve existing order for surviving tokens, append new ones
+	var new_order: Array = []
+	for tid in _token_drag_order:
+		if _draggable_tokens.has(tid):
+			new_order.append(tid)
+	for tid in _draggable_tokens.keys():
+		if not new_order.has(tid):
+			new_order.append(tid)
+	_token_drag_order = new_order
+	_reset_cursor()
+
+
+func _hit_test_tokens(world_pos: Vector2) -> Variant:
+	if _draggable_tokens.is_empty():
+		return null
+	const OVERLAP_THRESHOLD_PX: float = 8.0
+	var candidates: Array = []
+	for tid in _draggable_tokens.keys():
+		var node: Node2D = _draggable_tokens[tid] as Node2D
+		if node == null or not is_instance_valid(node):
+			continue
+		var diameter_px: float = 48.0
+		if node.has_method("get_token_diameter_px"):
+			diameter_px = node.get_token_diameter_px()
+		var hit_radius: float = maxf(diameter_px * 0.5, 32.0)
+		var dist: float = world_pos.distance_to(node.global_position)
+		if dist <= hit_radius:
+			candidates.append({"id": tid, "dist": dist})
+	if candidates.is_empty():
+		return null
+	if candidates.size() == 1:
+		return candidates[0]["id"]
+	# Sort by distance ascending
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["dist"] < b["dist"])
+	var best: Dictionary = candidates[0]
+	# Check for tiebreak: if top candidates are within threshold, use recency
+	var tied: Array = []
+	for c in candidates:
+		if c["dist"] - best["dist"] <= OVERLAP_THRESHOLD_PX:
+			tied.append(c)
+		else:
+			break
+	if tied.size() <= 1:
+		return best["id"]
+	# Return the one with the best (earliest) position in _token_drag_order
+	var best_order: int = _token_drag_order.size()
+	var best_tid: Variant = tied[0]["id"]
+	for t in tied:
+		var order_idx: int = _token_drag_order.find(t["id"])
+		if order_idx >= 0 and order_idx < best_order:
+			best_order = order_idx
+			best_tid = t["id"]
+	return best_tid
+
+
+func _update_cursor(world_pos: Vector2) -> void:
+	var shape: int = DisplayServer.CURSOR_ARROW
+	if _dragging_token_node != null:
+		shape = DisplayServer.CURSOR_MOVE
+	elif active_tool == Tool.SELECT and _hit_test_tokens(world_pos) != null:
+		shape = DisplayServer.CURSOR_DRAG
+	if shape != _current_cursor_shape:
+		_current_cursor_shape = shape
+		DisplayServer.cursor_set_shape(shape)
+
+
+func _reset_cursor() -> void:
+	if _current_cursor_shape != DisplayServer.CURSOR_ARROW:
+		_current_cursor_shape = DisplayServer.CURSOR_ARROW
+		DisplayServer.cursor_set_shape(DisplayServer.CURSOR_ARROW)
+
+
+func _cancel_token_drag() -> void:
+	if _dragging_token_node != null:
+		token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
+		_token_drag_order.erase(_dragging_token_id)
+		_token_drag_order.push_front(_dragging_token_id)
+	_dragging_token_id = null
+	_dragging_token_node = null
+	_dragging_token_offset = Vector2.ZERO
+
+
 func _ready() -> void:
 	_ensure_object_layer()
 	# Allow Camera2D to honour rotation_degrees (disabled by default in Godot 4).
@@ -473,7 +569,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_LEFT:
 				if btn_event.pressed:
-					# Indicator drag takes priority over Pan tool
+					# Token drag takes priority over indicator and pan
+					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
+						var world_pos := get_global_mouse_position()
+						var hit_id: Variant = _hit_test_tokens(world_pos)
+						if hit_id != null:
+							var hit_node: Node2D = _draggable_tokens.get(hit_id, null) as Node2D
+							if hit_node != null and is_instance_valid(hit_node):
+								_dragging_token_id = hit_id
+								_dragging_token_node = hit_node
+								_dragging_token_offset = hit_node.global_position - world_pos
+								token_drag_started.emit(hit_id)
+								_update_cursor(world_pos)
+								get_viewport().set_input_as_handled()
+								return
 					if _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
 						_dragging_indicator = true
 						get_viewport().set_input_as_handled()
@@ -484,7 +593,16 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					return
 				else:
-					if _dragging_indicator:
+					if _dragging_token_node != null:
+						token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
+						_token_drag_order.erase(_dragging_token_id)
+						_token_drag_order.push_front(_dragging_token_id)
+						_dragging_token_id = null
+						_dragging_token_node = null
+						_dragging_token_offset = Vector2.ZERO
+						_update_cursor(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+					elif _dragging_indicator:
 						_dragging_indicator = false
 						get_viewport().set_input_as_handled()
 					elif _panning:
@@ -494,6 +612,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	# --- Mouse motion (panning + indicator drag) ----------------------------
 	if event is InputEventMouseMotion:
+		var motion_world_pos := get_global_mouse_position()
+		if _dragging_token_node != null:
+			_dragging_token_node.global_position = motion_world_pos + _dragging_token_offset
+			_update_cursor(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
+		_update_cursor(motion_world_pos)
 		if _dragging_indicator:
 			var motion := event as InputEventMouseMotion
 			var world_delta := motion.relative / camera.zoom.x

@@ -441,9 +441,16 @@ func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: Node
 		var target_tex_scale := src.texture_scale * _fog_scale
 		if absf(light.texture_scale - target_tex_scale) > 0.0001:
 			light.texture_scale = target_tex_scale
-		var scaled_energy := maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
+		# When source energy is zero (e.g. light suppressed during drag/move),
+		# honour that and disable the fog light entirely.
+		var suppressed: bool = src.energy < 0.001
+		var scaled_energy := 0.0 if suppressed else maxf(src.energy * LIVE_LIGHT_ENERGY_GAIN, LIVE_LIGHT_MIN_ENERGY)
 		if absf(light.energy - scaled_energy) > 0.0001:
 			light.energy = scaled_energy
+		if light.enabled == suppressed:
+			light.enabled = not suppressed
+			if light.enabled:
+				_los_bake_pending = true
 	else:
 		if absf(light.energy - LIVE_LIGHT_MIN_ENERGY) > 0.0001:
 			light.energy = LIVE_LIGHT_MIN_ENERGY

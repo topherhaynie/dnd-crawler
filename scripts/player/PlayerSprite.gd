@@ -26,6 +26,8 @@ var _remote_lerp_speed: float = 18.0
 var _remote_snap_epsilon_px: float = 0.75
 var _vision_radius_tween: Tween = null
 var _token_diameter_px: float = _TOKEN_TEXTURE_DIAMETER_PX
+var _light_suppressed: bool = false
+var _saved_light_energy: float = 1.4
 
 static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
@@ -131,6 +133,23 @@ func get_fog_reveal_position() -> Vector2:
 	if _remote_smoothing_enabled:
 		return _remote_target_position
 	return global_position
+
+
+func get_token_diameter_px() -> float:
+	return _token_diameter_px
+
+
+func set_light_suppressed(suppressed: bool) -> void:
+	if suppressed == _light_suppressed:
+		return
+	_light_suppressed = suppressed
+	if vision_light == null:
+		return
+	if suppressed:
+		_saved_light_energy = vision_light.energy
+		vision_light.energy = 0.0
+	else:
+		vision_light.energy = _saved_light_energy
 
 
 func set_token_diameter_px(diameter_px: float) -> void:

@@ -355,6 +355,8 @@ func _build_ui() -> void:
 	_map_view.fog_changed.connect(_on_map_fog_changed)
 	_map_view.fog_delta.connect(_on_map_fog_delta)
 	_map_view.walls_changed.connect(_on_map_walls_changed)
+	_map_view.token_drag_started.connect(_on_token_drag_started)
+	_map_view.token_drag_completed.connect(_on_token_drag_completed)
 	_backend = BackendRuntimeScript.new()
 	_backend.name = "BackendRuntime"
 	add_child(_backend)
@@ -1808,10 +1810,23 @@ func _on_profiles_changed() -> void:
 	_apply_profile_bindings()
 	if _backend and _backend.has_method("sync_profiles"):
 		_backend.sync_profiles()
+	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
+		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 	_broadcast_player_state()
 	if _profiles_dialog and _profiles_dialog.visible:
 		_refresh_profiles_list()
 	_update_profile_action_state()
+
+
+func _on_token_drag_started(token_id: Variant) -> void:
+	if _backend and _backend.has_method("begin_token_drag"):
+		_backend.begin_token_drag(token_id)
+
+
+func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
+	if _backend and _backend.has_method("end_token_drag"):
+		_backend.end_token_drag(token_id, new_world_pos)
+	_player_state_dirty = true
 
 
 func _on_profile_import_pressed() -> void:
@@ -2088,6 +2103,8 @@ func _apply_map(map: MapData) -> void:
 	call_deferred("_init_player_cam_from_dm")
 	if _backend and _backend.has_method("reset_for_new_map"):
 		_backend.reset_for_new_map()
+	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
+		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 	_broadcast_fog_state()
 	_broadcast_player_state()
 	_grid_option.disabled = false

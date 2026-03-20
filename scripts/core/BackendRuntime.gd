@@ -24,6 +24,7 @@ var _force_los_reveal: bool = true
 var _cached_wall_edges: Array = []
 var _cached_wall_signature: String = ""
 var _los_prev_origin_by_token: Dictionary = {}
+var _dragging_token_ids: Dictionary = {}
 
 
 func _game_state() -> GameStateManager:
@@ -107,6 +108,9 @@ func step(delta: float) -> bool:
 		if token == null or not is_instance_valid(token):
 			token = _ensure_token(p)
 		if token == null:
+			continue
+		# Skip tokens being dragged by the DM
+		if _dragging_token_ids.has(p.id):
 			continue
 		if token.has_method("set_token_diameter_px"):
 			token.set_token_diameter_px(_token_diameter_px_for_map(map))
@@ -195,6 +199,32 @@ func build_player_state_payload() -> Array:
 			"position": {"x": pos.x, "y": pos.y},
 		})
 	return players
+
+
+func get_dm_token_nodes() -> Dictionary:
+	return _dm_tokens
+
+
+func begin_token_drag(token_id: Variant) -> void:
+	var token: Node2D = _dm_tokens.get(token_id, null) as Node2D
+	if token == null or not is_instance_valid(token):
+		return
+	_dragging_token_ids[token_id] = true
+	if token.has_method("set_light_suppressed"):
+		token.set_light_suppressed(true)
+
+
+func end_token_drag(token_id: Variant, new_world_pos: Vector2) -> void:
+	_dragging_token_ids.erase(token_id)
+	var token: Node2D = _dm_tokens.get(token_id, null) as Node2D
+	if token == null or not is_instance_valid(token):
+		return
+	token.global_position = new_world_pos
+	var gs := _game_state()
+	if gs != null:
+		gs.player_positions[token_id] = new_world_pos
+	if token.has_method("set_light_suppressed"):
+		token.set_light_suppressed(false)
 
 
 func _ensure_spawn_positions() -> void:
