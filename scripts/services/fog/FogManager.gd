@@ -9,6 +9,7 @@ class_name FogManager
 ##
 ## Access via: get_node("/root/ServiceRegistry").fog
 
+
 signal fog_changed
 signal fog_enabled_changed(is_enabled: bool)
 signal fog_stroke_applied(stroke: Dictionary)
@@ -18,8 +19,8 @@ var model: FogModel = null
 
 
 func configure(size: Vector2i, is_dm: bool, enabled: bool) -> void:
-	## Initialise or resize the history image to match the given map dimensions.
-	## Always emits fog_changed so connected renderers re-seed from the model.
+	## Initialise or resize the history image to match the given (possibly scaled)
+	## map dimensions.
 	if model == null:
 		model = FogModel.new()
 	model.is_dm = is_dm
@@ -34,6 +35,14 @@ func configure(size: Vector2i, is_dm: bool, enabled: bool) -> void:
 	fog_changed.emit()
 	if enabled_changed:
 		fog_enabled_changed.emit(enabled)
+
+
+func set_fog_scale(scale: float) -> void:
+	## Store the world-to-fog-image ratio so brush/rect operations can
+	## convert world coordinates to image coordinates.
+	if model == null:
+		model = FogModel.new()
+	model.fog_scale = scale
 
 
 func reset() -> void:
@@ -80,28 +89,32 @@ func apply_snapshot(buffer: PackedByteArray) -> bool:
 func reveal_brush(world_pos: Vector2, radius_px: float) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
-	service.apply_history_brush(model.history_image, world_pos, radius_px, true)
+	var s := model.fog_scale
+	service.apply_history_brush(model.history_image, world_pos * s, radius_px * s, true)
 	fog_stroke_applied.emit({"type": "brush", "center": world_pos, "radius": radius_px, "reveal": true})
 
 
 func hide_brush(world_pos: Vector2, radius_px: float) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
-	service.apply_history_brush(model.history_image, world_pos, radius_px, false)
+	var s := model.fog_scale
+	service.apply_history_brush(model.history_image, world_pos * s, radius_px * s, false)
 	fog_stroke_applied.emit({"type": "brush", "center": world_pos, "radius": radius_px, "reveal": false})
 
 
 func reveal_rect(a: Vector2, b: Vector2) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
-	service.apply_history_rect(model.history_image, a, b, true)
+	var s := model.fog_scale
+	service.apply_history_rect(model.history_image, a * s, b * s, true)
 	fog_stroke_applied.emit({"type": "rect", "a": a, "b": b, "reveal": true})
 
 
 func hide_rect(a: Vector2, b: Vector2) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
-	service.apply_history_rect(model.history_image, a, b, false)
+	var s := model.fog_scale
+	service.apply_history_rect(model.history_image, a * s, b * s, false)
 	fog_stroke_applied.emit({"type": "rect", "a": a, "b": b, "reveal": false})
 
 
@@ -110,8 +123,10 @@ func apply_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int) 
 		return
 	if revealed_cells.is_empty() and hidden_cells.is_empty():
 		return
+	# Scale the cell grid pitch into fog-image space.
+	var scaled_cell := maxi(1, roundi(float(maxi(1, cell_px)) * model.fog_scale))
 	var changed := service.apply_history_seed_delta(
-			model.history_image, revealed_cells, hidden_cells, maxi(1, cell_px))
+			model.history_image, revealed_cells, hidden_cells, scaled_cell)
 	if changed:
 		fog_changed.emit()
 
@@ -119,7 +134,8 @@ func apply_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int) 
 func seed_from_hidden(cell_px: int, hidden_cells: Dictionary) -> void:
 	if model == null or model.history_image == null or service == null:
 		return
-	var res := service.set_history_seed_from_hidden(model.history_image, maxi(1, cell_px), hidden_cells)
+	var scaled_cell := maxi(1, roundi(float(maxi(1, cell_px)) * model.fog_scale))
+	var res := service.set_history_seed_from_hidden(model.history_image, scaled_cell, hidden_cells)
 	if res.get("changed", false):
 		var updated: Variant = res.get("history_image", null)
 		if updated is Image:

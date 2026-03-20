@@ -81,6 +81,10 @@ var dm_fog_visible: bool = true
 var _render_profile: int = RenderProfile.DM
 
 var _fog_hidden_cells: Dictionary = {}
+## When true, ALL fog cells are hidden; _fog_hidden_cells is intentionally
+## empty to avoid the O(width*height / cell²) allocation on large maps.
+## Cleared on the first partial reveal / snapshot apply.
+var _fog_all_hidden: bool = false
 var _fog_rect_dragging: bool = false
 var _fog_rect_start: Vector2 = Vector2.ZERO
 var _fog_brush_cursor_ring: Line2D = null
@@ -166,8 +170,11 @@ func load_map(map: MapData) -> void:
 	_load_fog_from_map(map)
 	_refresh_fog_overlay()
 	_rebuild_wall_occluders(map)
+	# When _fog_all_hidden is true the configure() call inside
+	# _refresh_fog_overlay already created a fully-black history image —
+	# no need to iterate millions of cells through seed_from_hidden.
 	var applied_cached_snapshot := _apply_cached_fog_snapshot_if_compatible()
-	if not applied_cached_snapshot:
+	if not applied_cached_snapshot and not _fog_all_hidden:
 		var _reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		if _reg != null and _reg.fog != null:
 			_reg.fog.reset()
@@ -233,6 +240,7 @@ func apply_fog_state(cell_px: int, hidden_cells: Array) -> void:
 	if _map == null:
 		return
 	_map.fog_cell_px = maxi(1, cell_px)
+	_fog_all_hidden = false
 	_set_fog_hidden_from_array(hidden_cells)
 	_refresh_fog_overlay()
 
@@ -241,6 +249,10 @@ func apply_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array) -
 	if _map == null:
 		return
 	_map.fog_cell_px = maxi(1, cell_px)
+	# If we still have the "all hidden" shortcut active and a reveal comes in,
+	# clear the flag — from now on _fog_hidden_cells tracks individual cells.
+	if _fog_all_hidden and not revealed_cells.is_empty():
+		_fog_all_hidden = false
 	for cell in revealed_cells:
 		if cell is Vector2i:
 			_fog_hidden_cells.erase(cell)
@@ -510,6 +522,14 @@ func _process(delta: float) -> void:
 
 	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
 		fog_overlay.sync_player_revealers(token_layer.get_children())
+
+	# Player viewport-local fog: feed camera rect to FogSystem so it can
+	# re-size SubViewports when the camera pans beyond the current margin.
+	if not is_dm_view and fog_overlay != null and camera != null:
+		var vp := get_viewport()
+		if vp != null:
+			var screen_size := vp.get_visible_rect().size
+			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size)
 
 
 # ---------------------------------------------------------------------------
@@ -819,17 +839,16 @@ func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 	walls_changed.emit(_map)
 
 
-func _load_fog_from_map(map: MapData) -> void:
+func _load_fog_from_map(_map_data: MapData) -> void:
 	_fog_hidden_cells.clear()
 	if is_dm_view:
 		# Authoritative DM side: new maps start fully hidden.
-		var cell_px: int = maxi(1, map.fog_cell_px)
-		var size := map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
-		for y in range(0, int(ceil(size.y / cell_px))):
-			for x in range(0, int(ceil(size.x / cell_px))):
-				_fog_hidden_cells[Vector2i(x, y)] = true
+		# Instead of populating a huge dictionary, set the "all hidden" flag.
+		# FogManager.configure() creates a fully-black history image.
+		_fog_all_hidden = true
 		_sync_fog_to_map()
 	else:
+		_fog_all_hidden = false
 		# Player side: wait for fog_updated snapshot from DM.
 		_sync_fog_to_map(false)
 
@@ -860,6 +879,7 @@ func get_fog_state() -> PackedByteArray:
 
 
 func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
+	_fog_all_hidden = false
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.fog == null:
 		return false
@@ -879,8 +899,11 @@ func _apply_cached_fog_snapshot_if_compatible() -> bool:
 	var stamp_size := registry.fog.service.get_fog_state_size()
 	if stamp_size == Vector2i.ZERO:
 		return false
-	var map_size := map_image.texture.get_size() if map_image and map_image.texture else Vector2(1920, 1080)
-	return stamp_size == Vector2i(roundi(map_size.x), roundi(map_size.y))
+	# The fog model may be at a scaled resolution (FogSystem.MAX_FOG_DIM cap),
+	# so compare against the model size rather than the raw map image size.
+	if registry.fog.model == null:
+		return false
+	return stamp_size == registry.fog.model.size
 
 
 func _refresh_fog_overlay() -> void:

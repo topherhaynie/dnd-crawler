@@ -5,7 +5,7 @@ class_name NetworkService
 const WS_PORT: int = 9090
 const OUTBOUND_PRESSURE_WARN_BYTES: int = 262144
 const FOG_OUTBOUND_SOFT_LIMIT_BYTES: int = 786432
-const FOG_SNAPSHOT_B64_CHUNK_CHARS: int = 12000
+const FOG_SNAPSHOT_B64_CHUNK_CHARS: int = 262144
 
 var _server: WebSocketMultiplayerPeer = null
 var ws_bindings: Dictionary = {}
@@ -37,6 +37,10 @@ func start_server() -> void:
 		return
 
 	_server = WebSocketMultiplayerPeer.new()
+	# Increase the outbound buffer so large fog snapshot chunks don't trigger
+	# ERR_OUT_OF_MEMORY from the wslay layer on large maps.
+	_server.outbound_buffer_size = 4 * 1024 * 1024 # 4 MiB
+	_server.inbound_buffer_size = 2 * 1024 * 1024 # 2 MiB
 	var err := _server.create_server(WS_PORT)
 	if err != OK:
 		push_error("NetworkService: failed to start WebSocket server on port %d (error %d)" % [WS_PORT, err])
