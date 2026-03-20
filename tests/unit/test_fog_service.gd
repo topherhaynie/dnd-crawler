@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _ready() -> void:
-    var FogScript: Script = load("res://scripts/services/FogService.gd")
+    var FogScript: Script = load("res://scripts/services/fog/FogService.gd")
     assert(FogScript != null)
     var fog: Object = FogScript.new()
     # initial state

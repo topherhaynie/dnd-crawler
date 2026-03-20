@@ -2,8 +2,8 @@ extends SceneTree
 
 func _ready() -> void:
     # Load scripts explicitly to avoid class_name dependency during headless runs
-    var ServiceRegistryScript: Script = load("res://scripts/registry/ServiceRegistry.gd")
-    var FogServiceScript: Script = load("res://scripts/services/FogService.gd")
+    var ServiceRegistryScript: Script = load("res://scripts/core/ServiceRegistry.gd")
+    var FogServiceScript: Script = load("res://scripts/services/fog/FogService.gd")
 
     var registry: Object = ServiceRegistryScript.new()
     registry.name = "ServiceRegistry"

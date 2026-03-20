@@ -9,48 +9,47 @@ This document defines where code belongs in the current SOA (Service-Oriented Ar
   - Current: `ServiceBootstrap.gd`, `HttpServer.cs`
 
 - `scripts/core/`
-  - App entry and process bootstrap logic.
-  - Current: `Main.gd`, `BackendRuntime.gd`
-
-- `scripts/data/`
-  - Serializable game data/resources and persistence-oriented models.
-  - Current: `MapData.gd`, `PlayerProfile.gd`
-
-- `scripts/fog/`
-  - Fog-of-war truth model and LOS compositing engine.
-  - Current: `FogSystem.gd`
-
-- `scripts/network/`
-  - Client-side network connection logic (player display side).
-  - Current: `PlayerClient.gd`
+  - App entry, process bootstrap logic, and the service registry.
+  - Current: `Main.gd`, `BackendRuntime.gd`, `ServiceRegistry.gd`
 
 - `scripts/player/`
   - Player runtime root/process orchestration.
   - Current: `PlayerMain.gd`, `PlayerSprite.gd`
 
-- `scripts/protocols/`
-  - Service contract definitions (protocol scripts acting as interfaces).
-  - Each file declares a `class_name IXxxService`, stubs public methods, and declares signals.
-  - Current: `IFogService.gd`, `IGameState.gd`, `IInputService.gd`, `IMapService.gd`,
-    `INetworkService.gd`, `IPersistenceService.gd`, `IProfileService.gd`
-
-- `scripts/registry/`
-  - Central service registry autoload and typed manager wrappers.
-  - Current: `ServiceRegistry.gd`, `managers/`
-
-- `scripts/registry/managers/`
-  - One `XxxManager.gd` (`extends RefCounted`) per service; holds a single `service: IXxxService` property.
-  - Current: `FogManager.gd`, `GameStateManager.gd`, `InputManager.gd`, `MapManager.gd`,
-    `NetworkManager.gd`, `PersistenceManager.gd`, `ProfileManager.gd`
-
 - `scripts/render/`
-  - Shared map rendering and visual overlays.
-  - Current: `MapView.gd`, `GridOverlay.gd`, `IndicatorOverlay.gd`
+  - Shared map rendering, visual overlays, and the fog-of-war GPU renderer.
+  - Current: `MapView.gd`, `GridOverlay.gd`, `IndicatorOverlay.gd`, `FogSystem.gd`
 
 - `scripts/services/`
-  - Concrete service implementations (`extends IXxxService`).
-  - Current: `FogService.gd`, `GameStateService.gd`, `InputService.gd`, `MapService.gd`,
-    `NetworkService.gd`, `PersistenceService.gd`, `ProfileService.gd`
+  - Domain directories — each contains the protocol (`IXxxService.gd`), service implementation (`XxxService.gd`), manager (`XxxManager.gd`), and a `models/` subdir for data classes.
+
+  - `scripts/services/fog/`
+    - Fog state management service domain.
+    - Current: `IFogService.gd`, `FogService.gd`, `FogManager.gd`, `models/`
+
+  - `scripts/services/map/`
+    - Map bundle lifecycle service domain.
+    - Current: `IMapService.gd`, `MapService.gd`, `MapManager.gd`, `models/MapData.gd`
+
+  - `scripts/services/network/`
+    - WebSocket server and player-side network client domain.
+    - Current: `INetworkService.gd`, `NetworkService.gd`, `NetworkManager.gd`, `PlayerClient.gd`, `models/`
+
+  - `scripts/services/game_state/`
+    - Runtime player state and lock flags domain.
+    - Current: `IGameState.gd`, `GameStateService.gd`, `GameStateManager.gd`, `models/`
+
+  - `scripts/services/profile/`
+    - Persistent player profile domain.
+    - Current: `IProfileService.gd`, `ProfileService.gd`, `ProfileManager.gd`, `models/PlayerProfile.gd`
+
+  - `scripts/services/persistence/`
+    - File I/O and bundle read/write domain.
+    - Current: `IPersistenceService.gd`, `PersistenceService.gd`, `PersistenceManager.gd`, `models/`
+
+  - `scripts/services/input/`
+    - Input vector aggregation and arbitration domain.
+    - Current: `IInputService.gd`, `InputService.gd`, `InputManager.gd`, `models/`
 
 - `scripts/tests/`
   - Integration and message-flow test scripts (run headless or in-editor).
@@ -78,11 +77,11 @@ This document defines where code belongs in the current SOA (Service-Oriented Ar
 
 1. Keep autoloads limited to bootstrap and cross-cutting infrastructure (`ServiceBootstrap`, `HttpServer`).
 2. Put scene-owned behavior in domain folders (`ui`, `render`, `player`, etc.), not in root.
-3. Put serializable resources and schema classes in `scripts/data/`.
-4. Keep network transport code separated from UI code.
-5. Every new service must have a protocol under `scripts/protocols/` and a manager under `scripts/registry/managers/`.
-6. Concrete service implementations live in `scripts/services/` and extend their protocol.
-7. If a new feature spans domains, add the scene controller in `ui/` and supporting service in `scripts/services/`.
+3. Put domain data classes in the `models/` subdir of their owning service domain.
+4. Keep network transport code in `scripts/services/network/`.
+5. Every new service must have its protocol (`IXxxService.gd`), manager (`XxxManager.gd`), and implementation (`XxxService.gd`) co-located under `scripts/services/<domain>/`, plus a `models/` subdir for data classes, plus a registration step in `ServiceBootstrap.gd`.
+6. `ServiceRegistry.gd` lives in `scripts/core/` — access it via `/root/ServiceRegistry`.
+7. If a new feature spans domains, add the scene controller in `ui/` and its service domain under `scripts/services/`.
 
 ## Path References
 
@@ -91,9 +90,12 @@ Canonical resource paths for common preloads:
 - DM UI controller: `res://scripts/ui/DMWindow.gd`
 - Player UI controller: `res://scripts/ui/PlayerWindow.gd`
 - Shared map renderer: `res://scripts/render/MapView.gd`
-- Profile data model: `res://scripts/data/PlayerProfile.gd`
-- Service registry: `res://scripts/registry/ServiceRegistry.gd`
+- Fog GPU renderer: `res://scripts/render/FogSystem.gd`
+- Service registry: `res://scripts/core/ServiceRegistry.gd`
 - Bootstrap autoload: `res://scripts/autoloads/ServiceBootstrap.gd`
+- Map data model: `res://scripts/services/map/models/MapData.gd`
+- Profile data model: `res://scripts/services/profile/models/PlayerProfile.gd`
+- Player WebSocket client: `res://scripts/services/network/PlayerClient.gd`
 
 ## Notes for Future Agents
 

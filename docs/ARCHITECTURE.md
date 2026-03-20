@@ -25,11 +25,10 @@ All major subsystems are accessed through a typed `ServiceRegistry` autoload. Th
 ### 2.1 Layers
 
 ```
-scripts/protocols/    ← IXxxService.gd  (contract / interface)
-scripts/services/     ← XxxService.gd   (concrete implementation)
-scripts/registry/managers/  ← XxxManager.gd  (typed holder: service: IXxxService)
-scripts/registry/     ← ServiceRegistry.gd  (registry autoload)
-scripts/autoloads/    ← ServiceBootstrap.gd (wires services into registry at startup)
+scripts/services/<domain>/   ← IXxxService.gd (protocol), XxxService.gd (impl), XxxManager.gd (holder)
+scripts/services/<domain>/models/  ← domain data classes
+scripts/core/             ← ServiceRegistry.gd  (registry autoload)
+scripts/autoloads/        ← ServiceBootstrap.gd (wires services into registry at startup)
 ```
 
 ### 2.2 Registry Access Pattern
@@ -45,18 +44,18 @@ registry.fog.service.set_fog_enabled(true)
 
 ### 2.3 Protocol Convention
 
-Every protocol (`scripts/protocols/IXxxService.gd`):
+Every protocol (`scripts/services/<domain>/IXxxService.gd`):
 - `extends Node`
 - Declares `class_name IXxxService`
 - Declares all signals for the subsystem
 - Stubs all public methods with `push_error("IXxx.method: not implemented")`
 
-Every service (`scripts/services/XxxService.gd`):
+Every service (`scripts/services/<domain>/XxxService.gd`):
 - `extends IXxxService` — not `extends Node`
 - Does **not** redeclare signals inherited from the protocol
 - Implements every method in the protocol
 
-Every manager (`scripts/registry/managers/XxxManager.gd`):
+Every manager (`scripts/services/<domain>/XxxManager.gd`):
 - `extends RefCounted`
 - Single property: `var service: IXxxService = null`
 

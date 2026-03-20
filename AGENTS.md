@@ -15,8 +15,8 @@ This file is a quick navigation and workflow guide for future coding agents.
 - Player runtime root: [scripts/player/PlayerMain.gd](scripts/player/PlayerMain.gd)
 - Player renderer: [scripts/ui/PlayerWindow.gd](scripts/ui/PlayerWindow.gd)
 - Shared map renderer: [scripts/render/MapView.gd](scripts/render/MapView.gd)
-- Map model + persistence format: [scripts/data/MapData.gd](scripts/data/MapData.gd)
-- Service registry: [scripts/registry/ServiceRegistry.gd](scripts/registry/ServiceRegistry.gd)
+- Map model + persistence format: [scripts/services/map/models/MapData.gd](scripts/services/map/models/MapData.gd)
+- Service registry: [scripts/core/ServiceRegistry.gd](scripts/core/ServiceRegistry.gd)
 - Bootstrap: [scripts/autoloads/ServiceBootstrap.gd](scripts/autoloads/ServiceBootstrap.gd)
 
 ## Service-Oriented Architecture
@@ -41,10 +41,11 @@ registry.fog.service.set_fog_enabled(true)
 Never use `get_service(String)` in new code — always use the typed manager properties.
 
 ## Key Folders
-- Protocols (interfaces): `scripts/protocols/`
-- Services (implementations): `scripts/services/`
-- Managers (typed registry wrappers): `scripts/registry/managers/`
+- Service domains (protocol + service + manager + models): `scripts/services/<domain>/`
+  - e.g. `scripts/services/fog/`, `scripts/services/map/`, `scripts/services/network/`, etc.
+- Service registry: `scripts/core/ServiceRegistry.gd`
 - Autoloads: `scripts/autoloads/` — only `ServiceBootstrap.gd` and `HttpServer.cs`
+- Renderer nodes (not services): `scripts/render/` — `FogSystem.gd`, `MapView.gd`, `GridOverlay.gd`, `IndicatorOverlay.gd`
 
 ## Data and Persistence
 - Map bundles: directory package `*.map`
@@ -56,7 +57,7 @@ Never use `get_service(String)` in new code — always use the typed manager pro
     - `~/Library/Application Support/Godot/app_userdata/DnD Crawler/data/profiles.json`
 
 ## Profile System
-- Profile resource class: [scripts/data/PlayerProfile.gd](scripts/data/PlayerProfile.gd)
+- Profile resource class: [scripts/services/profile/models/PlayerProfile.gd](scripts/services/profile/models/PlayerProfile.gd)
 - Profile service: `registry.profile.service` (backed by `ProfileService.gd`)
 - DM profile editor is built dynamically in [scripts/ui/DMWindow.gd](scripts/ui/DMWindow.gd)
   - menu path: Edit -> Player Profiles...
@@ -97,4 +98,4 @@ Never use `get_service(String)` in new code — always use the typed manager pro
 - Prefer explicit autoload lookups (`/root/<SingletonName>`) in scripts where analyzer cannot resolve singleton identifiers.
 - Keep `.map` and `.sav` semantics separate (`.map` is definition, `.sav` is runtime/session state).
 - When changing DM/player viewport behavior, update both DM indicator behavior and `camera_update` broadcasts together.
-- Every new service needs: a protocol in `scripts/protocols/`, a manager in `scripts/registry/managers/`, a service in `scripts/services/`, and a registration step in `ServiceBootstrap.gd`.
+- Every new service needs: a protocol, manager, and service implementation all co-located in `scripts/services/<domain>/`, a `models/` subdir for domain data classes, and a registration step in `ServiceBootstrap.gd`.

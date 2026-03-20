@@ -24,7 +24,7 @@ registry.get_service("Fog").set_fog_enabled(true)
 
 ## Protocol Classes (interfaces)
 
-All protocols live in `scripts/protocols/`. Each protocol:
+All protocols live co-located with their domain under `scripts/services/<domain>/`. Each protocol:
 - `extends Node` (not `RefCounted` — services are Nodes added to the scene tree)
 - Declares `class_name IXxxService`
 - Declares all signals for the subsystem
@@ -43,7 +43,7 @@ func set_fog_enabled(_enabled: bool) -> void:
 
 ## Concrete Services
 
-All services live in `scripts/services/`. Each service:
+All services live co-located with their domain under `scripts/services/<domain>/`. Each service:
 - `extends IXxxService` — **not** `extends Node`
 - Does **not** redeclare signals already in the protocol base class
 - Implements every method declared in the protocol
@@ -60,7 +60,7 @@ func set_fog_enabled(enabled: bool) -> void:
 
 ## Manager Classes
 
-All managers live in `scripts/registry/managers/`. Each manager:
+All managers live co-located with their domain under `scripts/services/<domain>/`. Each manager:
 - `extends RefCounted`
 - Has a single `var service: IXxxService = null` property
 
@@ -73,7 +73,7 @@ var service: IFogService = null
 
 ## ServiceRegistry
 
-`scripts/registry/ServiceRegistry.gd` — a `Node` added to the scene root. Has typed manager properties for every subsystem:
+`scripts/core/ServiceRegistry.gd` — a `Node` added to the scene root. Has typed manager properties for every subsystem:
 
 ```gdscript
 var fog: FogManager = null
@@ -95,6 +95,7 @@ The `get_service(String)` method exists only as a backwards-compat shim — do n
 3. Set `manager.service = svc`
 4. Assign to `registry.xxx = manager`
 5. Defer `root.call_deferred("add_child", svc)`
+6. Place all three files (`IXxxService.gd`, `XxxService.gd`, `XxxManager.gd`) under `scripts/services/<domain>/` with a `models/` subdir for data classes
 
 ## Responsibility Separation
 

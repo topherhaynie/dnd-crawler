@@ -7,7 +7,7 @@ extends Node
 
 func _ready():
     print("network_input_parsing_test: starting")
-    var svc = preload("res://scripts/services/NetworkService.gd").new()
+    var svc = preload("res://scripts/services/network/NetworkService.gd").new()
 
     var cases = {
         "valid": '{"type":"input","x":0.5,"y":-0.25,"player_id":"player-123"}',

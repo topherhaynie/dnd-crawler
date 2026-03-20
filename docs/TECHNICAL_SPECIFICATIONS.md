@@ -50,7 +50,7 @@ Deterministic command ordering (timestamped global input queue/replay pipeline) 
     * `LightOccluder2D` layers on the map to create real-time shadows.
 
 ### 3.1 Visibility Authority and Layering
-* **Authoritative Runtime:** backend computes authoritative simulation state (movement, wall blocking, token state). Fog reveal/LOS is DM-managed via `scripts/fog/FogSystem.gd` and distributed as snapshots.
+* **Authoritative Runtime:** backend computes authoritative simulation state (movement, wall blocking, token state). Fog reveal/LOS is DM-managed via `scripts/render/FogSystem.gd` and distributed as snapshots.
 * **Player Runtime:** render-only consumer of DM packets. Player does not run fog-reveal or gameplay LOS logic.
 * **Layer Policy:**
     * DM view can render additional control/debug layers (walls, traps, editing helpers, transparent fog).
@@ -101,7 +101,7 @@ The player viewport indicator layer is hidden in player profile mode.
 
 ### 3.4 Fog Authority
 * DM process is authoritative for visibility output distributed to players.
-* Fog runtime uses image-backed history plus live LOS lights compositing (`scripts/fog/FogSystem.gd`).
+* Fog runtime uses image-backed history plus live LOS lights compositing (`scripts/render/FogSystem.gd`).
 * DM brush/rectangle fog tools edit fog history directly in image space.
 * Player runtime is render-only and applies DM snapshots without local fog-authority simulation.
 

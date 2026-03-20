@@ -1,7 +1,7 @@
 extends Node
 
 func _ready() -> void:
-    var svc := preload("res://scripts/services/PersistenceService.gd").new()
+    var svc := preload("res://scripts/services/persistence/PersistenceService.gd").new()
     var ok := svc.save_game("test_save", {"a": 1, "b": "x"})
     assert(ok)
     var loaded := svc.load_game("test_save")
