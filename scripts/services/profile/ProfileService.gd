@@ -3,7 +3,18 @@ class_name ProfileService
 
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 
-var profiles: Array = []
+## Set by ServiceBootstrap before _ready() runs.
+var _model: ProfileModel = null
+
+## Public convenience access kept for call-sites that reference ps_node.profiles.
+## Since ProfileModel.profiles is an Array (reference type), mutations to the
+## returned value affect the model in-place.
+var profiles: Array:
+	get: return _model.profiles if _model != null else []
+	set(v):
+		if _model != null:
+			_model.profiles = v
+
 
 func _ready() -> void:
 	load_profiles()
@@ -19,7 +30,7 @@ func get_profile_by_id(_id: String):
 			return p
 	return null
 
-func add_profile(_profile: Dictionary) -> void:
+func add_profile(_profile: PlayerProfile) -> void:
 	profiles.append(_profile)
 	emit_signal("profiles_changed")
 
@@ -40,13 +51,11 @@ func save_profiles() -> void:
 		elif profile is Dictionary:
 			data.append(profile)
 	# Prefer using the Persistence service when available
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence != null and persistence.has_method("save_game"):
-			persistence.save_game("profiles", {"profiles": data})
-			emit_signal("profiles_changed")
-			return
+	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sreg != null and sreg.persistence != null and sreg.persistence.service != null:
+		sreg.persistence.service.save_game("profiles", {"profiles": data})
+		emit_signal("profiles_changed")
+		return
 	# Fallback: write directly to profiles.json
 	_write_json("user://data/profiles.json", data)
 	emit_signal("profiles_changed")
@@ -54,23 +63,21 @@ func save_profiles() -> void:
 func load_profiles() -> void:
 	# Prefer loading via Persistence service when available
 	var raw: Variant = null
-	var registry: Node = get_node_or_null("/root/ServiceRegistry") as Node
-	if registry != null and registry.has_method("get_service"):
-		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence != null and persistence.has_method("load_game"):
-			var loaded: Variant = persistence.load_game("profiles")
-			# If persistence returned nothing/empty (no saves yet), fall back to legacy path
-			if loaded == null or (loaded is Dictionary and loaded.size() == 0):
-				var legacy: Variant = _read_json("user://data/profiles.json")
-				if legacy is Dictionary and legacy.has("profiles"):
-					raw = legacy["profiles"]
-				else:
-					raw = legacy
+	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sreg != null and sreg.persistence != null and sreg.persistence.service != null:
+		var loaded: Dictionary = sreg.persistence.service.load_game("profiles")
+		# If persistence returned nothing/empty (no saves yet), fall back to legacy path
+		if loaded.is_empty():
+			var legacy: Variant = _read_json("user://data/profiles.json")
+			if legacy is Dictionary and legacy.has("profiles"):
+				raw = legacy["profiles"]
 			else:
-				if loaded is Dictionary and loaded.has("profiles"):
-					raw = loaded["profiles"]
-				else:
-					raw = loaded
+				raw = legacy
+		else:
+			if loaded.has("profiles"):
+				raw = loaded["profiles"]
+			else:
+				raw = loaded
 	else:
 		raw = _read_json("user://data/profiles.json")
 		# Backwards-compat: accept either an array or a wrapper { "profiles": [...] }

@@ -169,34 +169,27 @@ func _ready() -> void:
 
 
 func _ensure_profile_bindings() -> void:
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	if ps_node == null and gs_node == null:
+	var pm := _profile_service()
+	if pm == null:
 		call_deferred("_ensure_profile_bindings")
 		return
-	var target := ps_node if ps_node != null else gs_node
-	if target.has_signal("profiles_changed") and not target.is_connected("profiles_changed", Callable(self , "_on_profiles_changed")):
-		target.profiles_changed.connect(_on_profiles_changed)
+	if not pm.is_connected("profiles_changed", Callable(self , "_on_profiles_changed")):
+		pm.profiles_changed.connect(_on_profiles_changed)
 	_apply_profile_bindings()
 
 
-func _network() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Network")
-		if svc != null:
-			return svc as Node
-	return null
+func _network() -> INetworkService:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.network == null:
+		return null
+	return registry.network.service
 
 
-func _input_service() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Input")
-		if svc != null:
-			return svc as Node
-	# Do not fall back to legacy autoloads; prefer registry-only services/adapters.
-	return null
+func _input_service() -> InputManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.input == null:
+		return null
+	return registry.input
 
 
 ## Network helper wrappers (centralise registry fallback and null-guards)
@@ -262,32 +255,24 @@ func _nm_is_display_peer_connected(peer_id: int) -> bool:
 	return true
 
 
-func _game_state() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("GameState")
-		if svc != null:
-			return svc as Node
-	return null
+func _game_state() -> GameStateManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.game_state == null:
+		return null
+	return registry.game_state
 
 
-func _map_service() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Map")
-		if svc != null:
-			return svc as Node
-	return null
+func _map_service() -> MapManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.map == null:
+		return null
+	return registry.map
 
 
 func _map() -> MapData:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var ms: Object = registry.get_service("Map")
-		if ms != null and ms.has_method("get_map"):
-			var m: MapData = ms.get_map() as MapData
-			if m != null:
-				return m
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.map != null and registry.map.model != null:
+		return registry.map.model
 	if _map_view != null and _map_view.has_method("get_map"):
 		return _map_view.get_map() as MapData
 	return null
@@ -1449,10 +1434,8 @@ func _refresh_profiles_list() -> void:
 	if _profiles_list == null:
 		return
 	_profiles_list.clear()
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = Array()
-	if gs_node != null:
-		profiles_arr = gs_node.profiles
+	var pm := _profile_service()
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	for profile in profiles_arr:
 		if not profile is PlayerProfile:
 			continue
@@ -1502,17 +1485,9 @@ func _on_profile_selected(index: int) -> void:
 
 
 func _load_selected_profile_into_form(index: int) -> void:
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = []
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		profiles_arr = ps_node.get_profiles()
-	elif gs_node != null:
-		profiles_arr = gs_node.profiles
-	else:
-		_clear_profile_form()
-		return
-	if index < 0 or index >= profiles_arr.size():
+	var pm := _profile_service()
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
+	if profiles_arr.is_empty() or index < 0 or index >= profiles_arr.size():
 		_clear_profile_form()
 		return
 	var profile = profiles_arr[index]
@@ -1544,13 +1519,8 @@ func _on_profile_add_pressed() -> void:
 	if _profiles_list:
 		_profiles_list.deselect_all()
 	_clear_profile_form()
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	var next_idx: int = 1
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		next_idx = ps_node.get_profiles().size() + 1
-	elif gs_node != null:
-		next_idx = gs_node.profiles.size() + 1
+	var pm := _profile_service()
+	var next_idx: int = (pm.get_profiles().size() + 1) if pm != null else 1
 	_profile_name_edit.text = "Player %d" % next_idx
 	if _profile_name_edit:
 		_profile_name_edit.grab_focus()
@@ -1562,67 +1532,39 @@ func _on_profile_delete_pressed() -> void:
 	if _profile_is_new_draft:
 		_on_profile_cancel_new_pressed()
 		return
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	if ps_node != null:
-		if _profile_selected_index < 0 or _profile_selected_index >= (ps_node.get_profiles() if ps_node.has_method("get_profiles") else []).size():
-			_set_status("Select a profile to remove.")
-			return
-	else:
-		if gs_node == null or _profile_selected_index < 0 or _profile_selected_index >= gs_node.profiles.size():
-			_set_status("Select a profile to remove.")
-			return
+	var pm := _profile_service()
+	if pm == null or _profile_selected_index < 0 or _profile_selected_index >= pm.get_profiles().size():
+		_set_status("Select a profile to remove.")
+		return
+	var arr := pm.get_profiles()
+	var item = arr[_profile_selected_index]
 	var removed_name := "Profile"
-	if ps_node != null:
-		var arr: Array = ps_node.get_profiles() if ps_node.has_method("get_profiles") else []
-		var item = arr[_profile_selected_index]
-		if item is PlayerProfile:
-			removed_name = (item as PlayerProfile).player_name
-		if ps_node.has_method("remove_profile"):
-			ps_node.remove_profile(item.id if item is PlayerProfile else str(item.get("id", "")))
-		if ps_node.has_method("save_profiles"):
-			ps_node.save_profiles()
-		if ps_node.has_method("load_profiles"):
-			ps_node.load_profiles()
-	else:
-		if gs_node.profiles[_profile_selected_index] is PlayerProfile:
-			removed_name = (gs_node.profiles[_profile_selected_index] as PlayerProfile).player_name
-		gs_node.profiles.remove_at(_profile_selected_index)
-		if gs_node.has_method("save_profiles"):
-			gs_node.save_profiles()
-		if gs_node.has_method("load_profiles"):
-			gs_node.load_profiles()
-	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, gs_node.profiles.size() - 1))
+	if item is PlayerProfile:
+		removed_name = (item as PlayerProfile).player_name
+	var remove_id := str((item as PlayerProfile).id) if item is PlayerProfile else str((item as Dictionary).get("id", ""))
+	pm.remove_profile(remove_id)
+	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, pm.get_profiles().size() - 1))
 	_profile_is_new_draft = false
 	_refresh_profiles_list()
 	_update_profile_action_state()
 	_set_status("Deleted profile: %s" % removed_name)
 
 
-func _profile_service() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Profile")
-		if svc != null:
-			return svc as Node
-	return null
+func _profile_service() -> ProfileManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.profile == null:
+		return null
+	return registry.profile
 
 
 func _on_profile_save_pressed() -> void:
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
+	var pm := _profile_service()
 	if _profile_is_new_draft:
 		var created := PlayerProfile.new()
 		if not _apply_form_to_profile(created):
 			return
-		if ps_node != null and ps_node.has_method("add_profile"):
-			ps_node.add_profile(created)
-			if ps_node.has_method("save_profiles"):
-				ps_node.save_profiles()
-		elif gs_node != null:
-			gs_node.profiles.append(created)
-			if gs_node.has_method("save_profiles"):
-				gs_node.save_profiles()
+		if pm != null:
+			pm.add_profile(created)
 		_profile_is_new_draft = false
 		_profile_selected_index = _find_profile_index_by_id(created.id)
 		_refresh_profiles_list()
@@ -1630,16 +1572,10 @@ func _on_profile_save_pressed() -> void:
 		_set_status("Created profile: %s (PP %d)" % [created.player_name, created.get_passive_perception()])
 		return
 
-	# Determine the profiles array from service or GameState
-	var profiles_arr: Array = []
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		profiles_arr = ps_node.get_profiles()
-	elif gs_node != null:
-		profiles_arr = gs_node.profiles
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	if profiles_arr.size() == 0 or _profile_selected_index < 0 or _profile_selected_index >= profiles_arr.size():
 		_set_status("Select a profile to edit or click New.")
 		return
-
 	var profile = profiles_arr[_profile_selected_index]
 	if not profile is PlayerProfile:
 		_set_status("Invalid profile selected.")
@@ -1647,15 +1583,8 @@ func _on_profile_save_pressed() -> void:
 	var p: PlayerProfile = profile as PlayerProfile
 	if not _apply_form_to_profile(p):
 		return
-
-	# Persist changes via service when available, otherwise GameState
-	if ps_node != null and ps_node.has_method("save_profiles"):
-		# service owns the profiles array; save the service-managed profiles
-		ps_node.save_profiles()
-	elif gs_node != null and gs_node.has_method("save_profiles"):
-		gs_node.profiles[_profile_selected_index] = p
-		gs_node.save_profiles()
-
+	if pm != null:
+		pm.update_profile_at(_profile_selected_index, p)
 	_apply_profile_bindings()
 	_refresh_profiles_list()
 	_update_profile_action_state()
@@ -1666,12 +1595,13 @@ func _on_profile_cancel_new_pressed() -> void:
 	if not _profile_is_new_draft:
 		return
 	_profile_is_new_draft = false
-	var gs_node: Node = _game_state()
-	if gs_node == null or gs_node.profiles.is_empty():
+	var pm := _profile_service()
+	var count := pm.get_profiles().size() if pm != null else 0
+	if count == 0:
 		_profile_selected_index = -1
 		_clear_profile_form()
 	else:
-		_profile_selected_index = clampi(_profile_selected_index, 0, gs_node.profiles.size() - 1)
+		_profile_selected_index = clampi(_profile_selected_index, 0, count - 1)
 	_refresh_profiles_list()
 	_update_profile_action_state()
 	_set_status("New profile draft canceled.")
@@ -1724,13 +1654,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 
 
 func _find_profile_index_by_id(profile_id: String) -> int:
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = []
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		profiles_arr = ps_node.get_profiles()
-	elif gs_node != null:
-		profiles_arr = gs_node.profiles
+	var pm := _profile_service()
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	for i in range(profiles_arr.size()):
 		var profile = profiles_arr[i]
 		if profile is PlayerProfile and (profile as PlayerProfile).id == profile_id:
@@ -1739,8 +1664,9 @@ func _find_profile_index_by_id(profile_id: String) -> int:
 
 
 func _update_profile_action_state() -> void:
-	var gs_node: Node = _game_state()
-	var has_selected: bool = gs_node != null and _profile_selected_index >= 0 and _profile_selected_index < gs_node.profiles.size() and not _profile_is_new_draft
+	var pm := _profile_service()
+	var count := pm.get_profiles().size() if pm != null else 0
+	var has_selected: bool = count > 0 and _profile_selected_index >= 0 and _profile_selected_index < count and not _profile_is_new_draft
 	if _profile_delete_btn:
 		_profile_delete_btn.disabled = not has_selected and not _profile_is_new_draft
 	if _profile_delete_btn_alt:
@@ -1813,33 +1739,28 @@ func _on_bind_use_ws_pressed() -> void:
 
 func _apply_profile_bindings() -> void:
 	var input := _input_service()
-	if input != null and input.has_method("clear_all_bindings"):
-		input.clear_all_bindings()
+	input.clear_all_bindings()
 	var nm := _network()
 	if nm != null and nm.has_method("clear_all_peer_bindings"):
 		nm.clear_all_peer_bindings()
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = Array()
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		profiles_arr = ps_node.get_profiles()
-	elif gs_node != null:
-		profiles_arr = gs_node.profiles
+	var pm := _profile_service()
+	var gs := _game_state()
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	for profile in profiles_arr:
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
 		p.ensure_id()
-		if gs_node != null and gs_node.has_method("register_player"):
-			gs_node.register_player(p.id)
+		if gs != null:
+			gs.register_player(p.id)
 		match p.input_type:
 			PlayerProfile.InputType.GAMEPAD:
 				# Bind by numeric device id if present
-				if p.input_id.is_valid_int() and input != null and input.has_method("bind_gamepad"):
+				if p.input_id.is_valid_int() and input != null:
 					input.bind_gamepad(int(p.input_id), p.id)
 				# Otherwise try to match by device name substring, or auto-bind first free device
 				elif p.input_id != "":
-					if input != null and input.has_method("bind_gamepad"):
+					if input != null:
 						for device_id in Input.get_connected_joypads():
 							var joy_name := Input.get_joy_name(device_id)
 							if joy_name != null and joy_name.to_lower().find(p.input_id.to_lower()) >= 0:
@@ -1847,17 +1768,9 @@ func _apply_profile_bindings() -> void:
 								break
 				else:
 					# Auto-bind: first connected device not already bound
-					if input != null and input.has_method("bind_gamepad"):
-						var connected := Input.get_connected_joypads()
-						for device_id in connected:
-							var already := false
-							if input.has_method("has_gamepad_binding"):
-								already = input.has_gamepad_binding(device_id)
-							elif input.has_method("get_gamepad_bindings"):
-								var b: Dictionary = input.get_gamepad_bindings() as Dictionary
-								if b != null:
-									already = b.has(device_id)
-							if not already:
+					if input != null:
+						for device_id in Input.get_connected_joypads():
+							if not input.has_gamepad_binding(device_id):
 								input.bind_gamepad(device_id, p.id)
 								break
 			PlayerProfile.InputType.WEBSOCKET:
@@ -1901,52 +1814,37 @@ func _on_profiles_export_path_selected(path: String) -> void:
 		if mk_err != OK:
 			_set_status("Export failed: could not create directory.")
 			return
-	# Prefer using the Persistence service to generate export content when available.
-	# If Persistence supports `export_to_path` we can avoid writing a temp file.
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence != null:
-			var payload := {"profiles": _profiles_to_array()}
-			# If adapter/service offers direct export, use it.
-			if persistence.has_method("save_game") and persistence.has_method("export_to_path"):
-				if persistence.save_game("profiles_export", payload) and persistence.export_to_path("profiles_export", target_path):
-					if persistence.has_method("delete_save"):
-						persistence.delete_save("profiles_export")
-					_set_status("Exported %d profiles." % payload["profiles"].size())
-					return
-			# Otherwise fallback to writing directly to the chosen path
+	# Use Persistence service for direct export when available.
+	var export_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if export_reg != null and export_reg.persistence != null and export_reg.persistence.service != null:
+		var payload := {"profiles": _profiles_to_array()}
+		if export_reg.persistence.service.save_game("profiles_export", payload) and export_reg.persistence.service.export_to_path("profiles_export", target_path):
+			export_reg.persistence.service.delete_save("profiles_export")
+			_set_status("Exported %d profiles." % payload["profiles"].size())
+			return
+	# Fallback: write directly to the chosen path
 	var file := FileAccess.open(target_path, FileAccess.WRITE)
 	if file == null:
 		_set_status("Export failed: could not write file.")
 		return
 	file.store_string(JSON.stringify(_profiles_to_array(), "\t"))
 	file.close()
-	var ps_node: Node = _profile_service()
-	var count := 0
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		count = ps_node.get_profiles().size()
-	else:
-		var gs_node: Node = _game_state()
-		count = gs_node.profiles.size() if gs_node != null else 0
+	var pm := _profile_service()
+	var count := pm.get_profiles().size() if pm != null else 0
 	_set_status("Exported %d profiles." % count)
 
 
 func _on_profiles_import_path_selected(path: String) -> void:
 	var parsed: Variant = null
 	# If the selected path is under user:// and Persistence is available prefer it
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if path.begins_with("user://") and registry != null and registry.has_method("get_service"):
-		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence != null and persistence.has_method("load_game"):
-			var save_name := path.get_file().get_basename()
-			var loaded: Variant = persistence.load_game(save_name)
-			if loaded is Array:
-				parsed = loaded
-			elif loaded is Dictionary and loaded.has("profiles"):
-				parsed = loaded["profiles"]
-			else:
-				parsed = null
+	var import_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if path.begins_with("user://") and import_reg != null and import_reg.persistence != null and import_reg.persistence.service != null:
+		var save_name := path.get_file().get_basename()
+		var loaded: Dictionary = import_reg.persistence.service.load_game(save_name)
+		if loaded.has("profiles"):
+			parsed = loaded["profiles"]
+		elif not loaded.is_empty():
+			parsed = loaded
 	if parsed == null:
 		if not FileAccess.file_exists(path):
 			_set_status("Import failed: file not found.")
@@ -1969,20 +1867,9 @@ func _on_profiles_import_path_selected(path: String) -> void:
 	if imported_profiles.is_empty():
 		_set_status("Import skipped: no valid profiles found.")
 		return
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	if ps_node != null:
-		ps_node.profiles = imported_profiles
-		if ps_node.has_method("save_profiles"):
-			ps_node.save_profiles()
-		if ps_node.has_method("load_profiles"):
-			ps_node.load_profiles()
-	elif gs_node != null:
-		gs_node.profiles = imported_profiles
-		if gs_node.has_method("save_profiles"):
-			gs_node.save_profiles()
-		if gs_node.has_method("load_profiles"):
-			gs_node.load_profiles()
+	var pm := _profile_service()
+	if pm != null:
+		pm.set_all_profiles(imported_profiles)
 	_profile_selected_index = 0
 	_refresh_profiles_list()
 	_set_status("Imported %d profiles." % imported_profiles.size())
@@ -1990,13 +1877,8 @@ func _on_profiles_import_path_selected(path: String) -> void:
 
 func _profiles_to_array() -> Array:
 	var out: Array = []
-	var ps_node: Node = _profile_service()
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = Array()
-	if ps_node != null and ps_node.has_method("get_profiles"):
-		profiles_arr = ps_node.get_profiles()
-	elif gs_node != null:
-		profiles_arr = gs_node.profiles
+	var pm := _profile_service()
+	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	for profile in profiles_arr:
 		if profile is PlayerProfile:
 			(profile as PlayerProfile).ensure_id()
@@ -2045,13 +1927,10 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	var ext: String = src_path.get_extension().to_lower()
 	var img_dest_abs: String = _image_dest_path_abs(bundle_path, ext)
 
-	# Prefer using Persistence copy API when available
-	var registry := get_node_or_null("/root/ServiceRegistry")
 	var copy_err := _copy_file(src_path, img_dest_abs)
-	if registry != null and registry.has_method("get_service"):
-		var persistence: Node = registry.get_service("Persistence") as Node
-		if persistence != null and persistence.has_method("copy_file"):
-			copy_err = persistence.copy_file(src_path, img_dest_abs)
+	var new_map_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if new_map_reg != null and new_map_reg.persistence != null and new_map_reg.persistence.service != null:
+		copy_err = new_map_reg.persistence.service.copy_file(src_path, img_dest_abs) as Error
 	if copy_err != OK:
 		push_error("DMWindow: failed to copy image to '%s' (err %d)" % [img_dest_abs, copy_err])
 		_set_status("Error: could not copy image.")
@@ -2063,13 +1942,10 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
 	_apply_map(map)
-	# Keep registered Map service in sync if available
+	# Keep map manager model in sync if available
 	var ms := _map_service()
 	if ms != null:
-		if ms.has_method("update_map"):
-			ms.update_map(map)
-		elif ms.has_method("load_map"):
-			ms.load_map(map)
+		ms.update(map)
 	_nm_broadcast_map(map)
 	_set_status("New map: %s" % map.map_name)
 
@@ -2152,13 +2028,10 @@ func _save_map_as_path(bundle_path: String) -> void:
 
 	# Only copy image if destination is different from source.
 	if new_img_abs != map.image_path:
-		# Prefer using Persistence copy API when available
-		var registry := get_node_or_null("/root/ServiceRegistry")
 		var copy_err := _copy_file(map.image_path, new_img_abs)
-		if registry != null and registry.has_method("get_service"):
-			var persistence: Node = registry.get_service("Persistence") as Node
-			if persistence != null and persistence.has_method("copy_file"):
-				copy_err = persistence.copy_file(map.image_path, new_img_abs)
+		var save_as_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if save_as_reg != null and save_as_reg.persistence != null and save_as_reg.persistence.service != null:
+			copy_err = save_as_reg.persistence.service.copy_file(map.image_path, new_img_abs) as Error
 		if copy_err != OK:
 			push_error("DMWindow: failed to copy image for save-as (err %d)" % copy_err)
 			_set_status("Error: could not duplicate image.")
@@ -2173,10 +2046,7 @@ func _save_map_as_path(bundle_path: String) -> void:
 	_save_map_data(map)
 	var ms := _map_service()
 	if ms != null:
-		if ms.has_method("update_map"):
-			ms.update_map(map)
-		elif ms.has_method("load_map"):
-			ms.load_map(map)
+		ms.update(map)
 	_nm_broadcast_map_update(map)
 	_set_status("Saved as: %s" % map.map_name)
 
@@ -2232,10 +2102,8 @@ func _broadcast_player_state() -> void:
 
 func _update_dm_override_input() -> void:
 	var primary_player_id := ""
-	var gs_node: Node = _game_state()
-	var profiles_arr: Array = Array()
-	if gs_node != null:
-		profiles_arr = gs_node.profiles
+	var gs := _game_state()
+	var profiles_arr: Array = gs.list_profiles() if gs != null else []
 	for profile in profiles_arr:
 		if profile is PlayerProfile:
 			primary_player_id = (profile as PlayerProfile).id
@@ -2243,14 +2111,14 @@ func _update_dm_override_input() -> void:
 
 	var input := _input_service()
 	if _dm_override_player_id != "" and _dm_override_player_id != primary_player_id:
-		if input != null and input.has_method("clear_dm_vector"):
+		if input != null:
 			input.clear_dm_vector(_dm_override_player_id)
 
 	_dm_override_player_id = primary_player_id
 	if _dm_override_player_id == "":
 		return
 
-	if input != null and input.has_method("set_dm_vector"):
+	if input != null:
 		input.set_dm_vector(_dm_override_player_id, _keyboard_temp_vector())
 
 

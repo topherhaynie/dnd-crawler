@@ -1,106 +1,101 @@
-extends IGameState
+extends IGameStateService
 class_name GameStateService
 
-const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
+## Set by ServiceBootstrap before _ready() runs.
+var _model: GameStateModel = null
+
 
 func _ready() -> void:
-	load_profiles()
-
-func list_profiles() -> Array:
-	return profiles.duplicate()
-
-func get_profile_by_id(id: String) -> Variant:
-	for p in profiles:
-		if not p is Object:
-			continue
-		if str(p.id) == id:
-			return p
-	return null
-
-func register_player(player_id: String) -> void:
-	if not player_id in player_locked:
-		player_locked[player_id] = false
-		player_positions[player_id] = Vector2.ZERO
-	# No signal emitted here; callers expect state to be present immediately
+	## Wait for ProfileService to enter the tree, then sync player state.
+	call_deferred("_connect_profile_service")
 
 
-# --- Player lock helpers (compat with legacy GameState autoload) ---
-func lock_player(player_id) -> void:
-	player_locked[player_id] = true
-	emit_signal("player_lock_changed", player_id, true)
-
-func unlock_player(player_id) -> void:
-	player_locked[player_id] = false
-	emit_signal("player_lock_changed", player_id, false)
-
-func lock_all_players() -> void:
-	for pid in player_locked.keys():
-		lock_player(pid)
-
-func unlock_all_players() -> void:
-	for pid in player_locked.keys():
-		unlock_player(pid)
-
-func is_locked(player_id) -> bool:
-	return player_locked.get(player_id, false)
+func _connect_profile_service() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.profile == null or reg.profile.service == null:
+		call_deferred("_connect_profile_service")
+		return
+	if not reg.profile.service.is_connected("profiles_changed", _on_profiles_changed):
+		reg.profile.service.profiles_changed.connect(_on_profiles_changed)
+	_rebuild_player_state()
 
 
-# --- Profile persistence (mirror of legacy GameState autoload behaviour) ---
-func save_profiles() -> void:
-	var data := []
-	for profile in profiles:
-		if profile is PlayerProfile:
-			(profile as PlayerProfile).ensure_id()
-			data.append((profile as PlayerProfile).to_dict())
-		elif profile is Dictionary:
-			data.append(profile)
-	_write_json("user://data/profiles.json", data)
+func _on_profiles_changed() -> void:
+	_rebuild_player_state()
 	emit_signal("profiles_changed")
 
 
-func load_profiles() -> void:
-	var raw = _read_json("user://data/profiles.json")
-	profiles.clear()
-	if raw == null:
-		emit_signal("profiles_changed")
+func _rebuild_player_state() -> void:
+	if _model == null:
 		return
-	if not raw is Array:
-		push_error("GameStateService: profiles.json is not an array")
-		emit_signal("profiles_changed")
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.profile == null or reg.profile.service == null:
 		return
-	for entry in raw:
-		if entry is Dictionary:
-			var profile := PlayerProfile.from_dict(entry)
-			profiles.append(profile)
-	_rebuild_player_state_from_profiles()
-	emit_signal("profiles_changed")
-
-
-func _rebuild_player_state_from_profiles() -> void:
+	var profiles := reg.profile.service.get_profiles()
 	var next_locked: Dictionary = {}
 	var next_positions: Dictionary = {}
-	for profile in profiles:
-		if not profile is PlayerProfile:
+	for p in profiles:
+		if not p is PlayerProfile:
 			continue
-		var p := profile as PlayerProfile
-		p.ensure_id()
-		next_locked[p.id] = player_locked.get(p.id, false)
-		next_positions[p.id] = player_positions.get(p.id, Vector2.ZERO)
-	player_locked = next_locked
-	player_positions = next_positions
+		var prof := p as PlayerProfile
+		prof.ensure_id()
+		next_locked[prof.id] = _model.player_locked.get(prof.id, false)
+		next_positions[prof.id] = _model.player_positions.get(prof.id, Vector2.ZERO)
+	_model.player_locked = next_locked
+	_model.player_positions = next_positions
 
 
-# --- JSON helpers (internal) ---
-func _write_json(path: String, data: Variant) -> void:
-	var dir = path.get_base_dir()
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file:
-		file.store_string(JSON.stringify(data, "\t"))
-		file.close()
-	else:
-		push_error("GameStateService: could not write to %s" % path)
+func list_profiles() -> Array:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.profile != null and reg.profile.service != null:
+		return reg.profile.service.get_profiles()
+	return []
 
 
-func _read_json(path: String) -> Variant:
-	return JsonUtilsScript.read_json(path)
+func get_profile_by_id(id: String) -> Variant:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.profile != null and reg.profile.service != null:
+		return reg.profile.service.get_profile_by_id(id)
+	return null
+
+
+func register_player(player_id: String) -> void:
+	if _model == null:
+		return
+	if not player_id in _model.player_locked:
+		_model.player_locked[player_id] = false
+		_model.player_positions[player_id] = Vector2.ZERO
+
+
+func lock_player(player_id: Variant) -> void:
+	if _model == null:
+		return
+	_model.player_locked[player_id] = true
+	emit_signal("player_lock_changed", player_id, true)
+
+
+func unlock_player(player_id: Variant) -> void:
+	if _model == null:
+		return
+	_model.player_locked[player_id] = false
+	emit_signal("player_lock_changed", player_id, false)
+
+
+func lock_all_players() -> void:
+	if _model == null:
+		return
+	for pid in _model.player_locked.keys():
+		lock_player(pid)
+
+
+func unlock_all_players() -> void:
+	if _model == null:
+		return
+	for pid in _model.player_locked.keys():
+		unlock_player(pid)
+
+
+func is_locked(player_id: Variant) -> bool:
+	if _model == null:
+		return false
+	return bool(_model.player_locked.get(player_id, false))

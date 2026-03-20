@@ -17,7 +17,7 @@ func get_profile_by_id(_id: String) -> Variant:
 	push_error("IProfileService.get_profile_by_id: not implemented")
 	return null
 
-func add_profile(_profile: Dictionary) -> void:
+func add_profile(_profile: PlayerProfile) -> void:
 	push_error("IProfileService.add_profile: not implemented")
 
 func remove_profile(_id: String) -> void:

@@ -86,16 +86,9 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 		return
 	var map: MapData = MapData.from_dict(map_dict)
 	# Keep Map service in sync if available
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var ms: Object = registry.get_service("Map")
-		if ms == null:
-			var map_adapter: Object = registry.get_service("MapAdapter")
-			if map_adapter != null:
-				push_warning("PlayerWindow: 'Map' service missing — falling back to 'MapAdapter'")
-				ms = map_adapter
-		if ms != null and ms.has_method("load_map"):
-			ms.load_map(map)
+	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sreg != null and sreg.map != null:
+		sreg.map.load(map)
 
 	_map_view.load_map(map)
 	_has_loaded_map = true
@@ -116,16 +109,9 @@ func _handle_map_updated(map_dict: Dictionary) -> void:
 	var cam_state: Dictionary = _map_view.get_camera_state()
 	var map: MapData = MapData.from_dict(map_dict)
 	# Inform Map service of updates when available
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var ms: Object = registry.get_service("Map")
-		if ms == null:
-			var map_adapter: Object = registry.get_service("MapAdapter")
-			if map_adapter != null:
-				push_warning("PlayerWindow: 'Map' service missing — falling back to 'MapAdapter'")
-				ms = map_adapter
-		if ms != null and ms.has_method("update_map"):
-			ms.update_map(map)
+	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sreg != null and sreg.map != null:
+		sreg.map.update(map)
 
 	_map_view.load_map(map)
 	_has_loaded_map = true

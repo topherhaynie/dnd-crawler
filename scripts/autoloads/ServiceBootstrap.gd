@@ -47,20 +47,28 @@ func _ready() -> void:
 	net_mgr.service = net_svc
 	registry.network = net_mgr
 
+	var gs_model := GameStateModel.new()
 	var gs_mgr := GameStateManager.new()
 	gs_mgr.service = gs_svc
+	gs_mgr.model = gs_model
+	gs_svc._model = gs_model
 	registry.game_state = gs_mgr
 
+	var ps_model := ProfileModel.new()
 	var ps_mgr := ProfileManager.new()
 	ps_mgr.service = ps_svc
+	ps_mgr.model = ps_model
+	ps_svc._model = ps_model
 	registry.profile = ps_mgr
 
 	var persistence_mgr := PersistenceManager.new()
 	persistence_mgr.service = persistence_svc
 	registry.persistence = persistence_mgr
 
+	var input_model := InputModel.new()
 	var input_mgr := InputManager.new()
 	input_mgr.service = input_svc
+	input_mgr.model = input_model
 	registry.input = input_mgr
 
 	# --- Add to scene tree (deferred to avoid ready-order races) ---

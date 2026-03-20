@@ -26,26 +26,24 @@ var _cached_wall_signature: String = ""
 var _los_prev_origin_by_token: Dictionary = {}
 
 
-func _game_state() -> IGameState:
+func _game_state() -> GameStateManager:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.game_state == null:
 		return null
-	return registry.game_state.service
+	return registry.game_state
 
 
-func _input_manager() -> IInputService:
+func _input_manager() -> InputManager:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.input == null:
 		return null
-	return registry.input.service
+	return registry.input
 
 
 func _map() -> MapData:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry != null and registry.map != null and registry.map.service != null:
-		var m: MapData = registry.map.service.get_map() as MapData
-		if m != null:
-			return m
+	if registry != null and registry.map != null and registry.map.model != null:
+		return registry.map.model
 	if _map_view != null and _map_view.has_method("get_map"):
 		return _map_view.get_map() as MapData
 	return null

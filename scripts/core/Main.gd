@@ -21,31 +21,18 @@ const DMWindowScene: PackedScene = preload("res://scenes/DMWindow.tscn")
 const PlayerMainScene: PackedScene = preload("res://scenes/PlayerMain.tscn")
 
 
-func _game_state() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("GameState")
-		if svc == null:
-			var adapter: Object = registry.get_service("GameStateAdapter")
-			if adapter != null:
-				push_warning("Main: 'GameState' service missing — falling back to 'GameStateAdapter'")
-				svc = adapter
-		return svc as Node
-	return null
+func _game_state() -> GameStateManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.game_state == null:
+		return null
+	return registry.game_state
 
 
-func _network_manager() -> Node:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.has_method("get_service"):
-		var svc: Object = registry.get_service("Network")
-		if svc == null:
-			var adapter: Object = registry.get_service("NetworkAdapter")
-			if adapter != null:
-				push_warning("Main: 'Network' service missing — falling back to 'NetworkAdapter'")
-				svc = adapter
-		if svc != null:
-			return svc as Node
-	return null
+func _network_manager() -> INetworkService:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.network == null:
+		return null
+	return registry.network.service
 
 
 func _ready() -> void:
@@ -73,11 +60,11 @@ func _is_player_mode() -> bool:
 
 func _start_dm_mode() -> void:
 	get_tree().root.title = "Omni-Crawl — DM"
-	var gs_node: Node = _game_state()
-	if gs_node == null:
+	var gs := _game_state()
+	if gs == null:
 		call_deferred("_deferred_register_window")
 	else:
-		gs_node.windows.append(get_tree().root.get_window_id())
+		gs.add_window(get_tree().root.get_window_id())
 	# Resize and position the DM window at ~85% of screen
 	var screen_size := DisplayServer.screen_get_size()
 	var win_size := Vector2i(
@@ -105,11 +92,11 @@ func _ensure_network_started() -> void:
 
 
 func _deferred_register_window() -> void:
-	var gs_node: Node = _game_state()
-	if gs_node == null:
+	var gs := _game_state()
+	if gs == null:
 		call_deferred("_deferred_register_window")
 		return
-	gs_node.windows.append(get_tree().root.get_window_id())
+	gs.add_window(get_tree().root.get_window_id())
 
 
 # ---------------------------------------------------------------------------
