@@ -520,16 +520,17 @@ func _process(delta: float) -> void:
 		if kdir != Vector2.ZERO:
 			camera.position += kdir.normalized() * PAN_SPEED * delta / camera.zoom.x
 
-	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
-		fog_overlay.sync_player_revealers(token_layer.get_children())
-
-	# Player viewport-local fog: feed camera rect to FogSystem so it can
-	# re-size SubViewports when the camera pans beyond the current margin.
+	# Player viewport-local fog: update the viewport rect BEFORE syncing
+	# revealers so that lights are positioned in the correct coordinate system
+	# (viewport-local offset vs. base fog scale) on the same frame.
 	if not is_dm_view and fog_overlay != null and camera != null:
 		var vp := get_viewport()
 		if vp != null:
 			var screen_size := vp.get_visible_rect().size
 			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size)
+
+	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
+		fog_overlay.sync_player_revealers(token_layer.get_children())
 
 
 # ---------------------------------------------------------------------------

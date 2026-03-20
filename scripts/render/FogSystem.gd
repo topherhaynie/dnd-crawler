@@ -383,6 +383,11 @@ func _crop_and_seed_from_model_history() -> void:
 	var cropped := source.get_region(src_rect)
 	if cropped == null or cropped.is_empty():
 		return
+	# Up-scale the crop to match the SubViewport dimensions so the seeded
+	# history is pixel-aligned with subsequent LOS bakes and avoids the
+	# blocky appearance that nearest-neighbour UV stretch would produce.
+	if cropped.get_width() != _fog_size.x or cropped.get_height() != _fog_size.y:
+		cropped.resize(_fog_size.x, _fog_size.y, Image.INTERPOLATE_BILINEAR)
 	_seed_gpu_history_from_image(cropped)
 
 
