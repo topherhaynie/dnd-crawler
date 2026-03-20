@@ -48,6 +48,7 @@ var map_objects: Array = []
 # --- Viewport state (optional, remembered across sessions) -----------------
 var camera_position: Vector2 = Vector2.ZERO
 var camera_zoom: float = 1.0
+var camera_rotation: int = 0 ## Map rotation in degrees (0, 90, 180, 270)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,7 @@ func to_dict() -> Dictionary:
 		"map_objects": map_objects.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
+		"camera_rotation": camera_rotation,
 	}
 
 
@@ -85,6 +87,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
 	m.camera_zoom = float(d.get("camera_zoom", 1.0))
+	m.camera_rotation = int(d.get("camera_rotation", 0))
 	return m
 
 

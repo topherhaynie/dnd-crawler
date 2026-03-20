@@ -19,6 +19,16 @@ func _game_state() -> GameStateManager:
 		return null
 	return registry.game_state
 
+func _map_rotation_deg() -> int:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.map == null:
+		return 0
+	if registry.map.model != null:
+		return registry.map.model.camera_rotation
+	if registry.map.service != null:
+		return registry.map.service.get_map_rotation()
+	return 0
+
 func _process(_delta: float) -> void:
 	for device_id in gamepad_bindings.keys():
 		var player_id = gamepad_bindings[device_id]
@@ -46,9 +56,14 @@ func get_vector(player_id) -> Vector2:
 	if vec == Vector2.ZERO:
 		return vec
 	var profile: Variant = gs.get_profile_by_id(player_id) if gs != null else null
+	var table_orient: int = 0
 	if profile and profile is PlayerProfile:
-		var angle_rad := deg_to_rad((profile as PlayerProfile).table_orientation)
-		vec = vec.rotated(-angle_rad)
+		table_orient = (profile as PlayerProfile).table_orientation
+	# map_rotation compensates for viewport/camera rotation (positive), while
+	# table_orient compensates for the player's seat position (negative).
+	var net_angle := deg_to_rad(float(_map_rotation_deg() - table_orient))
+	if not is_zero_approx(net_angle):
+		vec = vec.rotated(net_angle)
 	return vec
 
 func set_vector(player_id, vec: Vector2, source: int = InputSource.NETWORK) -> void:

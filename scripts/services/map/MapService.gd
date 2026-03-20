@@ -62,3 +62,8 @@ func save_map_to_bundle(bundle_path: String) -> bool:
     fa.store_string(JSON.stringify(payload, "\t"))
     fa.close()
     return true
+
+func get_map_rotation() -> int:
+    if _current_map == null or not (_current_map is MapData):
+        return 0
+    return (_current_map as MapData).camera_rotation

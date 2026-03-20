@@ -128,6 +128,7 @@ var _profiles_root: Control = null
 # Drag the box to reposition the player camera; use the toolbar to zoom.
 var _player_cam_pos: Vector2 = Vector2(960.0, 540.0)
 var _player_cam_zoom: float = 1.0
+var _player_cam_rotation: int = 0
 var _player_window_size: Vector2 = Vector2(1920.0, 1080.0)
 var _play_mode: bool = false
 var _play_mode_btn: Button = null
@@ -434,12 +435,13 @@ func _build_ui() -> void:
 	# ── Toolbar ──────────────────────────────────────────────────────────────
 	_toolbar = PanelContainer.new()
 	_toolbar.name = "Toolbar"
-	_toolbar.custom_minimum_size = Vector2(0, roundi(44.0 * _ui_scale()))
+	_toolbar.custom_minimum_size = Vector2(0, 0)
+	_toolbar.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_ui_root.add_child(_toolbar)
 
-	var toolbar_hbox := HBoxContainer.new()
-	toolbar_hbox.set_anchors_preset(Control.PRESET_FULL_RECT)
-	toolbar_hbox.add_theme_constant_override("separation", 6)
+	var toolbar_hbox := HFlowContainer.new()
+	toolbar_hbox.add_theme_constant_override("h_separation", 6)
+	toolbar_hbox.add_theme_constant_override("v_separation", 4)
 	var toolbar_margin := MarginContainer.new()
 	toolbar_margin.add_theme_constant_override("margin_left", 6)
 	toolbar_margin.add_theme_constant_override("margin_right", 6)
@@ -521,19 +523,39 @@ func _build_ui() -> void:
 	pv_sync_btn.pressed.connect(_sync_player_to_dm_view)
 	toolbar_hbox.add_child(pv_sync_btn)
 
+	var pv_rot_ccw_btn := _make_toolbar_btn("↺", "Rotate player view CCW 90°")
+	pv_rot_ccw_btn.pressed.connect(func():
+		_player_cam_rotation = (_player_cam_rotation - 90 + 360) % 360
+		var m := _map()
+		if m != null:
+			m.camera_rotation = _player_cam_rotation
+		_update_viewport_indicator()
+		_broadcast_player_viewport())
+	toolbar_hbox.add_child(pv_rot_ccw_btn)
+
+	var pv_rot_cw_btn := _make_toolbar_btn("↻", "Rotate player view CW 90°")
+	pv_rot_cw_btn.pressed.connect(func():
+		_player_cam_rotation = (_player_cam_rotation + 90) % 360
+		var m := _map()
+		if m != null:
+			m.camera_rotation = _player_cam_rotation
+		_update_viewport_indicator()
+		_broadcast_player_viewport())
+	toolbar_hbox.add_child(pv_rot_cw_btn)
+
 	var sep4 := VSeparator.new()
 	toolbar_hbox.add_child(sep4)
 
 	_fog_tool_option = OptionButton.new()
 	_fog_tool_option.focus_mode = Control.FOCUS_NONE
-	_fog_tool_option.add_item("☁ Off", 0)
-	_fog_tool_option.add_item("☁ R◯", 1)
-	_fog_tool_option.add_item("☁ H◯", 2)
-	_fog_tool_option.add_item("☁ R▭", 3)
-	_fog_tool_option.add_item("☁ H▭", 4)
-	_fog_tool_option.custom_minimum_size = Vector2(roundi(70.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_fog_tool_option.add_item("☁", 0)
+	_fog_tool_option.add_item("R◯", 1)
+	_fog_tool_option.add_item("H◯", 2)
+	_fog_tool_option.add_item("R▭", 3)
+	_fog_tool_option.add_item("H▭", 4)
+	_fog_tool_option.custom_minimum_size = Vector2(roundi(50.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
 	_fog_tool_option.add_theme_font_size_override("font_size", roundi(12.0 * _ui_scale()))
-	_fog_tool_option.tooltip_text = "Fog tools: Reveal/Hide brush and rectangle"
+	_fog_tool_option.tooltip_text = "Fog tools: ☁=Off  R◯=Reveal brush  H◯=Hide brush  R▭=Reveal rect  H▭=Hide rect"
 	_fog_tool_option.item_selected.connect(_on_fog_tool_selected)
 	toolbar_hbox.add_child(_fog_tool_option)
 
@@ -562,11 +584,11 @@ func _build_ui() -> void:
 	var wall_tool_dropdown := OptionButton.new()
 	wall_tool_dropdown.name = "WallToolDropdown"
 	wall_tool_dropdown.focus_mode = Control.FOCUS_NONE
-	wall_tool_dropdown.custom_minimum_size = Vector2(roundi(70.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	wall_tool_dropdown.custom_minimum_size = Vector2(roundi(50.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
 	wall_tool_dropdown.add_theme_font_size_override("font_size", roundi(16.0 * _ui_scale()))
-	wall_tool_dropdown.tooltip_text = "Wall tools: Rectangle or Polygon"
-	wall_tool_dropdown.add_item("▭ Rectangle", 0)
-	wall_tool_dropdown.add_item("▲ Polygon", 1)
+	wall_tool_dropdown.tooltip_text = "Wall tools: ▭=Rectangle  ▲=Polygon"
+	wall_tool_dropdown.add_item("▭", 0)
+	wall_tool_dropdown.add_item("▲", 1)
 	wall_tool_dropdown.select(0)
 	wall_tool_dropdown.item_selected.connect(_on_wall_tool_selected)
 	wall_tool_dropdown.pressed.connect(func():
@@ -793,6 +815,7 @@ func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 	## Keep the existing world-space viewport footprint stable by adjusting zoom
 	## when the real player window size differs from our current assumption.
 	_update_player_window_size_preserve_world(viewport_size)
+	_update_viewport_indicator()
 	_initial_sync_ack_pending[_peer_id] = true
 	_initial_sync_attempt_by_peer[_peer_id] = 0
 	_queue_initial_display_sync(_peer_id, 0.20)
@@ -913,7 +936,7 @@ func _update_viewport_indicator() -> void:
 	if _map_view == null:
 		return
 	var world_size := _player_window_size / _player_cam_zoom
-	_map_view.set_viewport_indicator(Rect2(_player_cam_pos - world_size * 0.5, world_size))
+	_map_view.set_viewport_indicator(Rect2(_player_cam_pos - world_size * 0.5, world_size), float(_player_cam_rotation))
 
 
 func _update_player_window_size_preserve_world(new_size: Vector2) -> void:
@@ -935,6 +958,7 @@ func _broadcast_player_viewport() -> void:
 		"msg": "camera_update",
 		"position": {"x": _player_cam_pos.x, "y": _player_cam_pos.y},
 		"zoom": _player_cam_zoom,
+		"rotation": _player_cam_rotation,
 	})
 
 
@@ -1976,10 +2000,9 @@ func _on_map_bundle_selected(path: String) -> void:
 		return
 	_active_map_bundle_path = bundle_path
 	_apply_map(map)
-	# Ensure map service knows about this map
+	# Ensure map manager and service know about this map
 	if ms != null:
-		if ms.has_method("load_map"):
-			ms.load_map(map)
+		ms.load(map)
 	_nm_broadcast_map(map)
 	_set_status("Opened: %s" % map.map_name)
 
@@ -1995,13 +2018,11 @@ func _on_save_map_pressed() -> void:
 	if _map_view and _map_view.has_method("force_fog_sync"):
 		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
+	map.camera_rotation = _player_cam_rotation
 	_save_map_data(map)
 	var ms := _map_service()
 	if ms != null:
-		if ms.has_method("update_map"):
-			ms.update_map(map)
-		elif ms.has_method("load_map"):
-			ms.load_map(map)
+		ms.update(map)
 	_nm_broadcast_map_update(map)
 	_set_status("Saved: %s" % map.map_name)
 
@@ -2040,6 +2061,7 @@ func _save_map_as_path(bundle_path: String) -> void:
 	if _map_view and _map_view.has_method("force_fog_sync"):
 		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
+	map.camera_rotation = _player_cam_rotation
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = new_img_abs
 	_active_map_bundle_path = bundle_path
@@ -2056,6 +2078,8 @@ func _save_map_as_path(bundle_path: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _apply_map(map: MapData) -> void:
+	# Restore player rotation from saved map before the deferred cam init overwrites it.
+	_player_cam_rotation = map.camera_rotation
 	_map_view.load_map(map)
 	if _map_view.map_image.texture == null:
 		_set_status("Map image failed to load: %s" % map.image_path)
@@ -2260,6 +2284,7 @@ func _serialise_fog_cells(cells: Array) -> Array:
 
 func _init_player_cam_from_dm() -> void:
 	## Called deferred after map load so Camera2D has settled.
+	## Note: _player_cam_rotation is already restored from MapData in _apply_map.
 	if _map_view == null:
 		return
 	var state: Dictionary = _map_view.get_camera_state()
@@ -2421,8 +2446,8 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 func _apply_ui_scale() -> void:
 	var scale := _ui_scale()
 	if _toolbar:
-		# Slightly shorter than before so the bar hugs its controls better.
-		_toolbar.custom_minimum_size = Vector2(0, roundi(34.0 * scale))
+		# HFlowContainer drives height; no minimum needed.
+		_toolbar.custom_minimum_size = Vector2(0, 0)
 	if _ui_root:
 		_ui_root.scale = Vector2(scale, scale)
 	if _profiles_dialog:

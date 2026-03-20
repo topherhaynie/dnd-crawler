@@ -45,6 +45,7 @@ const ZOOM_STEP: float = 0.12 ## per scroll click
 const PAN_SPEED: float = 500.0 ## px/sec for arrow-key pan
 const WALL_HANDLE_HIT_RADIUS_PX: float = 12.0
 const WALL_HANDLE_SIZE_WORLD: float = 6.0
+const ROTATION_STEP: int = 90 ## degrees per rotate click
 
 @onready var camera: Camera2D = $Camera2D
 @onready var map_image: TextureRect = $MapImage
@@ -113,6 +114,7 @@ var _wall_handle_nodes: Array = []
 var _panning: bool = false
 var _pan_start_mouse: Vector2 = Vector2.ZERO
 var _pan_start_cam: Vector2 = Vector2.ZERO
+var _map_rotation: int = 0 ## Current map rotation in degrees (0, 90, 180, 270)
 
 
 func _set_active_tool(tool: Tool) -> void:
@@ -134,6 +136,7 @@ signal walls_changed(map: MapData)
 
 ## World-space rect — kept in sync with _indicator_overlay for hit-testing.
 var _viewport_indicator: Rect2 = Rect2()
+var _indicator_rotation_deg: float = 0.0
 var _dragging_indicator: bool = false
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
@@ -179,6 +182,8 @@ func load_map(map: MapData) -> void:
 		camera.position = map.camera_position
 	else:
 		_reset_camera()
+	# Rotation is applied by set_camera_state() from the network broadcast;
+	# do not rotate the camera here (DM view is never rotated).
 
 	print("MapView: loaded map '%s'" % map.map_name)
 
@@ -309,21 +314,25 @@ func delete_selected_wall() -> bool:
 
 
 func get_camera_state() -> Dictionary:
-	## Returns the current camera position and zoom as a dict for broadcasting.
+	## Returns the current camera position, zoom, and rotation as a dict for broadcasting.
 	## Returns a zero-state if called before _ready() has resolved @onready vars.
 	if camera == null:
-		return {"position": {"x": 0.0, "y": 0.0}, "zoom": 1.0}
-	return {"position": {"x": camera.position.x, "y": camera.position.y}, "zoom": camera.zoom.x}
+		return {"position": {"x": 0.0, "y": 0.0}, "zoom": 1.0, "rotation": 0}
+	return {"position": {"x": camera.position.x, "y": camera.position.y}, "zoom": camera.zoom.x, "rotation": _map_rotation}
 
 
-func set_camera_state(pos: Vector2, zoom: float) -> void:
+func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 	## Apply a camera state received from an external source (e.g. DM mini-view broadcast).
 	camera.position = pos
 	camera.zoom = Vector2.ONE * clampf(zoom, ZOOM_MIN, ZOOM_MAX)
+	_map_rotation = rotation_deg
+	camera.rotation_degrees = float(_map_rotation)
 
 
 func _ready() -> void:
 	_ensure_object_layer()
+	# Allow Camera2D to honour rotation_degrees (disabled by default in Godot 4).
+	camera.ignore_rotation = false
 	# Add the indicator overlay as the last child so it renders on top of
 	# MapImage, GridOverlay, and all other siblings.
 	_indicator_overlay = load("res://scripts/render/IndicatorOverlay.gd").new()
@@ -334,21 +343,25 @@ func _ready() -> void:
 	apply_render_profile(RenderProfile.DM if is_dm_view else RenderProfile.PLAYER)
 
 
-func set_viewport_indicator(world_rect: Rect2) -> void:
+func set_viewport_indicator(world_rect: Rect2, rotation_deg: float = 0.0) -> void:
 	## Set the player-viewport indicator rect in world space. Pass Rect2() to hide.
 	_viewport_indicator = world_rect
-	_indicator_overlay.set_rect(world_rect)
+	_indicator_rotation_deg = rotation_deg
+	_indicator_overlay.set_rect(world_rect, rotation_deg)
 
 
 func save_camera_to_map() -> void:
 	if _map:
 		_map.camera_position = camera.position
 		_map.camera_zoom = camera.zoom.x
+		# camera_rotation is written by DMWindow directly (player rotation, not DM camera rotation)
 
 
 func _reset_camera() -> void:
 	## Position camera so the map top-left aligns with the viewport top-left.
 	camera.zoom = Vector2.ONE
+	_map_rotation = 0
+	camera.rotation_degrees = 0.0
 	# Camera.position = world point at screen centre.
 	# To get world (0,0) at screen top-left: centre = viewport_size / 2.
 	camera.position = get_viewport().get_visible_rect().size * 0.5
@@ -360,6 +373,35 @@ func zoom_in() -> void:
 
 func zoom_out() -> void:
 	_zoom_camera(-ZOOM_STEP, get_viewport().get_visible_rect().size * 0.5)
+
+
+func _indicator_has_point(world_pos: Vector2) -> bool:
+	## Point-in-rotated-rect hit test for the indicator box.
+	if _viewport_indicator == Rect2():
+		return false
+	if _indicator_rotation_deg == 0.0:
+		return _viewport_indicator.has_point(world_pos)
+	var center := _viewport_indicator.get_center()
+	var local := (world_pos - center).rotated(deg_to_rad(-_indicator_rotation_deg))
+	var half := _viewport_indicator.size * 0.5
+	return absf(local.x) <= half.x and absf(local.y) <= half.y
+
+
+func rotate_cw() -> void:
+	## Rotate the map camera 90° clockwise.
+	_map_rotation = (_map_rotation + ROTATION_STEP) % 360
+	camera.rotation_degrees = float(_map_rotation)
+
+
+func rotate_ccw() -> void:
+	## Rotate the map camera 90° counter-clockwise.
+	_map_rotation = (_map_rotation - ROTATION_STEP + 360) % 360
+	camera.rotation_degrees = float(_map_rotation)
+
+
+func get_map_rotation() -> int:
+	## Returns the current map rotation in degrees (0, 90, 180, 270).
+	return _map_rotation
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +462,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_LEFT:
 				if btn_event.pressed:
 					# Indicator drag takes priority over Pan tool
-					if _viewport_indicator != Rect2() and _viewport_indicator.has_point(get_global_mouse_position()):
+					if _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
 						_dragging_indicator = true
 						get_viewport().set_input_as_handled()
 					elif active_tool == Tool.PAN:
@@ -446,7 +488,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_viewport_indicator = Rect2(
 				_viewport_indicator.position + world_delta,
 				_viewport_indicator.size)
-			_indicator_overlay.set_rect(_viewport_indicator)
+			_indicator_overlay.set_rect(_viewport_indicator, _indicator_rotation_deg)
 			viewport_indicator_moved.emit(_viewport_indicator.get_center())
 			get_viewport().set_input_as_handled()
 		elif _panning:

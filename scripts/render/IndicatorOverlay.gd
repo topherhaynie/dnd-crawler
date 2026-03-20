@@ -12,14 +12,16 @@ extends Node2D
 var camera: Camera2D = null
 
 var _rect: Rect2 = Rect2()
+var _rotation_deg: float = 0.0
 
 const _VI_FILL := Color(0.0, 0.85, 0.3, 0.08)
 const _VI_BORDER := Color(0.0, 0.9, 0.3, 0.9)
 const _VI_WIDTH := 3.0
 
 
-func set_rect(r: Rect2) -> void:
+func set_rect(r: Rect2, rotation_deg: float = 0.0) -> void:
 	_rect = r
+	_rotation_deg = rotation_deg
 	queue_redraw()
 
 
@@ -34,10 +36,21 @@ func _draw() -> void:
 		return
 	var cam_z := camera.zoom.x if camera else 1.0
 	var w := _VI_WIDTH / cam_z
-	draw_rect(_rect, _VI_FILL)
-	draw_rect(_rect, _VI_BORDER, false, w)
+	var center := _rect.get_center()
+	var half := _rect.size * 0.5
+	var angle := deg_to_rad(_rotation_deg)
+	var corners := PackedVector2Array([
+		center + Vector2(-half.x, -half.y).rotated(angle),
+		center + Vector2( half.x, -half.y).rotated(angle),
+		center + Vector2( half.x,  half.y).rotated(angle),
+		center + Vector2(-half.x,  half.y).rotated(angle),
+	])
+	draw_polygon(corners, PackedColorArray([_VI_FILL, _VI_FILL, _VI_FILL, _VI_FILL]))
+	var poly_line := PackedVector2Array(corners)
+	poly_line.append(corners[0])
+	draw_polyline(poly_line, _VI_BORDER, w)
 	var fs := int(clampf(13.0 / cam_z, 8.0, 48.0))
 	draw_string(ThemeDB.fallback_font,
-		_rect.position + Vector2(w + 2.0 / cam_z, (fs + 4.0) / cam_z),
+		corners[0] + Vector2((w + 2.0) / cam_z, (fs + 4.0) / cam_z),
 		"Player View",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, _VI_BORDER)

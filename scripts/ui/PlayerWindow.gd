@@ -91,6 +91,14 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 		sreg.map.load(map)
 
 	_map_view.load_map(map)
+	# Restore player viewport rotation immediately from the map data so the
+	# correct angle is visible before (or in case of late arrival of) camera_update.
+	if map.camera_rotation != 0:
+		var cs: Dictionary = _map_view.get_camera_state()
+		_map_view.set_camera_state(
+			Vector2(float(cs["position"]["x"]), float(cs["position"]["y"])),
+			float(cs["zoom"]),
+			map.camera_rotation)
 	_has_loaded_map = true
 	_apply_cached_fog_stamp()
 	var map_snapshot: Variant = map_dict.get("fog_snapshot", {})
@@ -122,7 +130,8 @@ func _handle_map_updated(map_dict: Dictionary) -> void:
 	_apply_pending_fog_packets()
 	_map_view.set_camera_state(
 		Vector2(float(cam_state["position"]["x"]), float(cam_state["position"]["y"])),
-		float(cam_state["zoom"]))
+		float(cam_state["zoom"]),
+		int(cam_state.get("rotation", 0)))
 	_apply_token_size_from_map(map)
 	print("PlayerWindow: map updated (grid/scale) — '%s'" % map.map_name)
 
@@ -133,7 +142,8 @@ func _handle_camera_update(data: Dictionary) -> void:
 	var pos_d: Dictionary = data.get("position", {"x": 0.0, "y": 0.0})
 	var pos := Vector2(float(pos_d.get("x", 0.0)), float(pos_d.get("y", 0.0)))
 	var zoom := float(data.get("zoom", 1.0))
-	_map_view.set_camera_state(pos, zoom)
+	var rotation := int(data.get("rotation", 0))
+	_map_view.set_camera_state(pos, zoom, rotation)
 
 
 func _handle_fog_state_snapshot(data: Dictionary) -> void:

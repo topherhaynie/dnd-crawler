@@ -28,3 +28,7 @@ func get_map() -> Object:
 func save_map_to_bundle(_bundle_path: String) -> bool:
 	push_error("IMapService.save_map_to_bundle: not implemented")
 	return false
+
+func get_map_rotation() -> int:
+	push_error("IMapService.get_map_rotation: not implemented")
+	return 0

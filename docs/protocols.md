@@ -100,6 +100,26 @@ Messages from the authoritative DM process to display clients. Many messages may
 }
 ```
 
+- Camera / viewport update (DM -> displays)
+
+Sent by the DM whenever the player viewport position, zoom, or rotation changes.
+
+```json
+{
+  "msg": "camera_update",
+  "position": { "x": 960.0, "y": 540.0 },
+  "zoom": 1.0,
+  "rotation": 90
+}
+```
+
+**Fields:**
+- `msg` (string): always `"camera_update"`
+- `position.x`, `position.y` (float): world-space centre of the player viewport
+- `zoom` (float, range `0.1–8.0`): camera zoom level
+- `rotation` (int, one of `0 | 90 | 180 | 270`, default `0`): map rotation in degrees clockwise. Applied to the display camera and compounded with each player's `table_orientation` for input-vector compensation.
+```
+
 ## Backpressure & chunking rules
 
 - Large or countably unbounded payloads (map tiles, full fog bitmaps, big asset bundles) MUST be chunked.
