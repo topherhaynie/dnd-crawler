@@ -1,6 +1,8 @@
 extends RefCounted
 class_name GameStateManager
 
+const _GameSaveDataClass = preload("res://scripts/services/game_state/models/GameSaveData.gd")
+
 ## GameState domain coordinator.
 ##
 ## Owns GameStateModel and exposes high-level operations for player lock,
@@ -13,6 +15,10 @@ signal player_lock_changed(player_id: Variant, is_locked: bool)
 signal player_positions_changed()
 @warning_ignore("unused_signal")
 signal profiles_changed()
+@warning_ignore("unused_signal")
+signal session_saved(save_name: String)
+@warning_ignore("unused_signal")
+signal session_loaded(save_name: String)
 
 var service: IGameStateService = null
 var model: GameStateModel = null
@@ -109,3 +115,65 @@ func get_profile_by_id(id: String) -> Variant:
 	if service != null:
 		return service.get_profile_by_id(id)
 	return null
+
+
+# ---------------------------------------------------------------------------
+# Player camera (DM-controlled viewport shown on player displays)
+# ---------------------------------------------------------------------------
+
+var player_camera_position: Vector2:
+	get: return model.player_camera_position if model != null else Vector2(960.0, 540.0)
+	set(v):
+		if model != null:
+			model.player_camera_position = v
+
+var player_camera_zoom: float:
+	get: return model.player_camera_zoom if model != null else 1.0
+	set(v):
+		if model != null:
+			model.player_camera_zoom = v
+
+var player_camera_rotation: int:
+	get: return model.player_camera_rotation if model != null else 0
+	set(v):
+		if model != null:
+			model.player_camera_rotation = v
+
+
+# ---------------------------------------------------------------------------
+# Session save / load
+# ---------------------------------------------------------------------------
+
+var active_save: RefCounted: ## GameSaveData or null
+	get: return model.active_save if model != null else null
+
+
+func save_session(save_name: String, fog_image: Image, map_bundle_path: String) -> bool:
+	if service == null:
+		return false
+	var ok := service.save_session(save_name, fog_image, map_bundle_path)
+	if ok:
+		session_saved.emit(save_name)
+	return ok
+
+
+func load_session(save_path: String) -> Dictionary:
+	if service == null:
+		return {}
+	var bundle := service.load_session(save_path)
+	if not bundle.is_empty():
+		var state: Variant = bundle.get("state", null)
+		if state != null and state.has_method("to_dict"):
+			session_loaded.emit(state.save_name)
+	return bundle
+
+
+func list_sessions() -> Array:
+	if service == null:
+		return []
+	return service.list_sessions()
+
+
+func reset_session() -> void:
+	if service != null:
+		service.reset_session()

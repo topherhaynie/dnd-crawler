@@ -11,6 +11,10 @@ class_name IGameStateService
 signal profiles_changed()
 @warning_ignore("unused_signal")
 signal player_lock_changed(player_id: Variant, is_locked: bool)
+@warning_ignore("unused_signal")
+signal session_saved(save_name: String)
+@warning_ignore("unused_signal")
+signal session_loaded(save_name: String)
 
 func get_profile_by_id(_id: String) -> Variant:
 	push_error("IGameStateService.get_profile_by_id: not implemented")
@@ -38,3 +42,20 @@ func unlock_all_players() -> void:
 func is_locked(_player_id: Variant) -> bool:
 	push_error("IGameStateService.is_locked: not implemented")
 	return false
+
+# --- Session save/load ------------------------------------------------------
+
+func save_session(_save_name: String, _fog_image: Image, _map_bundle_path: String) -> bool:
+	push_error("IGameStateService.save_session: not implemented")
+	return false
+
+func load_session(_save_path: String) -> Dictionary:
+	push_error("IGameStateService.load_session: not implemented")
+	return {}
+
+func list_sessions() -> Array:
+	push_error("IGameStateService.list_sessions: not implemented")
+	return []
+
+func reset_session() -> void:
+	push_error("IGameStateService.reset_session: not implemented")

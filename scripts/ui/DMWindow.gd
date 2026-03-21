@@ -22,8 +22,10 @@ extends Node
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
 const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.gd")
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
+const GameSaveDataScript = preload("res://scripts/services/game_state/models/GameSaveData.gd")
 
 const MAP_DIR := "user://data/maps/"
+const SAVE_DIR := "user://data/saves/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
 # ── UI node references ──────────────────────────────────────────────────────
@@ -48,9 +50,12 @@ var _solo_offset_y_spin: SpinBox = null
 ## New Map / Open Map workflow
 var _open_map_dialog: FileDialog = null
 var _save_as_dialog: FileDialog = null ## native Save panel for naming/renaming maps
+var _save_game_dialog: FileDialog = null ## Save Game As dialog
+var _load_game_dialog: FileDialog = null ## Load Game dialog
 var _pending_image_path: String = "" ## holds image path while native save dialog is open
 var _map_name_mode: String = "new" ## "new" or "save_as"
 var _active_map_bundle_path: String = "" ## absolute path to the current .map bundle directory
+var _active_save_bundle_path: String = "" ## absolute path to the current .sav bundle
 
 var _status_label: Label = null
 var _grid_option: OptionButton = null
@@ -363,6 +368,7 @@ func _build_ui() -> void:
 	_map_view.fog_changed.connect(_on_map_fog_changed)
 	_map_view.fog_delta.connect(_on_map_fog_delta)
 	_map_view.walls_changed.connect(_on_map_walls_changed)
+	_map_view.spawn_points_changed.connect(_on_map_spawn_points_changed)
 	_map_view.token_drag_started.connect(_on_token_drag_started)
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
 	_backend = BackendRuntimeScript.new()
@@ -403,6 +409,10 @@ func _build_ui() -> void:
 	file_menu.add_separator()
 	file_menu.add_item("Save Map", 2)
 	file_menu.add_item("Save Map As…", 3)
+	file_menu.add_separator()
+	file_menu.add_item("Save Game", 4)
+	file_menu.add_item("Save Game As…", 5)
+	file_menu.add_item("Load Game…", 6)
 	file_menu.add_separator()
 	file_menu.add_item("Quit", 9)
 	file_menu.id_pressed.connect(_on_file_menu_id)
@@ -635,6 +645,22 @@ func _build_ui() -> void:
 	_wall_delete_btn.pressed.connect(_on_delete_wall_pressed)
 	row8.add_child(_wall_delete_btn)
 
+	# Row 8b: Spawn point tool
+	var row8b := HBoxContainer.new()
+	row8b.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row8b)
+
+	var spawn_btn := Button.new()
+	spawn_btn.text = "⚑"
+	spawn_btn.toggle_mode = true
+	spawn_btn.button_group = tool_group
+	spawn_btn.focus_mode = Control.FOCUS_NONE
+	spawn_btn.tooltip_text = "Spawn point tool — click to place, drag to move, right-click/Delete to remove"
+	spawn_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	spawn_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	spawn_btn.pressed.connect(func(): _on_palette_tool_activated("spawn_point"))
+	row8b.add_child(spawn_btn)
+
 	btn_grid.add_child(HSeparator.new())
 
 	# Row 9: Launch player
@@ -857,6 +883,27 @@ func _build_ui() -> void:
 	_save_as_dialog.add_filter("*.map ; OmniCrawl Map")
 	_save_as_dialog.file_selected.connect(_on_save_as_path_selected)
 	add_child(_save_as_dialog)
+
+	# ── Save Game As dialog — native Save panel for .sav bundles ────────────────
+	_save_game_dialog = FileDialog.new()
+	_save_game_dialog.use_native_dialog = true
+	_save_game_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	_save_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_save_game_dialog.title = "Save Game As"
+	_save_game_dialog.add_filter("*.sav ; OmniCrawl Save")
+	_save_game_dialog.file_selected.connect(_on_save_game_path_selected)
+	add_child(_save_game_dialog)
+
+	# ── Load Game dialog — select a .sav bundle ────────────────────────────────
+	_load_game_dialog = FileDialog.new()
+	_load_game_dialog.use_native_dialog = true
+	_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
+	_load_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_load_game_dialog.title = "Load Game"
+	_load_game_dialog.add_filter("*.sav ; OmniCrawl Save")
+	_load_game_dialog.file_selected.connect(_on_load_game_path_selected)
+	_load_game_dialog.dir_selected.connect(_on_load_game_path_selected)
+	add_child(_load_game_dialog)
 
 	# ── Standalone Grid Offset dialog (Edit > Set Grid Offset…)
 	_offset_dialog = ConfirmationDialog.new()
@@ -1179,6 +1226,10 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 			if _wall_mode_option != null:
 				wall_idx = _wall_mode_option.selected
 			_on_wall_tool_selected(wall_idx)
+		"spawn_point":
+			_map_view.set_fog_tool(0, 64.0)
+			_map_view._set_active_tool(_map_view.Tool.SPAWN_POINT)
+			_set_status("Spawn Point tool — click to place, drag to move, right-click to remove")
 
 
 # ---------------------------------------------------------------------------
@@ -1257,6 +1308,9 @@ func _on_file_menu_id(id: int) -> void:
 		1: _on_open_map_pressed()
 		2: _on_save_map_pressed()
 		3: _on_save_map_as_pressed()
+		4: _on_save_game_pressed()
+		5: _on_save_game_as_pressed()
+		6: _on_load_game_pressed()
 		9: get_tree().quit()
 
 
@@ -2270,10 +2324,7 @@ func _on_save_map_pressed() -> void:
 	if _active_map_bundle_path.is_empty():
 		_on_save_map_as_pressed()
 		return
-	if _map_view and _map_view.has_method("force_fog_sync"):
-		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
-	map.camera_rotation = _player_cam_rotation
 	_save_map_data(map)
 	var ms := _map_service()
 	if ms != null:
@@ -2291,6 +2342,153 @@ func _on_save_map_as_pressed() -> void:
 	_save_as_dialog.current_file = map.map_name + ".map"
 	_save_as_dialog.current_dir = _active_map_bundle_path.get_base_dir() if not _active_map_bundle_path.is_empty() else _maps_dir_abs()
 	_save_as_dialog.popup_centered(Vector2i(900, 600))
+
+
+# ---------------------------------------------------------------------------
+# Save / Load Game
+# ---------------------------------------------------------------------------
+
+func _on_save_game_pressed() -> void:
+	## Quick-save: overwrite the current .sav bundle, or fall through to Save As.
+	if _active_save_bundle_path.is_empty():
+		_on_save_game_as_pressed()
+		return
+	var save_name := _active_save_bundle_path.get_file().get_basename()
+	await _save_game_to_bundle(save_name)
+
+
+func _on_save_game_as_pressed() -> void:
+	if _map() == null:
+		_set_status("No map loaded — nothing to save.")
+		return
+	var dir := _saves_dir_abs()
+	DirAccess.make_dir_recursive_absolute(dir)
+	_save_game_dialog.current_dir = dir
+	var map := _map()
+	_save_game_dialog.current_file = (map.map_name if map != null else "game") + ".sav"
+	_save_game_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_save_game_path_selected(path: String) -> void:
+	## Called after the Save Game As dialog confirms a path.
+	var save_name := path.get_file().get_basename()
+	await _save_game_to_bundle(save_name)
+
+
+func _save_game_to_bundle(save_name: String) -> void:
+	var map := _map()
+	if map == null:
+		_set_status("No map loaded — nothing to save.")
+		return
+	if _active_map_bundle_path.is_empty():
+		_set_status("Save the map first before saving a game session.")
+		return
+
+	# Ensure latest fog is flushed
+	if _map_view != null and _map_view.has_method("force_fog_sync"):
+		_map_view.force_fog_sync()
+	_map_view.save_camera_to_map()
+
+	# Collect fog as Image for the .sav bundle
+	var fog_image: Image = null
+	if _map_view != null:
+		var fog_png: PackedByteArray = await _map_view.get_fog_state()
+		if not fog_png.is_empty():
+			fog_image = Image.new()
+			fog_image.load_png_from_buffer(fog_png)
+
+	# Sync player camera into model before saving
+	var gs := _game_state()
+	if gs != null:
+		gs.player_camera_position = _player_cam_pos
+		gs.player_camera_zoom = _player_cam_zoom
+		gs.player_camera_rotation = _player_cam_rotation
+
+	# Persist
+	if gs != null:
+		var ok := gs.save_session(save_name, fog_image, _active_map_bundle_path)
+		if ok:
+			_active_save_bundle_path = _saves_dir_abs().path_join(save_name + ".sav")
+			_set_status("Game saved: %s" % save_name)
+		else:
+			_set_status("Error: failed to save game.")
+	else:
+		_set_status("Error: game state service unavailable.")
+
+
+func _on_load_game_pressed() -> void:
+	if _game_state() == null:
+		_set_status("Error: game state service unavailable.")
+		return
+	var dir := _saves_dir_abs()
+	DirAccess.make_dir_recursive_absolute(dir)
+	_load_game_dialog.current_dir = dir
+	_load_game_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_load_game_path_selected(path: String) -> void:
+	## Called when the user picks a .sav bundle from the Load Game dialog.
+	var bundle_path := path
+	# Walk up to the nearest .sav directory if the user selected a child file.
+	while not bundle_path.is_empty() and not bundle_path.ends_with(".sav"):
+		var parent := bundle_path.get_base_dir()
+		if parent == bundle_path:
+			break
+		bundle_path = parent
+	if not bundle_path.ends_with(".sav"):
+		_set_status("Invalid save bundle: %s" % path.get_file())
+		return
+
+	var gs := _game_state()
+	if gs == null:
+		_set_status("Error: game state service unavailable.")
+		return
+
+	var bundle: Dictionary = gs.load_session(bundle_path)
+	if bundle.is_empty():
+		_set_status("Failed to load game from: %s" % bundle_path.get_file())
+		return
+
+	# Extract loaded data
+	var state_val: Variant = bundle.get("state", null)
+	var fog_image: Variant = bundle.get("fog_image", null)
+	var map_bundle: String = bundle.get("map_bundle_path", "") as String
+
+	# Load the embedded map
+	if not map_bundle.is_empty():
+		var map: MapData = null
+		var ms := _map_service()
+		if ms != null and ms.has_method("load_map_from_bundle"):
+			map = ms.load_map_from_bundle(map_bundle)
+		else:
+			map = _load_map_from_bundle(map_bundle)
+		if map != null:
+			_active_map_bundle_path = map_bundle
+			_apply_map(map)
+			if ms != null:
+				ms.update(map)
+
+	# Restore fog from the saved image
+	if fog_image is Image and not (fog_image as Image).is_empty():
+		var png_buf: PackedByteArray = (fog_image as Image).save_png_to_buffer()
+		if not png_buf.is_empty() and _map_view != null:
+			_map_view.apply_fog_snapshot(png_buf)
+
+	# Restore player camera
+	if state_val != null:
+		_player_cam_pos = state_val.player_camera_position
+		_player_cam_zoom = state_val.player_camera_zoom
+		_player_cam_rotation = state_val.player_camera_rotation
+
+	_active_save_bundle_path = bundle_path
+
+	# Broadcast everything to connected displays
+	_broadcast_player_viewport()
+	_broadcast_fog_state()
+	_broadcast_player_state()
+
+	var save_label := bundle_path.get_file().get_basename()
+	_set_status("Game loaded: %s" % save_label)
 
 
 func _save_map_as_path(bundle_path: String) -> void:
@@ -2313,10 +2511,7 @@ func _save_map_as_path(bundle_path: String) -> void:
 			_set_status("Error: could not duplicate image.")
 			return
 
-	if _map_view and _map_view.has_method("force_fog_sync"):
-		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
-	map.camera_rotation = _player_cam_rotation
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = new_img_abs
 	_active_map_bundle_path = bundle_path
@@ -2333,8 +2528,12 @@ func _save_map_as_path(bundle_path: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _apply_map(map: MapData) -> void:
-	# Restore player rotation from saved map before the deferred cam init overwrites it.
-	_player_cam_rotation = map.camera_rotation
+	# Reset game state when opening a map directly (not via Load Game).
+	var gs := _game_state()
+	if gs != null:
+		gs.reset_session()
+	_player_cam_rotation = 0
+	_active_save_bundle_path = ""
 	_map_view.load_map(map)
 	if _map_view.map_image.texture == null:
 		_set_status("Map image failed to load: %s" % map.image_path)
@@ -2489,6 +2688,10 @@ func _on_map_walls_changed(map: MapData) -> void:
 	_set_status("Wall added. Save map to persist wall/fog edits.")
 
 
+func _on_map_spawn_points_changed(_map_data: MapData) -> void:
+	_set_status("Spawn points updated. Save map to persist.")
+
+
 func _broadcast_fog_state() -> void:
 	if _map_view == null:
 		return
@@ -2553,6 +2756,10 @@ func _init_player_cam_from_dm() -> void:
 
 func _maps_dir_abs() -> String:
 	return ProjectSettings.globalize_path(MAP_DIR)
+
+
+func _saves_dir_abs() -> String:
+	return ProjectSettings.globalize_path(SAVE_DIR)
 
 
 func _bundle_dir_abs(map_name: String) -> String:

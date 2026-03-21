@@ -1,6 +1,8 @@
 extends IGameStateService
 class_name GameStateService
 
+const _GameSaveDataClass = preload("res://scripts/services/game_state/models/GameSaveData.gd")
+
 ## Set by ServiceBootstrap before _ready() runs.
 var _model: GameStateModel = null
 
@@ -99,3 +101,108 @@ func is_locked(player_id: Variant) -> bool:
 	if _model == null:
 		return false
 	return bool(_model.player_locked.get(player_id, false))
+
+
+# ---------------------------------------------------------------------------
+# Session save / load
+# ---------------------------------------------------------------------------
+
+func save_session(save_name: String, fog_image: Image, map_bundle_path: String) -> bool:
+	if _model == null:
+		return false
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.persistence == null or reg.persistence.service == null:
+		push_error("GameStateService.save_session: persistence service unavailable")
+		return false
+
+	var now := Time.get_datetime_string_from_system(true)
+	var state := _GameSaveDataClass.new()
+	state.save_name = save_name
+	state.map_bundle_path = map_bundle_path
+
+	# Snapshot player positions as serialisable dicts
+	for pid in _model.player_positions.keys():
+		var pos: Variant = _model.player_positions[pid]
+		if pos is Vector2:
+			state.player_positions[pid] = pos
+		else:
+			state.player_positions[pid] = Vector2.ZERO
+	for pid in _model.player_locked.keys():
+		state.player_locked[pid] = bool(_model.player_locked[pid])
+
+	# Player camera
+	state.player_camera_position = _model.player_camera_position
+	state.player_camera_zoom = _model.player_camera_zoom
+	state.player_camera_rotation = _model.player_camera_rotation
+
+	# Timestamps
+	if _model.active_save != null and not _model.active_save.created_at.is_empty():
+		state.created_at = _model.active_save.created_at
+	else:
+		state.created_at = now
+	state.updated_at = now
+
+	var bundle_path := "user://data/saves/%s.sav" % save_name
+	var ok := reg.persistence.service.save_game_bundle(bundle_path, state, fog_image, map_bundle_path)
+	if ok:
+		_model.active_save = state
+		emit_signal("session_saved", save_name)
+	return ok
+
+
+func load_session(save_path: String) -> Dictionary:
+	## Returns the raw bundle dict from PersistenceService on success
+	## ({"state": GameSaveData, "fog_image": Image, "map_bundle_path": String})
+	## or empty dict on failure. Also restores model state.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.persistence == null or reg.persistence.service == null:
+		push_error("GameStateService.load_session: persistence service unavailable")
+		return {}
+
+	var bundle := reg.persistence.service.load_game_bundle(save_path)
+	if bundle.is_empty():
+		return {}
+
+	var state: Variant = bundle.get("state", null)
+	if state == null:
+		return {}
+
+	if _model == null:
+		return {}
+
+	# Restore positions
+	_model.player_positions.clear()
+	for pid in state.player_positions.keys():
+		_model.player_positions[pid] = state.player_positions[pid]
+
+	# Restore locks
+	_model.player_locked.clear()
+	for pid in state.player_locked.keys():
+		_model.player_locked[pid] = state.player_locked[pid]
+
+	# Restore player camera
+	_model.player_camera_position = state.player_camera_position
+	_model.player_camera_zoom = state.player_camera_zoom
+	_model.player_camera_rotation = state.player_camera_rotation
+
+	_model.active_save = state
+	emit_signal("session_loaded", state.save_name)
+	return bundle
+
+
+func list_sessions() -> Array:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.persistence == null or reg.persistence.service == null:
+		return []
+	return reg.persistence.service.list_save_bundles()
+
+
+func reset_session() -> void:
+	if _model == null:
+		return
+	_model.player_positions.clear()
+	_model.player_locked.clear()
+	_model.player_camera_position = Vector2(960.0, 540.0)
+	_model.player_camera_zoom = 1.0
+	_model.player_camera_rotation = 0
+	_model.active_save = null

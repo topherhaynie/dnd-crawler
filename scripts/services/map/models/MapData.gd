@@ -3,11 +3,16 @@ extends Resource
 # ---------------------------------------------------------------------------
 # MapData — serialisable map metadata resource.
 #
-# Holds everything needed to reconstruct a map session:
+# Holds everything needed to reconstruct a map:
 #   - source image path
 #   - grid type and calibration
-#   - viewport pan/zoom state
+#   - DM editing viewport state (camera_position, camera_zoom)
 #   - wall occluder polygon data (painted in Phase 6 editor)
+#   - spawn point markers for player initial placement
+#
+# Runtime session data (player positions, fog, player camera rotation) lives
+# in GameSaveData, not here. camera_rotation is kept for backward compat
+# on load but is no longer the authoritative source — see GameSaveData.
 #
 # GridType enum
 #   SQUARE    — rectangular grid, calibrated by cell_px (pixels per cell)
@@ -40,6 +45,12 @@ var wall_polygons: Array = []
 # Cell pixel size used by GPU fog seed/delta operations.
 var fog_cell_px: int = 4
 
+# --- Spawn points ----------------------------------------------------------
+# Each entry is a Dictionary: {"x": float, "y": float, "label": String}
+# DM places these markers to define where players initially spawn.
+# When empty, BackendRuntime falls back to centre-of-map placement.
+var spawn_points: Array = []
+
 # --- Map objects (Phase 6) ------------------------------------------------
 # Array of serialised MapObject dictionaries placed by DM in editor mode.
 # Kept here so save/load round-trips without Phase 6 code loaded.
@@ -65,6 +76,7 @@ func to_dict() -> Dictionary:
 		"grid_offset": {"x": grid_offset.x, "y": grid_offset.y},
 		"wall_polygons": _serialise_polygons(wall_polygons),
 		"fog_cell_px": fog_cell_px,
+		"spawn_points": _serialise_points(spawn_points),
 		"map_objects": map_objects.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
@@ -83,6 +95,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.grid_offset = Vector2(float(go.get("x", 0.0)), float(go.get("y", 0.0)))
 	m.wall_polygons = _deserialise_polygons(d.get("wall_polygons", []))
 	m.fog_cell_px = int(d.get("fog_cell_px", 4))
+	m.spawn_points = _deserialise_points(d.get("spawn_points", []))
 	m.map_objects = d.get("map_objects", []).duplicate(true)
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
@@ -110,6 +123,28 @@ static func _deserialise_polygons(raw: Array) -> Array:
 		for pt in poly:
 			pts.append(Vector2(float(pt.get("x", 0.0)), float(pt.get("y", 0.0))))
 		out.append(pts)
+	return out
+
+
+static func _serialise_points(pts: Array) -> Array:
+	var out: Array = []
+	for pt in pts:
+		if pt is Dictionary:
+			out.append(pt.duplicate())
+		elif pt is Vector2:
+			out.append({"x": float((pt as Vector2).x), "y": float((pt as Vector2).y), "label": ""})
+	return out
+
+
+static func _deserialise_points(raw: Array) -> Array:
+	var out: Array = []
+	for pt in raw:
+		if pt is Dictionary:
+			out.append({
+				"x": float(pt.get("x", 0.0)),
+				"y": float(pt.get("y", 0.0)),
+				"label": str(pt.get("label", "")),
+			})
 	return out
 
 

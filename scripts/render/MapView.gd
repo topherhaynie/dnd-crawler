@@ -36,7 +36,8 @@ enum Tool {
 	PAN,
 	ZOOM,
 	PLAYER_ZOOM,
-	WALL
+	WALL,
+	SPAWN_POINT
 }
 
 const ZOOM_MIN: float = 0.1
@@ -52,6 +53,7 @@ const ROTATION_STEP: int = 90 ## degrees per rotate click
 @onready var grid_overlay: Node2D = $GridOverlay
 @onready var wall_layer: Node2D = $WallLayer
 @onready var wall_visual_layer: Node2D = $WallVisualLayer
+@onready var spawn_point_layer: Node2D = $SpawnPointLayer
 @onready var object_layer: Node2D = get_node_or_null("ObjectLayer") as Node2D
 @onready var fog_overlay: FogSystem = $FogSystem as FogSystem
 @onready var token_layer: Node2D = $TokenLayer
@@ -120,6 +122,14 @@ var _pan_start_mouse: Vector2 = Vector2.ZERO
 var _pan_start_cam: Vector2 = Vector2.ZERO
 var _map_rotation: int = 0 ## Current map rotation in degrees (0, 90, 180, 270)
 
+## Spawn point editing state
+var _dragging_spawn_index: int = -1
+var _selected_spawn_index: int = -1
+const SPAWN_MARKER_RADIUS: float = 14.0
+const SPAWN_MARKER_COLOR: Color = Color(0.2, 0.85, 0.4, 0.7)
+const SPAWN_MARKER_SELECTED_COLOR: Color = Color(1.0, 0.9, 0.2, 0.9)
+const SPAWN_LABEL_COLOR: Color = Color(1.0, 1.0, 1.0, 0.9)
+
 
 func _set_active_tool(tool: Tool) -> void:
 	# Clear transient input state when switching tools to avoid "stuck" drags
@@ -139,6 +149,7 @@ signal fog_changed(map: MapData)
 @warning_ignore("unused_signal")
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
+signal spawn_points_changed(map: MapData)
 signal token_drag_started(token_id: Variant)
 signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
 
@@ -182,6 +193,7 @@ func load_map(map: MapData) -> void:
 	_load_fog_from_map(map)
 	_refresh_fog_overlay()
 	_rebuild_wall_occluders(map)
+	_rebuild_spawn_markers(map)
 	# When _fog_all_hidden is true the configure() call inside
 	# _refresh_fog_overlay already created a fully-black history image —
 	# no need to iterate millions of cells through seed_from_hidden.
@@ -525,9 +537,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	# --- Spawn point tool input -------------------------------------------
+	if active_tool == Tool.SPAWN_POINT and _handle_spawn_point_input(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and not key_event.echo and (key_event.keycode == KEY_DELETE or key_event.keycode == KEY_BACKSPACE):
+			if active_tool == Tool.SPAWN_POINT and _selected_spawn_index >= 0:
+				remove_spawn_point(_selected_spawn_index)
+				get_viewport().set_input_as_handled()
+				return
 			if delete_selected_wall():
 				get_viewport().set_input_as_handled()
 				return
@@ -1051,6 +1072,8 @@ func apply_render_profile(profile: int) -> void:
 	if wall_layer:
 		wall_layer.visible = is_dm_view
 		wall_layer.z_index = RenderLayer.WALL
+	if spawn_point_layer:
+		spawn_point_layer.visible = is_dm_view
 	_refresh_fog_overlay()
 
 
@@ -1068,6 +1091,8 @@ func _apply_layer_order() -> void:
 	wall_layer.z_index = RenderLayer.WALL
 	if wall_visual_layer:
 		wall_visual_layer.z_index = RenderLayer.WALL
+	if spawn_point_layer:
+		spawn_point_layer.z_index = RenderLayer.OBJECT
 	_ensure_object_layer()
 	if object_layer:
 		object_layer.z_index = RenderLayer.OBJECT
@@ -1081,6 +1106,8 @@ func _apply_layer_visibility() -> void:
 	var is_dm := _render_profile == RenderProfile.DM
 	if wall_visual_layer:
 		wall_visual_layer.visible = is_dm
+	if spawn_point_layer:
+		spawn_point_layer.visible = is_dm
 	if _indicator_overlay:
 		_indicator_overlay.visible = is_dm
 
@@ -1383,3 +1410,173 @@ func _apply_wall_handle_drag(world_pos: Vector2) -> void:
 		if _wall_dragging_handle >= 0 and _wall_dragging_handle < points.size():
 			points[_wall_dragging_handle] = world_pos
 			_set_wall_points(_selected_wall_index, points)
+
+
+# ---------------------------------------------------------------------------
+# Spawn point rendering & editing
+# ---------------------------------------------------------------------------
+
+func _rebuild_spawn_markers(map: MapData) -> void:
+	if spawn_point_layer == null:
+		return
+	for c in spawn_point_layer.get_children():
+		c.queue_free()
+	_selected_spawn_index = -1
+	for i in range(map.spawn_points.size()):
+		var sp: Dictionary = map.spawn_points[i]
+		var pos := Vector2(float(sp.get("x", 0.0)), float(sp.get("y", 0.0)))
+		var label_text: String = str(sp.get("label", ""))
+		_create_spawn_marker(pos, label_text, i)
+
+
+func _create_spawn_marker(pos: Vector2, label_text: String, idx: int) -> Node2D:
+	var marker := Node2D.new()
+	marker.name = "Spawn_%d" % idx
+	marker.position = pos
+	marker.set_meta("spawn_index", idx)
+
+	# Circle
+	var circle := _make_spawn_circle(idx == _selected_spawn_index)
+	circle.name = "Circle"
+	marker.add_child(circle)
+
+	# Arrow/cross icon in centre
+	var icon := _make_spawn_icon()
+	icon.name = "Icon"
+	marker.add_child(icon)
+
+	# Label
+	if not label_text.is_empty():
+		var lbl := Label.new()
+		lbl.name = "Label"
+		lbl.text = label_text
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.position = Vector2(-40, SPAWN_MARKER_RADIUS + 2)
+		lbl.size = Vector2(80, 20)
+		lbl.add_theme_color_override("font_color", SPAWN_LABEL_COLOR)
+		lbl.add_theme_font_size_override("font_size", 12)
+		marker.add_child(lbl)
+
+	spawn_point_layer.add_child(marker)
+	return marker
+
+
+func _make_spawn_circle(selected: bool) -> Polygon2D:
+	var color := SPAWN_MARKER_SELECTED_COLOR if selected else SPAWN_MARKER_COLOR
+	var pts := PackedVector2Array()
+	var segments: int = 24
+	for i in range(segments):
+		var angle := (TAU / float(segments)) * float(i)
+		pts.append(Vector2(cos(angle), sin(angle)) * SPAWN_MARKER_RADIUS)
+	var poly := Polygon2D.new()
+	poly.polygon = pts
+	poly.color = color
+	return poly
+
+
+func _make_spawn_icon() -> Line2D:
+	# Simple cross icon
+	var line := Line2D.new()
+	line.width = 2.0
+	line.default_color = Color.WHITE
+	var r := SPAWN_MARKER_RADIUS * 0.5
+	line.add_point(Vector2(-r, 0))
+	line.add_point(Vector2(r, 0))
+	var line2 := Line2D.new()
+	line2.width = 2.0
+	line2.default_color = Color.WHITE
+	line2.add_point(Vector2(0, -r))
+	line2.add_point(Vector2(0, r))
+	var group := Line2D.new()
+	group.width = 0
+	group.add_child(line)
+	group.add_child(line2)
+	return group
+
+
+func _hit_test_spawn_point(world_pos: Vector2) -> int:
+	## Return spawn point index under world_pos, or -1.
+	if _map == null:
+		return -1
+	var hit_radius := SPAWN_MARKER_RADIUS / camera.zoom.x
+	for i in range(_map.spawn_points.size() - 1, -1, -1):
+		var sp: Dictionary = _map.spawn_points[i]
+		var pos := Vector2(float(sp.get("x", 0.0)), float(sp.get("y", 0.0)))
+		if pos.distance_to(world_pos) <= maxf(hit_radius, SPAWN_MARKER_RADIUS):
+			return i
+	return -1
+
+
+func add_spawn_point(world_pos: Vector2, label_text: String = "") -> void:
+	if _map == null:
+		return
+	var sp := {"x": world_pos.x, "y": world_pos.y, "label": label_text}
+	_map.spawn_points.append(sp)
+	_rebuild_spawn_markers(_map)
+	spawn_points_changed.emit(_map)
+
+
+func remove_spawn_point(idx: int) -> void:
+	if _map == null or idx < 0 or idx >= _map.spawn_points.size():
+		return
+	_map.spawn_points.remove_at(idx)
+	if _selected_spawn_index == idx:
+		_selected_spawn_index = -1
+	elif _selected_spawn_index > idx:
+		_selected_spawn_index -= 1
+	_rebuild_spawn_markers(_map)
+	spawn_points_changed.emit(_map)
+
+
+func move_spawn_point(idx: int, world_pos: Vector2) -> void:
+	if _map == null or idx < 0 or idx >= _map.spawn_points.size():
+		return
+	_map.spawn_points[idx]["x"] = world_pos.x
+	_map.spawn_points[idx]["y"] = world_pos.y
+	# Update marker position directly without full rebuild
+	if spawn_point_layer and idx < spawn_point_layer.get_child_count():
+		spawn_point_layer.get_child(idx).position = world_pos
+	spawn_points_changed.emit(_map)
+
+
+func select_spawn_point(idx: int) -> void:
+	_selected_spawn_index = idx
+	_rebuild_spawn_markers(_map)
+
+
+func _handle_spawn_point_input(event: InputEvent) -> bool:
+	if _map == null:
+		return false
+
+	if event is InputEventMouseButton:
+		var btn := event as InputEventMouseButton
+		var world_pos := get_global_mouse_position()
+		if btn.button_index == MOUSE_BUTTON_LEFT:
+			if btn.pressed:
+				var hit := _hit_test_spawn_point(world_pos)
+				if hit >= 0:
+					_dragging_spawn_index = hit
+					select_spawn_point(hit)
+					return true
+				else:
+					# Click on empty space: place new spawn point
+					add_spawn_point(world_pos)
+					select_spawn_point(_map.spawn_points.size() - 1)
+					return true
+			else:
+				if _dragging_spawn_index >= 0:
+					_dragging_spawn_index = -1
+					spawn_points_changed.emit(_map)
+					return true
+		elif btn.button_index == MOUSE_BUTTON_RIGHT and btn.pressed:
+			var hit := _hit_test_spawn_point(world_pos)
+			if hit >= 0:
+				remove_spawn_point(hit)
+				return true
+
+	if event is InputEventMouseMotion:
+		if _dragging_spawn_index >= 0:
+			move_spawn_point(_dragging_spawn_index, get_global_mouse_position())
+			return true
+
+	return false

@@ -235,18 +235,31 @@ func _ensure_spawn_positions() -> void:
 		return
 	var map_size: Vector2 = _map_view.map_image.texture.get_size() if _map_view.map_image and _map_view.map_image.texture else Vector2(1920, 1080)
 	var origin: Vector2 = map_size * 0.5
+
+	# If a save is active, positions were already restored — just ensure tokens.
+	var gs := _game_state()
+	var has_active_save: bool = gs != null and gs.active_save != null
+
+	# Build spawn point list from MapData (if any).
+	var spawn_pts: Array = map.spawn_points if map.spawn_points.size() > 0 else []
+
 	var idx := 0
-	for profile in _game_state().list_profiles():
+	for profile in gs.list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
-		var current: Vector2 = _game_state().player_positions.get(p.id, Vector2.ZERO)
-		if current == Vector2.ZERO:
-			_game_state().player_positions[p.id] = origin + Vector2((idx % 4) * 40.0, floor(float(idx) / 4.0) * 40.0)
+		var current: Vector2 = gs.player_positions.get(p.id, Vector2.ZERO)
+		if current == Vector2.ZERO and not has_active_save:
+			# Assign to a spawn point (round-robin) or fall back to centre grid
+			if spawn_pts.size() > 0:
+				var sp: Dictionary = spawn_pts[idx % spawn_pts.size()] as Dictionary
+				gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+			else:
+				gs.player_positions[p.id] = origin + Vector2((idx % 4) * 40.0, floor(float(idx) / 4.0) * 40.0)
 		_ensure_token(p)
 		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
 		if token and is_instance_valid(token):
-			token.global_position = _game_state().player_positions[p.id]
+			token.global_position = gs.player_positions[p.id]
 		idx += 1
 	_spawn_initialized = true
 
