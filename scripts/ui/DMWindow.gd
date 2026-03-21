@@ -143,6 +143,7 @@ var _player_cam_pos: Vector2 = Vector2(960.0, 540.0)
 var _player_cam_zoom: float = 1.0
 var _player_cam_rotation: int = 0
 var _player_window_size: Vector2 = Vector2(1920.0, 1080.0)
+var _player_is_fullscreen: bool = false
 var _play_mode: bool = false
 var _play_mode_btn: Button = null
 
@@ -308,6 +309,9 @@ func _init_network_binding() -> void:
 		connected_any = true
 	if nm.has_signal("display_viewport_resized") and not nm.is_connected("display_viewport_resized", Callable(self , "_on_display_viewport_resized")):
 		nm.display_viewport_resized.connect(_on_display_viewport_resized)
+		connected_any = true
+	if nm.has_signal("display_fullscreen_changed") and not nm.is_connected("display_fullscreen_changed", Callable(self , "_on_display_fullscreen_changed")):
+		nm.display_fullscreen_changed.connect(_on_display_fullscreen_changed)
 		connected_any = true
 	if nm.has_signal("display_sync_applied") and not nm.is_connected("display_sync_applied", Callable(self , "_on_display_sync_applied")):
 		nm.display_sync_applied.connect(_on_display_sync_applied)
@@ -956,6 +960,7 @@ func _build_ui() -> void:
 	# to reposition what players see. Hidden until a map is loaded.
 	_map_view.set_viewport_indicator(Rect2())
 	_map_view.viewport_indicator_moved.connect(_on_viewport_indicator_moved)
+	_map_view.viewport_indicator_resized.connect(_on_viewport_indicator_resized)
 
 
 # ---------------------------------------------------------------------------
@@ -1059,11 +1064,57 @@ func _on_display_viewport_resized(_peer_id: int, viewport_size: Vector2) -> void
 	_broadcast_player_viewport()
 
 
+func _on_display_fullscreen_changed(_peer_id: int, is_fullscreen: bool) -> void:
+	_player_is_fullscreen = is_fullscreen
+
+
 func _on_viewport_indicator_moved(new_center: Vector2) -> void:
 	## Called when the DM drags the green box on the DM map.
 	_player_cam_pos = new_center
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
+
+
+func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
+	## Called when the DM drags a corner handle to resize the indicator.
+	## Both paths derive zoom from the new world-space size so the player always
+	## sees the area the indicator shows.  For windowed players the pixel window
+	## size is also updated and a window_resize message is sent.
+	var world_size := new_rect.size
+	if _player_is_fullscreen:
+		# Lock to player window aspect ratio — the OS window cannot resize.
+		world_size = _lock_to_aspect(new_rect.size, _player_window_size)
+
+	_player_cam_pos = new_rect.get_center()
+	# Zoom = pixels wide / world units wide so the indicator area fills the window.
+	_player_cam_zoom = clampf(_player_window_size.x / maxf(world_size.x, 1.0), 0.1, 8.0)
+
+	if not _player_is_fullscreen:
+		# Derive new pixel window size from world_size × new zoom so it is
+		# self-consistent and _update_player_window_size_preserve_world will
+		# be a no-op when the player echoes viewport_resize back to us.
+		var new_pixel_size := (world_size * _player_cam_zoom).max(Vector2(200.0, 200.0))
+		_player_window_size = new_pixel_size
+		_nm_broadcast_to_displays({
+			"msg": "window_resize",
+			"width": int(new_pixel_size.x),
+			"height": int(new_pixel_size.y),
+		})
+
+	_update_viewport_indicator()
+	# Broadcast immediately so the player zooms/pans in real time during the drag,
+	# then also keep the dirty flag so a final clean broadcast fires on release.
+	_broadcast_player_viewport()
+	_broadcast_dirty = true
+	_broadcast_countdown = _BROADCAST_DEBOUNCE
+
+
+func _lock_to_aspect(size: Vector2, reference: Vector2) -> Vector2:
+	## Returns size rescaled to match reference's aspect ratio, using X as primary.
+	if reference.x <= 0.0 or reference.y <= 0.0:
+		return size
+	var aspect := reference.x / reference.y
+	return Vector2(size.x, size.x / aspect)
 
 
 func _change_player_zoom(delta_zoom: float) -> void:

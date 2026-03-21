@@ -99,6 +99,7 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			float(data.get("viewport_width", 1920)),
 			float(data.get("viewport_height", 1080)))
 		_register_display_peer(peer_id, vp)
+		emit_signal("display_fullscreen_changed", peer_id, bool(data.get("fullscreen", false)))
 		return
 
 	if data.get("type", "") == "bind":
@@ -113,6 +114,8 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			float(data.get("viewport_width", 1920)),
 			float(data.get("viewport_height", 1080)))
 		emit_signal("display_viewport_resized", peer_id, vp)
+		if data.has("fullscreen"):
+			emit_signal("display_fullscreen_changed", peer_id, bool(data.get("fullscreen")))
 		return
 
 	if data.get("type", "") == "display_sync_applied" and peer_id in _display_peers:

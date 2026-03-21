@@ -118,6 +118,34 @@ Sent by the DM whenever the player viewport position, zoom, or rotation changes.
 - `position.x`, `position.y` (float): world-space centre of the player viewport
 - `zoom` (float, range `0.1–8.0`): camera zoom level
 - `rotation` (int, one of `0 | 90 | 180 | 270`, default `0`): map rotation in degrees clockwise. Applied to the display camera and compounded with each player's `table_orientation` for input-vector compensation.
+
+- Window resize request (DM -> displays)
+
+Sent by the DM when the player viewport indicator is resized and the player is **not** fullscreen. The player should resize its OS window to the requested pixel dimensions if possible.
+
+```json
+{
+  "msg": "window_resize",
+  "width": 1280,
+  "height": 720
+}
+```
+
+**Fields:**
+- `msg` (string): always `"window_resize"`
+- `width` (int): requested window width in pixels
+- `height` (int): requested window height in pixels
+
+When the player is fullscreen this message is not sent; instead the DM adjusts its `camera_update` zoom/position to reflect the zoom change.
+
+- Viewport resize notification (display -> DM)
+
+Sent by a display peer on initial connection (as part of the `display` handshake) and whenever the window is resized. The DM uses this to keep its indicator box in sync.
+
+**Handshake** (`type: "display"`) and **resize** (`type: "viewport_resize"`) now both carry:
+- `viewport_width` (float): current pixel width
+- `viewport_height` (float): current pixel height
+- `fullscreen` (bool): whether the window is in fullscreen mode. The DM uses this to choose between physical resize (windowed) and zoom-only (fullscreen) when the indicator is dragged.
 ```
 
 ## Backpressure & chunking rules

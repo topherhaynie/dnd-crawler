@@ -137,14 +137,19 @@ func _set_active_tool(tool: Tool) -> void:
 	active_tool = tool
 	_panning = false
 	_dragging_indicator = false
+	_resizing_indicator = false
+	_resize_handle_idx = -1
 	_wall_rect_dragging = false
 	_fog_rect_dragging = false
 	_wall_dragging_handle = -1
 	if typeof(_wall_drag_start_points) == TYPE_ARRAY:
 		_wall_drag_start_points.clear()
 	_reset_cursor()
+	if _indicator_overlay != null:
+		_indicator_overlay.show_handles = (tool == Tool.SELECT)
 
 signal viewport_indicator_moved(new_center: Vector2)
+signal viewport_indicator_resized(new_rect: Rect2)
 signal fog_changed(map: MapData)
 @warning_ignore("unused_signal")
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
@@ -157,6 +162,10 @@ signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
 var _viewport_indicator: Rect2 = Rect2()
 var _indicator_rotation_deg: float = 0.0
 var _dragging_indicator: bool = false
+var _resizing_indicator: bool = false
+var _resize_handle_idx: int = -1  ## 0=TL, 1=TR, 2=BR, 3=BL
+var _resize_anchor_world: Vector2 = Vector2.ZERO
+var _resize_start_rect: Rect2 = Rect2()
 
 ## Token drag state (DM drag-to-reposition)
 var _dragging_token_id: Variant = null
@@ -426,9 +435,13 @@ func _update_cursor(world_pos: Vector2) -> void:
 	var shape: int = DisplayServer.CURSOR_ARROW
 	if _dragging_token_node != null:
 		shape = DisplayServer.CURSOR_MOVE
+	elif _resizing_indicator:
+		shape = DisplayServer.CURSOR_DRAG
 	elif active_tool == Tool.SELECT and _hit_test_tokens(world_pos) != null:
 		shape = DisplayServer.CURSOR_DRAG
 	elif active_tool == Tool.SELECT and _hit_test_spawn_point(world_pos) >= 0:
+		shape = DisplayServer.CURSOR_DRAG
+	elif active_tool == Tool.SELECT and _indicator_overlay != null and _indicator_overlay.get_handle_at(world_pos) >= 0:
 		shape = DisplayServer.CURSOR_DRAG
 	if shape != _current_cursor_shape:
 		_current_cursor_shape = shape
@@ -507,6 +520,42 @@ func _indicator_has_point(world_pos: Vector2) -> bool:
 	var local := (world_pos - center).rotated(deg_to_rad(-_indicator_rotation_deg))
 	var half := _viewport_indicator.size * 0.5
 	return absf(local.x) <= half.x and absf(local.y) <= half.y
+
+
+func _indicator_corners() -> PackedVector2Array:
+	## Returns the 4 world-space corners of the current indicator rect (TL, TR, BR, BL).
+	var center := _viewport_indicator.get_center()
+	var half := _viewport_indicator.size * 0.5
+	var angle := deg_to_rad(_indicator_rotation_deg)
+	return PackedVector2Array([
+		center + Vector2(-half.x, -half.y).rotated(angle),
+		center + Vector2(half.x, -half.y).rotated(angle),
+		center + Vector2(half.x, half.y).rotated(angle),
+		center + Vector2(-half.x, half.y).rotated(angle),
+	])
+
+
+func _compute_resize_rect(mouse_world: Vector2, shift_held: bool) -> Rect2:
+	## Compute a new indicator Rect2 by dragging one corner while keeping the
+	## opposite anchor fixed. Works in the rect's local (rotated) axes.
+	var angle := deg_to_rad(_indicator_rotation_deg)
+	var delta_world := mouse_world - _resize_anchor_world
+	var delta_local := delta_world.rotated(-angle)
+	var new_size := Vector2(absf(delta_local.x), absf(delta_local.y))
+	# Shift: lock to original aspect ratio
+	if shift_held and _resize_start_rect.size.x > 0.0 and _resize_start_rect.size.y > 0.0:
+		var orig_aspect := _resize_start_rect.size.x / _resize_start_rect.size.y
+		if absf(delta_local.x) >= absf(delta_local.y) * orig_aspect:
+			new_size.y = new_size.x / orig_aspect
+		else:
+			new_size.x = new_size.y * orig_aspect
+	# Minimum size prevents degenerate rects
+	new_size = new_size.max(Vector2(50.0, 50.0))
+	# New center: anchor + half_size toward the dragged corner
+	var sx := signf(delta_local.x) if delta_local.x != 0.0 else 1.0
+	var sy := signf(delta_local.y) if delta_local.y != 0.0 else 1.0
+	var new_center := _resize_anchor_world + Vector2(sx * new_size.x * 0.5, sy * new_size.y * 0.5).rotated(angle)
+	return Rect2(new_center - new_size * 0.5, new_size)
 
 
 func rotate_cw() -> void:
@@ -606,6 +655,17 @@ func _unhandled_input(event: InputEvent) -> void:
 								_update_cursor(world_pos)
 								get_viewport().set_input_as_handled()
 								return
+						# Handle resize takes priority over body-drag
+						if _viewport_indicator != Rect2() and _indicator_overlay != null:
+							var handle_idx: int = _indicator_overlay.get_handle_at(world_pos)
+							if handle_idx >= 0:
+								_resizing_indicator = true
+								_resize_handle_idx = handle_idx
+								_resize_start_rect = _viewport_indicator
+								var corners := _indicator_corners()
+								_resize_anchor_world = corners[(handle_idx + 2) % 4]
+								get_viewport().set_input_as_handled()
+								return
 					if _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
 						_dragging_indicator = true
 						get_viewport().set_input_as_handled()
@@ -625,6 +685,9 @@ func _unhandled_input(event: InputEvent) -> void:
 						_dragging_token_offset = Vector2.ZERO
 						_update_cursor(get_global_mouse_position())
 						get_viewport().set_input_as_handled()
+					elif _resizing_indicator:
+						_resizing_indicator = false
+						get_viewport().set_input_as_handled()
 					elif _dragging_indicator:
 						_dragging_indicator = false
 						get_viewport().set_input_as_handled()
@@ -642,7 +705,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		_update_cursor(motion_world_pos)
-		if _dragging_indicator:
+		if _resizing_indicator:
+			var new_rect := _compute_resize_rect(motion_world_pos, Input.is_key_pressed(KEY_SHIFT))
+			_viewport_indicator = new_rect
+			_indicator_overlay.set_rect(_viewport_indicator, _indicator_rotation_deg)
+			viewport_indicator_resized.emit(_viewport_indicator)
+			get_viewport().set_input_as_handled()
+		elif _dragging_indicator:
 			var motion := event as InputEventMouseMotion
 			var world_delta := motion.relative / camera.zoom.x
 			_viewport_indicator = Rect2(
@@ -763,6 +832,10 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 			var sb := event as InputEventMouseButton
 			if sb.pressed:
 				var mouse_pos := get_global_mouse_position()
+				# Indicator (handles and body) takes priority over wall selection.
+				if _viewport_indicator != Rect2() and _indicator_overlay != null:
+					if _indicator_overlay.get_handle_at(mouse_pos) >= 0 or _indicator_has_point(mouse_pos):
+						return false
 				var handle_idx := _hit_test_selected_wall_handle(mouse_pos)
 				if handle_idx >= 0:
 					_wall_dragging_handle = handle_idx

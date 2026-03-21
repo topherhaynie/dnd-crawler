@@ -19,6 +19,8 @@ signal display_peer_registered(peer_id: int, viewport_size: Vector2)
 @warning_ignore("unused_signal")
 signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
 @warning_ignore("unused_signal")
+signal display_fullscreen_changed(peer_id: int, is_fullscreen: bool)
+@warning_ignore("unused_signal")
 signal display_sync_applied(peer_id: int, payload: Dictionary)
 
 func start_server() -> void:

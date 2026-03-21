@@ -78,11 +78,14 @@ func _on_reconnect_timer() -> void:
 
 func _send_handshake() -> void:
 	var vp_size := get_viewport().get_visible_rect().size
+	var mode := DisplayServer.window_get_mode()
+	var is_fs := mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	var packet := JSON.stringify({
 		"type": "display",
 		"role": "player_window",
 		"viewport_width": vp_size.x,
 		"viewport_height": vp_size.y,
+		"fullscreen": is_fs,
 		"protocol_version": 1,
 	})
 	_socket.send_text(packet)
@@ -96,10 +99,13 @@ func _on_viewport_size_changed() -> void:
 	if not _connected:
 		return
 	var vp_size := get_viewport().get_visible_rect().size
+	var mode := DisplayServer.window_get_mode()
+	var is_fs := mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	_socket.send_text(JSON.stringify({
 		"type": "viewport_resize",
 		"viewport_width": vp_size.x,
 		"viewport_height": vp_size.y,
+		"fullscreen": is_fs,
 		"protocol_version": 1,
 	}))
 
@@ -169,6 +175,15 @@ func _handle_packet(raw: String) -> void:
 		"camera_update":
 			# DM moved the player view — apply immediately
 			state_received.emit(data)
+		"window_resize":
+			# DM requests a specific window size — only honour when not fullscreen
+			var w := int(data.get("width", 0))
+			var h := int(data.get("height", 0))
+			if w > 0 and h > 0:
+				var mode := DisplayServer.window_get_mode()
+				var is_fs := mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+				if not is_fs:
+					DisplayServer.window_set_size(Vector2i(w, h))
 		"state":
 			# Full render-state snapshot (Phase 4 will flesh this out)
 			state_received.emit(data)
