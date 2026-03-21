@@ -134,7 +134,20 @@ var _profile_is_new_draft: bool = false
 var _profiles_import_dialog: FileDialog = null
 var _profiles_export_dialog: FileDialog = null
 var _profiles_root: Control = null
+var _profile_color_btn: ColorPickerButton = null
 ## Legacy autoload reference removed — use registry-first `_network()` helper
+
+# ── Player freeze panel ─────────────────────────────────────────────────────
+var _freeze_panel: Control = null
+var _freeze_panel_window: Window = null
+var _freeze_panel_floating: bool = false
+var _freeze_undock_btn: Button = null
+var _freeze_panel_title: Label = null ## shown when docked, hidden when floating
+var _freeze_master_btn: Button = null ## "Freeze All" / "Free All" master toggle
+var _fp_vbox: VBoxContainer = null ## inner scale root — scaled by _apply_ui_scale like _ui_root
+var _freeze_rows: VBoxContainer = null
+var _freeze_row_buttons: Dictionary = {} ## {player_id: CheckButton}
+var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -179,6 +192,8 @@ func _ready() -> void:
 	call_deferred("_init_network_binding")
 	# Defer profile bindings to ensure GameStateService is registered by bootstrap.
 	call_deferred("_ensure_profile_bindings")
+	# Defer game-state bindings for lock/unlock signal + initial freeze panel populate.
+	call_deferred("_ensure_game_state_bindings")
 	_apply_ui_scale()
 	print("DMWindow: ready")
 
@@ -191,6 +206,16 @@ func _ensure_profile_bindings() -> void:
 	if not pm.is_connected("profiles_changed", Callable(self , "_on_profiles_changed")):
 		pm.profiles_changed.connect(_on_profiles_changed)
 	_apply_profile_bindings()
+
+
+func _ensure_game_state_bindings() -> void:
+	var gs := _game_state()
+	if gs == null:
+		call_deferred("_ensure_game_state_bindings")
+		return
+	if not gs.is_connected("player_lock_changed", Callable(self , "_on_player_lock_changed_external")):
+		gs.player_lock_changed.connect(_on_player_lock_changed_external)
+	_refresh_freeze_panel()
 
 
 func _network() -> INetworkService:
@@ -323,7 +348,9 @@ func _init_network_binding() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED:
-		_apply_ui_scale()
+		# Defer so the viewport reports its final settled size, not
+		# an intermediate size mid-transition (e.g. macOS fullscreen animation).
+		call_deferred("_apply_ui_scale")
 
 
 func _process(delta: float) -> void:
@@ -388,17 +415,17 @@ func _build_ui() -> void:
 	_map_view.add_child(_cal_tool)
 
 	# ── CanvasLayer for UI (always on top) ───────────────────────────────────
-	var ui_layer := CanvasLayer.new()
-	ui_layer.name = "UILayer"
-	ui_layer.layer = 10
-	add_child(ui_layer)
+	_ui_layer = CanvasLayer.new()
+	_ui_layer.name = "UILayer"
+	_ui_layer.layer = 10
+	add_child(_ui_layer)
 
 	# Root VBox fills the entire viewport
 	_ui_root = VBoxContainer.new()
 	_ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui_root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ui_root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	ui_layer.add_child(_ui_root)
+	_ui_layer.add_child(_ui_root)
 
 	# ── Menu bar ─────────────────────────────────────────────────────────────
 	var menu_bar := MenuBar.new()
@@ -435,19 +462,22 @@ func _build_ui() -> void:
 
 	# View menu  (indices matter for set_item_checked)
 	# idx 0 → id 20 Toolbar
-	# idx 1 → id 21 Grid Overlay
-	# idx 2 → separator
-	# idx 3 → id 22 Reset View
-	# idx 4 → separator
-	# idx 5 → id 24 Sync Fog Now
-	# idx 6 → separator
-	# idx 7 → id 23 Launch Player Window
+	# idx 1 → id 25 Player Freeze Panel
+	# idx 2 → id 21 Grid Overlay
+	# idx 3 → separator
+	# idx 4 → id 22 Reset View
+	# idx 5 → separator
+	# idx 6 → id 24 Sync Fog Now
+	# idx 7 → separator
+	# idx 8 → id 23 Launch Player Window
 	_view_menu = PopupMenu.new()
 	_view_menu.name = "View"
 	_view_menu.add_check_item("Toolbar", 20)
 	_view_menu.set_item_checked(0, true)
-	_view_menu.add_check_item("Grid Overlay", 21)
+	_view_menu.add_check_item("Player Freeze Panel", 25)
 	_view_menu.set_item_checked(1, true)
+	_view_menu.add_check_item("Grid Overlay", 21)
+	_view_menu.set_item_checked(2, true)
 	_view_menu.add_separator()
 	_view_menu.add_item("Reset View", 22)
 	_view_menu.add_separator()
@@ -748,6 +778,11 @@ func _build_ui() -> void:
 	map_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	map_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content_row.add_child(map_spacer)
+
+	# ── Player freeze panel (vertical side panel, right side) ─────────────────
+	# Added directly to _ui_layer (not _ui_root) so _ui_root.scale does not
+	# push it off-screen on HiDPI / Retina displays.
+	_build_freeze_panel()
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -1305,7 +1340,6 @@ func _undock_palette() -> void:
 	_palette_window = Window.new()
 	_palette_window.title = "Tools"
 	_palette_window.always_on_top = true
-	_palette_window.wrap_controls = true
 	_palette_window.min_size = Vector2i(90, 300)
 	add_child(_palette_window)
 
@@ -1318,7 +1352,12 @@ func _undock_palette() -> void:
 	_toolbar.set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	_palette_window.close_requested.connect(_dock_palette)
-	_palette_window.popup_centered(Vector2i(90, 400))
+	# Center manually to avoid transient-parent error from popup_centered.
+	# Use float arithmetic to avoid integer-division parse warnings.
+	var sc_pal := Vector2(DisplayServer.screen_get_size())
+	_palette_window.position = Vector2i(sc_pal * 0.5) - Vector2i(45, 225)
+	_palette_window.size = Vector2i(90, 450)
+	_palette_window.show()
 
 
 func _dock_palette() -> void:
@@ -1350,6 +1389,319 @@ func _dock_palette() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Player freeze panel — build, undock/redock, refresh
+# ---------------------------------------------------------------------------
+
+func _build_freeze_panel() -> void:
+	# The panel lives directly in _ui_layer (screen coordinates), NOT inside
+	# _ui_root. This keeps it immune to _ui_root.scale on HiDPI displays.
+	_freeze_panel = PanelContainer.new()
+	_freeze_panel.name = "FreezePanel"
+	# Anchor right edge to screen right, full height.
+	_freeze_panel.anchor_left = 1.0
+	_freeze_panel.anchor_right = 1.0
+	_freeze_panel.anchor_top = 0.0
+	_freeze_panel.anchor_bottom = 1.0
+	_freeze_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	# offset_left is set (negative panel width in screen px) by _apply_ui_scale()
+	_freeze_panel.offset_left = -200.0
+	_freeze_panel.offset_right = 0.0
+	_ui_layer.add_child(_freeze_panel)
+
+	var fp_margin := MarginContainer.new()
+	fp_margin.add_theme_constant_override("margin_left", 4)
+	fp_margin.add_theme_constant_override("margin_right", 4)
+	fp_margin.add_theme_constant_override("margin_top", 4)
+	fp_margin.add_theme_constant_override("margin_bottom", 4)
+	_freeze_panel.add_child(fp_margin)
+
+	# _fp_vbox is the scale root — _apply_ui_scale() sets _fp_vbox.scale = Vector2(scale, scale)
+	# exactly as it does for _ui_root, so all child sizes are specified in base (1x) units.
+	_fp_vbox = VBoxContainer.new()
+	_fp_vbox.add_theme_constant_override("separation", 2)
+	fp_margin.add_child(_fp_vbox)
+
+	_freeze_undock_btn = Button.new()
+	_freeze_undock_btn.text = "⇲"
+	_freeze_undock_btn.focus_mode = Control.FOCUS_NONE
+	_freeze_undock_btn.tooltip_text = "Detach / re-dock freeze panel"
+	_freeze_undock_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_freeze_undock_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_freeze_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * _ui_scale()))
+	_freeze_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * _ui_scale()))
+	_freeze_undock_btn.pressed.connect(_on_freeze_undock_btn_pressed)
+	_fp_vbox.add_child(_freeze_undock_btn)
+
+	_fp_vbox.add_child(HSeparator.new())
+
+	_freeze_panel_title = Label.new()
+	_freeze_panel_title.text = "Players"
+	_freeze_panel_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_freeze_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * _ui_scale()))
+	_fp_vbox.add_child(_freeze_panel_title)
+
+	_fp_vbox.add_child(HSeparator.new())
+
+	_freeze_master_btn = Button.new()
+	_freeze_master_btn.text = "Freeze All"
+	_freeze_master_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_freeze_master_btn.custom_minimum_size = Vector2(0, roundi(30.0 * _ui_scale()))
+	_freeze_master_btn.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
+	_freeze_master_btn.pressed.connect(_on_master_freeze_pressed)
+	_fp_vbox.add_child(_freeze_master_btn)
+
+	_fp_vbox.add_child(HSeparator.new())
+
+	var fp_scroll := ScrollContainer.new()
+	fp_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	fp_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_fp_vbox.add_child(fp_scroll)
+
+	_freeze_rows = VBoxContainer.new()
+	_freeze_rows.add_theme_constant_override("separation", 4)
+	_freeze_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fp_scroll.add_child(_freeze_rows)
+
+
+func _refresh_freeze_panel() -> void:
+	if _freeze_rows == null:
+		return
+	# Clear existing rows
+	for child in _freeze_rows.get_children():
+		child.queue_free()
+	_freeze_row_buttons.clear()
+
+	var pm := _profile_service()
+	if pm == null:
+		return
+	var profiles_arr: Array = pm.get_profiles()
+	var gs := _game_state()
+
+	for raw_profile in profiles_arr:
+		if not raw_profile is PlayerProfile:
+			continue
+		var p := raw_profile as PlayerProfile
+		var locked: bool = gs.is_locked(p.id) if gs != null else false
+
+		var row := HBoxContainer.new()
+		row.name = "FreezeRow_" + p.id
+		row.add_theme_constant_override("separation", 6)
+
+		# Swatch is NOT inside the status container so its color is never tinted.
+		var swatch := ColorRect.new()
+		swatch.custom_minimum_size = Vector2(roundi(16.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+		swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		swatch.color = p.indicator_color
+		row.add_child(swatch)
+
+		# Inner container receives the green/red tint — swatch is excluded.
+		var status_box := HBoxContainer.new()
+		status_box.name = "StatusBox"
+		status_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		status_box.add_theme_constant_override("separation", 4)
+		status_box.modulate = Color(0.6, 1.0, 0.6) if not locked else Color(1.0, 0.6, 0.6)
+		row.add_child(status_box)
+
+		var name_lbl := Label.new()
+		name_lbl.text = p.player_name
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_lbl.clip_text = true
+		name_lbl.add_theme_font_size_override("font_size", roundi(15.0 * _ui_scale()))
+		status_box.add_child(name_lbl)
+
+		var chk := CheckButton.new()
+		chk.toggle_mode = true
+		chk.button_pressed = not locked # pressed = can move (green)
+		chk.focus_mode = Control.FOCUS_NONE
+		var icon_px := roundi(32.0 * _ui_scale())
+		chk.custom_minimum_size = Vector2(icon_px * 2.4, icon_px * 1.3)
+		chk.tooltip_text = "Toggle: green = can move, red = paused"
+		# Scale the toggle icons to match the desired display size once in scene tree.
+		chk.ready.connect(func() -> void:
+			for iname: String in ["checked", "unchecked", "checked_disabled", "unchecked_disabled"]:
+				var orig: Texture2D = chk.get_theme_icon(iname, "CheckButton")
+				if orig == null:
+					continue
+				var img: Image = orig.get_image()
+				if img == null:
+					continue
+				var scaled: Image = img.duplicate() as Image
+				if scaled == null:
+					continue
+				scaled.resize(icon_px, icon_px, Image.INTERPOLATE_LANCZOS)
+				chk.add_theme_icon_override(iname, ImageTexture.create_from_image(scaled))
+		)
+		# Capture player id by value for the lambda
+		var pid := p.id
+		chk.toggled.connect(func(on: bool) -> void: _on_player_freeze_toggled(pid, on))
+		status_box.add_child(chk)
+
+		_freeze_rows.add_child(row)
+		_freeze_row_buttons[p.id] = chk
+
+	_update_master_toggle()
+
+
+func _on_player_freeze_toggled(player_id: String, toggled_on: bool) -> void:
+	var gs := _game_state()
+	if gs == null:
+		return
+	if toggled_on:
+		gs.unlock_player(player_id)
+	else:
+		gs.lock_player(player_id)
+
+	var row := _freeze_rows.get_node_or_null("FreezeRow_" + player_id) as HBoxContainer
+	if row != null:
+		var sb := row.get_node_or_null("StatusBox") as HBoxContainer
+		if sb != null:
+			sb.modulate = Color(0.6, 1.0, 0.6) if toggled_on else Color(1.0, 0.6, 0.6)
+	_update_master_toggle()
+
+
+func _on_player_lock_changed_external(player_id: Variant, locked: bool) -> void:
+	var pid := str(player_id)
+	if not _freeze_row_buttons.has(pid):
+		return
+	var chk := _freeze_row_buttons[pid] as CheckButton
+	if chk == null:
+		return
+	chk.set_block_signals(true)
+	chk.button_pressed = not locked
+	chk.set_block_signals(false)
+	var row := _freeze_rows.get_node_or_null("FreezeRow_" + pid) as HBoxContainer
+	if row != null:
+		var sb := row.get_node_or_null("StatusBox") as HBoxContainer
+		if sb != null:
+			sb.modulate = Color(0.6, 1.0, 0.6) if not locked else Color(1.0, 0.6, 0.6)
+	_update_master_toggle()
+
+
+func _on_master_freeze_pressed() -> void:
+	var gs := _game_state()
+	var pm := _profile_service()
+	if gs == null or pm == null:
+		return
+	# If all are currently locked → free all; otherwise lock everyone
+	var all_locked := true
+	for raw in pm.get_profiles():
+		if raw is PlayerProfile:
+			var p := raw as PlayerProfile
+			if not gs.is_locked(p.id):
+				all_locked = false
+				break
+	for raw in pm.get_profiles():
+		if raw is PlayerProfile:
+			var p := raw as PlayerProfile
+			if all_locked:
+				gs.unlock_player(p.id)
+			else:
+				gs.lock_player(p.id)
+	_refresh_freeze_panel()
+
+
+func _update_master_toggle() -> void:
+	if _freeze_master_btn == null:
+		return
+	var gs := _game_state()
+	var pm := _profile_service()
+	if gs == null or pm == null:
+		_freeze_master_btn.text = "Freeze All"
+		return
+	var all_locked := true
+	var any_profile := false
+	for raw in pm.get_profiles():
+		if raw is PlayerProfile:
+			any_profile = true
+			var p := raw as PlayerProfile
+			if not gs.is_locked(p.id):
+				all_locked = false
+				break
+	_freeze_master_btn.text = "Free All" if (any_profile and all_locked) else "Freeze All"
+
+
+func _on_freeze_undock_btn_pressed() -> void:
+	if _freeze_panel_floating:
+		_dock_freeze_panel()
+	else:
+		_undock_freeze_panel()
+
+
+func _undock_freeze_panel() -> void:
+	if _freeze_panel_floating or _freeze_panel == null:
+		return
+	_freeze_panel_floating = true
+	if _freeze_undock_btn:
+		_freeze_undock_btn.text = "⇱"
+		_freeze_undock_btn.tooltip_text = "Re-dock freeze panel"
+
+	# Hide title — the Window titlebar already shows "Players"
+	if _freeze_panel_title != null:
+		_freeze_panel_title.hide()
+
+	_freeze_panel_window = Window.new()
+	_freeze_panel_window.title = "Players"
+	_freeze_panel_window.always_on_top = true
+	_freeze_panel_window.min_size = Vector2i(260, 300)
+	add_child(_freeze_panel_window)
+
+	var old_parent := _freeze_panel.get_parent()
+	if old_parent:
+		old_parent.remove_child(_freeze_panel)
+	# Reset grow direction before reparenting; the CanvasLayer used GROW_DIRECTION_BEGIN
+	# for right-edge anchoring, which causes the panel to overflow off-screen in a Window.
+	_freeze_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_freeze_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_freeze_panel_window.add_child(_freeze_panel)
+	_freeze_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+
+	_freeze_panel_window.close_requested.connect(_dock_freeze_panel)
+	# Center manually to avoid transient-parent error from popup_centered.
+	# Use float arithmetic to avoid integer-division parse warnings.
+	var sc_frz := Vector2(DisplayServer.screen_get_size())
+	_freeze_panel_window.position = Vector2i(sc_frz * 0.5) - Vector2i(130, 250)
+	_freeze_panel_window.size = Vector2i(260, 500)
+	_freeze_panel_window.show()
+
+	if _view_menu != null:
+		_view_menu.set_item_checked(1, true)
+
+
+func _dock_freeze_panel() -> void:
+	if not _freeze_panel_floating or _freeze_panel == null:
+		return
+	_freeze_panel_floating = false
+	if _freeze_undock_btn:
+		_freeze_undock_btn.text = "⇲"
+		_freeze_undock_btn.tooltip_text = "Detach / re-dock freeze panel"
+
+	if _freeze_panel_window:
+		_freeze_panel_window.remove_child(_freeze_panel)
+
+	# Re-anchor to right edge of screen in the CanvasLayer
+	_freeze_panel.anchor_left = 1.0
+	_freeze_panel.anchor_right = 1.0
+	_freeze_panel.anchor_top = 0.0
+	_freeze_panel.anchor_bottom = 1.0
+	_freeze_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+
+	if _ui_layer != null:
+		_ui_layer.add_child(_freeze_panel)
+		_apply_freeze_panel_size()
+
+	# Restore title visibility now we're docked again
+	if _freeze_panel_title != null:
+		_freeze_panel_title.show()
+
+	if _freeze_panel_window:
+		_freeze_panel_window.queue_free()
+		_freeze_panel_window = null
+
+	if _view_menu != null:
+		_view_menu.set_item_checked(1, true)
+
+
+# ---------------------------------------------------------------------------
 # Menu handlers
 # ---------------------------------------------------------------------------
 
@@ -1378,11 +1730,15 @@ func _on_view_menu_id(id: int) -> void:
 		20: # Toggle toolbar
 			_toolbar.visible = !_toolbar.visible
 			_view_menu.set_item_checked(0, _toolbar.visible)
+		25: # Toggle player freeze panel
+			if _freeze_panel != null:
+				_freeze_panel.visible = !_freeze_panel.visible
+				_view_menu.set_item_checked(1, _freeze_panel.visible)
 		21: # Toggle grid overlay
 			if _map_view:
 				var go: Node2D = _map_view.grid_overlay
 				go.visible = !go.visible
-				_view_menu.set_item_checked(1, go.visible)
+				_view_menu.set_item_checked(2, go.visible)
 		22: # Reset DM view
 			if _map_view:
 				_map_view._reset_camera()
@@ -1691,6 +2047,20 @@ func _build_profiles_dialog() -> void:
 	_profile_orientation_spin.suffix = "°"
 	form.add_child(_profile_orientation_spin)
 
+	var color_lbl := Label.new(); color_lbl.text = "Indicator Color:"; form.add_child(color_lbl)
+	_profile_color_btn = ColorPickerButton.new()
+	_profile_color_btn.color = Color.WHITE
+	_profile_color_btn.custom_minimum_size = Vector2(roundi(80.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	# Configure the inner ColorPicker for a cleaner, system-like appearance:
+	# disable alpha (not needed for token colors) and use the HSV colour wheel.
+	_profile_color_btn.ready.connect(func() -> void:
+		var cp := _profile_color_btn.get_picker() as ColorPicker
+		if cp != null:
+			cp.edit_alpha = false
+			cp.picker_shape = ColorPicker.SHAPE_VHS_CIRCLE
+	)
+	form.add_child(_profile_color_btn)
+
 	var bind_sep := HSeparator.new()
 	right_panel.add_child(bind_sep)
 
@@ -1843,6 +2213,10 @@ func _clear_profile_form() -> void:
 		_profile_dash_check.button_pressed = false
 	_profile_input_type_option.select(0)
 	_profile_input_id_edit.text = ""
+	if _profile_color_btn:
+		_profile_color_btn.color = Color.WHITE
+	if _profile_orientation_spin:
+		_profile_orientation_spin.value = 0
 	_profile_extras_edit.text = "{}"
 	_on_profile_vision_selected(0)
 	_update_profile_action_state()
@@ -1880,6 +2254,8 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
 	if _profile_orientation_spin:
 		_profile_orientation_spin.value = p.table_orientation
+	if _profile_color_btn:
+		_profile_color_btn.color = p.indicator_color
 	_on_profile_vision_selected(_profile_vision_option.selected)
 	_update_profile_action_state()
 
@@ -2008,6 +2384,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 		p.input_id = raw_input_id
 	if _profile_orientation_spin:
 		p.table_orientation = int(_profile_orientation_spin.value)
+	if _profile_color_btn:
+		p.indicator_color = _profile_color_btn.color
 
 	var extras_raw := _profile_extras_edit.text.strip_edges()
 	if extras_raw.is_empty():
@@ -2161,6 +2539,7 @@ func _on_profiles_changed() -> void:
 	if _profiles_dialog and _profiles_dialog.visible:
 		_refresh_profiles_list()
 	_update_profile_action_state()
+	_refresh_freeze_panel()
 
 
 func _on_token_drag_started(token_id: Variant) -> void:
@@ -2968,6 +3347,20 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 	return OK
 
 
+func _apply_freeze_panel_size() -> void:
+	## Set the freeze panel's screen-space width. Called from _apply_ui_scale()
+	## and _dock_freeze_panel(). The panel lives directly in the CanvasLayer
+	## (not _ui_root), so it is NOT affected by _ui_root.scale.
+	if _freeze_panel == null:
+		return
+	var scale := _ui_scale()
+	var panel_w := roundi(200.0 * scale)
+	_freeze_panel.offset_left = float(-panel_w)
+	_freeze_panel.offset_right = 0.0
+	_freeze_panel.offset_top = 0.0
+	_freeze_panel.offset_bottom = 0.0
+
+
 func _apply_ui_scale() -> void:
 	var scale := _ui_scale()
 	if _toolbar:
@@ -2975,6 +3368,19 @@ func _apply_ui_scale() -> void:
 		_toolbar.custom_minimum_size = Vector2(roundi(72.0 * scale), 0)
 	if _ui_root:
 		_ui_root.scale = Vector2(scale, scale)
+	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
+		_apply_freeze_panel_size()
+	# Update freeze panel static widget sizes and rebuild rows at new scale.
+	if _freeze_undock_btn:
+		_freeze_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))
+		_freeze_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	if _freeze_panel_title:
+		_freeze_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * scale))
+	if _freeze_master_btn:
+		_freeze_master_btn.custom_minimum_size = Vector2(0, roundi(30.0 * scale))
+		_freeze_master_btn.add_theme_font_size_override("font_size", roundi(13.0 * scale))
+	_refresh_freeze_panel()
+	_apply_freeze_panel_size()
 	if _profiles_dialog:
 		var vp := get_viewport().get_visible_rect().size
 		_profiles_dialog.min_size = Vector2i(roundi(vp.x * 0.72), roundi(vp.y * 0.72))

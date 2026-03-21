@@ -178,6 +178,12 @@ var _current_cursor_shape: int = DisplayServer.CURSOR_ARROW
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
 
+## Temporary opaque-black cover shown on the player side during map load.
+## Prevents the map from flashing visible before the fog shader's GPU pipeline
+## has compiled and rendered its first frame.
+var _fog_loading_cover: ColorRect = null
+var _fog_cover_frames_remaining: int = 0
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -186,6 +192,16 @@ var _indicator_overlay: Node2D = null
 func load_map(map: MapData) -> void:
 	## Load a MapData and display it. Safe to call from DM or Player process.
 	_map = map
+
+	# On the player side, show an opaque black cover BEFORE assigning the map
+	# texture so the map is never visible without fog.  The cover is removed
+	# after a few process frames once the fog shader has compiled and the
+	# SubViewport history textures have rendered.
+	if not is_dm_view and _fog_loading_cover != null:
+		_fog_loading_cover.position = Vector2(-50000, -50000)
+		_fog_loading_cover.size = Vector2(100000, 100000)
+		_fog_loading_cover.visible = true
+		_fog_cover_frames_remaining = 3
 
 	if map.image_path != "":
 		var img := Image.load_from_file(map.image_path)
@@ -211,7 +227,11 @@ func load_map(map: MapData) -> void:
 		var _reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		if _reg != null and _reg.fog != null:
 			_reg.fog.reset()
-			_reg.fog.seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
+			# Only seed from hidden cells when there are cells to hide.
+			# An empty dictionary would make everything fully revealed,
+			# exposing the full map on the player side before the DM snapshot arrives.
+			if not _fog_hidden_cells.is_empty():
+				_reg.fog.seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
 	if fog_overlay and fog_overlay.has_method("set_dm_reveals"):
 		fog_overlay.set_dm_reveals(_build_dm_reveal_sources(map))
 
@@ -477,6 +497,16 @@ func _ready() -> void:
 	_apply_layer_order()
 	apply_render_profile(RenderProfile.DM if is_dm_view else RenderProfile.PLAYER)
 
+	# Shader-free black cover — blocks map exposure on the player side while
+	# the fog overlay's GPU shader compiles and SubViewports render.
+	_fog_loading_cover = ColorRect.new()
+	_fog_loading_cover.name = "FogLoadingCover"
+	_fog_loading_cover.color = Color(0.0, 0.0, 0.0, 1.0)
+	_fog_loading_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fog_loading_cover.visible = false
+	_fog_loading_cover.z_index = RenderLayer.FOG + 1
+	add_child(_fog_loading_cover)
+
 
 func set_viewport_indicator(world_rect: Rect2, rotation_deg: float = 0.0) -> void:
 	## Set the player-viewport indicator rect in world space. Pass Rect2() to hide.
@@ -727,6 +757,14 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	# Tick the player-side fog loading cover.  After enough frames for the
+	# fog shader to compile and the GPU history SubViewports to render, the
+	# cover is hidden so the properly-fogged map becomes visible.
+	if _fog_cover_frames_remaining > 0:
+		_fog_cover_frames_remaining -= 1
+		if _fog_cover_frames_remaining <= 0 and _fog_loading_cover != null:
+			_fog_loading_cover.visible = false
+
 	if allow_keyboard_pan:
 		# Smooth arrow-key pan (bypasses UI focus).
 		var kdir := Vector2.ZERO

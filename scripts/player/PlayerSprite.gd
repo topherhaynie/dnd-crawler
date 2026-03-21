@@ -17,6 +17,7 @@ var perception_mod: int = 0
 var is_dashing: bool = false
 var vision_scale: float = 1.0
 var vision_radius_px: float = 60.0
+var indicator_color_str: String = "" ## hex from PlayerProfile.indicator_color; empty = fall back to id-hash
 var _movement_input: Vector2 = Vector2.ZERO
 var _last_nonzero_dir: Vector2 = Vector2.RIGHT
 var _remote_smoothing_enabled: bool = false
@@ -78,6 +79,7 @@ func apply_from_state(data: Dictionary) -> void:
 	darkvision_range = float(data.get("darkvision_range", 60.0))
 	perception_mod = int(data.get("perception_mod", 0))
 	is_dashing = bool(data.get("is_dashing", false))
+	indicator_color_str = str(data.get("indicator_color", ""))
 	var default_vision_scale := 0.5 if is_dashing else 1.0
 	vision_scale = clampf(float(data.get("vision_scale", default_vision_scale)), 0.1, 4.0)
 	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
@@ -170,7 +172,12 @@ func step_authoritative_motion(_delta: float, speed_px_per_second: float, bounds
 
 
 func _update_visuals() -> void:
-	sprite.modulate = _color_from_id(player_id)
+	# Use the profile-assigned indicator color when available; fall back to
+	# the id-hash color for backwards-compat (e.g. player display client).
+	if indicator_color_str.length() >= 6:
+		sprite.modulate = Color.html(indicator_color_str)
+	else:
+		sprite.modulate = _color_from_id(player_id)
 	if vision_type == VisionType.DARKVISION:
 		vision_light.texture = _get_or_create_radial_light_texture()
 	else:

@@ -196,6 +196,7 @@ func build_player_state_payload() -> Array:
 			"vision_scale": _vision_scale_for_profile(p),
 			"token_diameter_px": token_diameter_px,
 			"facing": token.rotation if token and is_instance_valid(token) else 0.0,
+			"indicator_color": p.indicator_color.to_html(false),
 			"position": {"x": pos.x, "y": pos.y},
 		})
 	return players
@@ -277,8 +278,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 				"perception_mod": profile.perception_mod,
 				"is_dashing": bool(profile.extras.get("is_dashing", false)),
-				"vision_scale": _vision_scale_for_profile(profile),
-				"position": {
+				"vision_scale": _vision_scale_for_profile(profile), "indicator_color": profile.indicator_color.to_html(false), "position": {
 					"x": _game_state().player_positions.get(profile.id, Vector2.ZERO).x,
 					"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
 				},
@@ -305,6 +305,7 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 		"perception_mod": profile.perception_mod,
 		"is_dashing": bool(profile.extras.get("is_dashing", false)),
 		"vision_scale": _vision_scale_for_profile(profile),
+		"indicator_color": profile.indicator_color.to_html(false),
 		"position": {
 			"x": _game_state().player_positions.get(profile.id, Vector2.ZERO).x,
 			"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
