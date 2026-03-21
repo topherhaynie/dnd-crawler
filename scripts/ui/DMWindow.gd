@@ -2464,7 +2464,7 @@ func _on_load_game_path_selected(path: String) -> void:
 			map = _load_map_from_bundle(map_bundle)
 		if map != null:
 			_active_map_bundle_path = map_bundle
-			_apply_map(map)
+			_apply_map(map, true)
 			if ms != null:
 				ms.update(map)
 
@@ -2474,11 +2474,18 @@ func _on_load_game_path_selected(path: String) -> void:
 		if not png_buf.is_empty() and _map_view != null:
 			_map_view.apply_fog_snapshot(png_buf)
 
-	# Restore player camera
+	# Restore player camera from save
 	if state_val != null:
 		_player_cam_pos = state_val.player_camera_position
 		_player_cam_zoom = state_val.player_camera_zoom
 		_player_cam_rotation = state_val.player_camera_rotation
+		_update_viewport_indicator()
+
+	# Sync restored player positions to backend tokens
+	if _backend and _backend.has_method("sync_profiles"):
+		_backend.sync_profiles()
+	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
+		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 
 	_active_save_bundle_path = bundle_path
 
@@ -2527,25 +2534,28 @@ func _save_map_as_path(bundle_path: String) -> void:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-func _apply_map(map: MapData) -> void:
-	# Reset game state when opening a map directly (not via Load Game).
-	var gs := _game_state()
-	if gs != null:
-		gs.reset_session()
-	_player_cam_rotation = 0
-	_active_save_bundle_path = ""
+func _apply_map(map: MapData, from_save: bool = false) -> void:
+	if not from_save:
+		# Reset game state when opening a map directly (not via Load Game).
+		var gs := _game_state()
+		if gs != null:
+			gs.reset_session()
+		_player_cam_rotation = 0
+		_active_save_bundle_path = ""
 	_map_view.load_map(map)
 	if _map_view.map_image.texture == null:
 		_set_status("Map image failed to load: %s" % map.image_path)
 		return
-	# Player cam is initialised to the DM's initial view once the camera settles.
-	call_deferred("_init_player_cam_from_dm")
+	if not from_save:
+		# Player cam is initialised to the DM's initial view once the camera settles.
+		call_deferred("_init_player_cam_from_dm")
 	if _backend and _backend.has_method("reset_for_new_map"):
 		_backend.reset_for_new_map()
 	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
 		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
-	_broadcast_fog_state()
-	_broadcast_player_state()
+	if not from_save:
+		_broadcast_fog_state()
+		_broadcast_player_state()
 	_grid_option.disabled = false
 	_grid_option.select(_grid_option.get_item_index(map.grid_type))
 

@@ -269,6 +269,15 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 # === Public API ===
 
 func get_fog_state() -> PackedByteArray:
+	# When fog rendering is disabled the GPU history is stale — _process,
+	# _on_fog_stroke_applied, and _bake_live_los_into_history all skip — so
+	# fall back to the CPU model which always receives brush strokes.
+	if not _fog_enabled:
+		var cpu_model := _fog_model()
+		if cpu_model != null and cpu_model.history_image != null and not cpu_model.history_image.is_empty():
+			return cpu_model.history_image.save_png_to_buffer()
+		return PackedByteArray()
+	# Read from GPU to capture both manual reveals AND LOS accumulation.
 	if _history_gpu_ready:
 		if _history_swap_pending or _history_seed_pending:
 			await get_tree().process_frame

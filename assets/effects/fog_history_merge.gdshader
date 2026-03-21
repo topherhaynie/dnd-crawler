@@ -25,5 +25,7 @@ void fragment() {
         out_mask = mix(out_mask, paint_sample.r, paint_sample.a);
     }
 
-    COLOR = vec4(out_mask, 0.0, 0.0, 1.0);
+    // Write to all RGB channels so L8 conversion (luminance) preserves the
+    // full value instead of only ~21% from the red-channel contribution.
+    COLOR = vec4(out_mask, out_mask, out_mask, 1.0);
 }
