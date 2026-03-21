@@ -1,4 +1,5 @@
 extends Node
+class_name BackendRuntime
 
 # ---------------------------------------------------------------------------
 # BackendRuntime — authoritative gameplay backend for the DM host process.
@@ -17,7 +18,7 @@ const NORMAL_VISION_HALF_ANGLE_RAD: float = 0.9599311 ## 55 degrees
 const NORMAL_VISION_RANGE_FEET: float = 30.0
 const ENABLE_AUTOMATIC_FOG_REVEAL: bool = false
 
-var _map_view: Node2D = null
+var _map_view: MapView = null
 var _dm_tokens: Dictionary = {}
 var _spawn_initialized: bool = false
 var _force_los_reveal: bool = true
@@ -45,12 +46,12 @@ func _map() -> MapData:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry != null and registry.map != null and registry.map.model != null:
 		return registry.map.model
-	if _map_view != null and _map_view.has_method("get_map"):
-		return _map_view.get_map() as MapData
+	if _map_view != null:
+		return _map_view.get_map()
 	return null
 
 
-func configure(map_view: Node2D) -> void:
+func configure(map_view: MapView) -> void:
 	_map_view = map_view
 
 
@@ -104,7 +105,7 @@ func step(delta: float) -> bool:
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
-		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
+		var token: PlayerSprite = _dm_tokens.get(p.id, null) as PlayerSprite
 		if token == null or not is_instance_valid(token):
 			token = _ensure_token(p)
 		if token == null:
@@ -112,11 +113,9 @@ func step(delta: float) -> bool:
 		# Skip tokens being dragged by the DM
 		if _dragging_token_ids.has(p.id):
 			continue
-		if token.has_method("set_token_diameter_px"):
-			token.set_token_diameter_px(_token_diameter_px_for_map(map))
+		token.set_token_diameter_px(_token_diameter_px_for_map(map))
 		var token_radius_px := _token_diameter_px_for_map(map) * 0.5
-		if token.has_method("set_vision_radius_px"):
-			token.set_vision_radius_px(_profile_vision_radius_px(p, map))
+		token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = Vector2.ZERO
 		var imgr := _input_manager()
 		if imgr != null:
@@ -207,25 +206,23 @@ func get_dm_token_nodes() -> Dictionary:
 
 
 func begin_token_drag(token_id: Variant) -> void:
-	var token: Node2D = _dm_tokens.get(token_id, null) as Node2D
+	var token: PlayerSprite = _dm_tokens.get(token_id, null) as PlayerSprite
 	if token == null or not is_instance_valid(token):
 		return
 	_dragging_token_ids[token_id] = true
-	if token.has_method("set_light_suppressed"):
-		token.set_light_suppressed(true)
+	token.set_light_suppressed(true)
 
 
 func end_token_drag(token_id: Variant, new_world_pos: Vector2) -> void:
 	_dragging_token_ids.erase(token_id)
-	var token: Node2D = _dm_tokens.get(token_id, null) as Node2D
+	var token: PlayerSprite = _dm_tokens.get(token_id, null) as PlayerSprite
 	if token == null or not is_instance_valid(token):
 		return
 	token.global_position = new_world_pos
 	var gs := _game_state()
 	if gs != null:
 		gs.player_positions[token_id] = new_world_pos
-	if token.has_method("set_light_suppressed"):
-		token.set_light_suppressed(false)
+	token.set_light_suppressed(false)
 
 
 func _ensure_spawn_positions() -> void:
@@ -265,9 +262,9 @@ func _ensure_spawn_positions() -> void:
 	_spawn_initialized = true
 
 
-func _ensure_token(profile: PlayerProfile) -> Node2D:
+func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 	if _dm_tokens.has(profile.id):
-		var existing = _dm_tokens[profile.id]
+		var existing: PlayerSprite = _dm_tokens[profile.id] as PlayerSprite
 		if is_instance_valid(existing):
 			existing.apply_from_state({
 				"id": profile.id,
@@ -288,13 +285,12 @@ func _ensure_token(profile: PlayerProfile) -> Node2D:
 
 	if _map_view == null or PlayerSpriteScene == null:
 		return null
-	var token: Node2D = PlayerSpriteScene.instantiate() as Node2D
+	var token: PlayerSprite = PlayerSpriteScene.instantiate() as PlayerSprite
 	if token == null:
 		return null
 	token.name = "DMToken_%s" % profile.id.left(8)
 	_map_view.get_token_layer().add_child(token)
-	if token.has_method("set_vision_render_enabled"):
-		token.set_vision_render_enabled(false)
+	token.set_vision_render_enabled(false)
 	token.apply_from_state({
 		"id": profile.id,
 		"name": profile.player_name,

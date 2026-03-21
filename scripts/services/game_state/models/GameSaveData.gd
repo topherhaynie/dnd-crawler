@@ -27,6 +27,12 @@ var player_camera_rotation: int = 0
 # --- Fog reference ----------------------------------------------------------
 var fog_image_path: String = "fog.png" ## Relative path within .sav bundle
 
+# --- Token runtime state ----------------------------------------------------
+## Runtime-toggleable token state keyed by token ID.
+## Overrides the initial state loaded from the embedded map bundle on load.
+## Format: {"<token_id>": {"is_visible_to_players": bool}}
+var token_states: Dictionary = {}
+
 # --- Timestamps -------------------------------------------------------------
 var created_at: String = ""
 var updated_at: String = ""
@@ -61,6 +67,7 @@ func to_dict() -> Dictionary:
 		"player_camera_zoom": player_camera_zoom,
 		"player_camera_rotation": player_camera_rotation,
 		"fog_image_path": fog_image_path,
+		"token_states": token_states,
 		"created_at": created_at,
 		"updated_at": updated_at,
 	}
@@ -93,6 +100,9 @@ static func from_dict(d: Dictionary) -> GameSaveData:
 	s.player_camera_zoom = float(d.get("player_camera_zoom", 1.0))
 	s.player_camera_rotation = int(d.get("player_camera_rotation", 0))
 	s.fog_image_path = str(d.get("fog_image_path", "fog.png"))
+	var raw_ts: Variant = d.get("token_states", {})
+	if raw_ts is Dictionary:
+		s.token_states = raw_ts as Dictionary
 	s.created_at = str(d.get("created_at", ""))
 	s.updated_at = str(d.get("updated_at", ""))
 	return s

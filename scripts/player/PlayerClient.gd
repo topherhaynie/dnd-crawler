@@ -1,4 +1,5 @@
 extends Node
+class_name PlayerClient
 
 # ---------------------------------------------------------------------------
 # PlayerClient — WebSocket client that runs inside the Player display process.

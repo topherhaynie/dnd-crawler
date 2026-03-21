@@ -29,7 +29,7 @@ const SAVE_DIR := "user://data/saves/"
 const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
 # ── UI node references ──────────────────────────────────────────────────────
-var _map_view: Node2D = null
+var _map_view: MapView = null
 var _cal_tool: Node = null ## CalibrationTool instance
 
 var _file_dialog: FileDialog = null
@@ -197,7 +197,7 @@ var _fog_dirty: bool = false
 var _fog_countdown: float = 0.0
 var _fog_snapshot_in_flight: bool = false
 var _fog_snapshot_queued: bool = false
-var _backend: Node = null
+var _backend: BackendRuntime = null
 var _dm_override_player_id: String = ""
 var _initial_sync_ack_pending: Dictionary = {}
 var _initial_sync_attempt_by_peer: Dictionary = {}
@@ -256,62 +256,53 @@ func _input_service() -> InputManager:
 ## Network helper wrappers (centralise registry fallback and null-guards)
 func _nm_broadcast_to_displays(msg: Dictionary) -> void:
 	var nm := _network()
-	if nm != null and nm.has_method("broadcast_to_displays"):
+	if nm != null:
 		nm.broadcast_to_displays(msg)
 
 func _nm_broadcast_map(map: MapData) -> void:
 	var nm := _network()
-	if nm == null:
-		return
-	if nm.has_method("broadcast_map"):
-		nm.broadcast_map(map)
-	elif nm.has_method("broadcast_to_displays"):
+	if nm != null:
 		nm.broadcast_to_displays({"msg": "map_loaded", "map": map})
 
 func _nm_broadcast_map_update(map: MapData) -> void:
 	var nm := _network()
-	if nm == null:
-		return
-	if nm.has_method("broadcast_map_update"):
-		nm.broadcast_map_update(map)
-	elif nm.has_method("broadcast_to_displays"):
+	if nm != null:
 		nm.broadcast_to_displays({"msg": "map_updated", "map": map})
 
-func _nm_send_map_to_display(peer_id: int, map: MapData, is_update: bool, fog_snapshot: Dictionary) -> void:
+func _nm_send_map_to_display(peer_id: int, map: MapData, _is_update: bool, fog_snapshot: Dictionary) -> void:
 	var nm := _network()
 	if nm == null:
 		return
-	if nm.has_method("send_map_to_display"):
-		nm.send_map_to_display(peer_id, map, is_update, fog_snapshot)
-	elif nm.has_method("broadcast_map"):
-		nm.broadcast_map(map)
+	nm.send_to_display(peer_id, {"msg": "map_loaded", "map": map})
+	if not fog_snapshot.is_empty():
+		nm.send_to_display(peer_id, fog_snapshot)
 
 func _nm_bind_peer(peer_id: int, player_id: Variant) -> void:
 	var nm := _network()
-	if nm != null and nm.has_method("bind_peer"):
+	if nm != null:
 		nm.bind_peer(peer_id, player_id)
 
 func _nm_get_connected_input_peers() -> Array:
 	var nm := _network()
-	if nm != null and nm.has_method("get_connected_input_peers"):
+	if nm != null:
 		return nm.get_connected_input_peers()
 	return []
 
 func _nm_get_peer_bound_player(peer_id: int) -> String:
 	var nm := _network()
-	if nm != null and nm.has_method("get_peer_bound_player"):
+	if nm != null:
 		return str(nm.get_peer_bound_player(peer_id))
 	return ""
 
 func _nm_displays_under_backpressure() -> bool:
 	var nm := _network()
-	if nm != null and nm.has_method("displays_under_backpressure"):
+	if nm != null:
 		return bool(nm.displays_under_backpressure())
 	return false
 
 func _nm_is_display_peer_connected(peer_id: int) -> bool:
 	var nm := _network()
-	if nm != null and nm.has_method("is_display_peer_connected"):
+	if nm != null:
 		return bool(nm.is_display_peer_connected(peer_id))
 	return true
 
@@ -334,8 +325,8 @@ func _map() -> MapData:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry != null and registry.map != null and registry.map.model != null:
 		return registry.map.model
-	if _map_view != null and _map_view.has_method("get_map"):
-		return _map_view.get_map() as MapData
+	if _map_view != null:
+		return _map_view.get_map()
 	return null
 
 
@@ -419,7 +410,7 @@ func _process(delta: float) -> void:
 
 func _build_ui() -> void:
 	# ── MapView ─────────────────────────────────────────────────────────────
-	_map_view = MapViewScene.instantiate()
+	_map_view = MapViewScene.instantiate() as MapView
 	_map_view.name = "MapView"
 	add_child(_map_view)
 	_map_view.allow_keyboard_pan = false
@@ -434,11 +425,10 @@ func _build_ui() -> void:
 	_map_view.token_rotation_completed.connect(_on_token_rotation_completed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
-	_backend = BackendRuntimeScript.new()
+	_backend = BackendRuntimeScript.new() as BackendRuntime
 	_backend.name = "BackendRuntime"
 	add_child(_backend)
-	if _backend.has_method("configure"):
-		_backend.configure(_map_view)
+	_backend.configure(_map_view)
 
 	# CalibrationTool lives inside MapView's world-space so its drawn overlay
 	# follows the camera correctly.
@@ -2425,8 +2415,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 		var peer_id := int(raw_input_id)
 		var seen: String = ""
 		var nm := _network()
-		if nm != null and nm.has_method("get_peer_bound_player"):
-			var seen_raw = nm.get_peer_bound_player(peer_id)
+		if nm != null:
+			var seen_raw: Variant = nm.get_peer_bound_player(peer_id)
 			if seen_raw != null and str(seen_raw) != "":
 				seen = str(seen_raw)
 		if seen != "":
@@ -2506,7 +2496,7 @@ func _refresh_available_inputs() -> void:
 	if _profile_ws_option:
 		_profile_ws_option.clear()
 		var nm := _network()
-		if nm != null and nm.has_method("get_connected_input_peers"):
+		if nm != null:
 			for peer_id in nm.get_connected_input_peers():
 				_profile_ws_option.add_item("Peer %d" % peer_id, peer_id)
 		if _profile_ws_option.item_count == 0:
@@ -2543,7 +2533,7 @@ func _apply_profile_bindings() -> void:
 	var input := _input_service()
 	input.clear_all_bindings()
 	var nm := _network()
-	if nm != null and nm.has_method("clear_all_peer_bindings"):
+	if nm != null:
 		nm.clear_all_peer_bindings()
 	var pm := _profile_service()
 	var gs := _game_state()
@@ -2576,7 +2566,7 @@ func _apply_profile_bindings() -> void:
 								input.bind_gamepad(device_id, p.id)
 								break
 			PlayerProfile.InputType.WEBSOCKET:
-				if p.input_id.is_valid_int() and nm != null and nm.has_method("bind_peer"):
+				if p.input_id.is_valid_int() and nm != null:
 					nm.bind_peer(int(p.input_id), p.id)
 	_player_state_dirty = true
 	_player_state_countdown = 0.0
@@ -2584,9 +2574,9 @@ func _apply_profile_bindings() -> void:
 
 func _on_profiles_changed() -> void:
 	_apply_profile_bindings()
-	if _backend and _backend.has_method("sync_profiles"):
+	if _backend != null:
 		_backend.sync_profiles()
-	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
+	if _map_view != null and _backend != null:
 		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 	_broadcast_player_state()
 	if _profiles_dialog and _profiles_dialog.visible:
@@ -2596,12 +2586,12 @@ func _on_profiles_changed() -> void:
 
 
 func _on_token_drag_started(token_id: Variant) -> void:
-	if _backend and _backend.has_method("begin_token_drag"):
+	if _backend != null:
 		_backend.begin_token_drag(token_id)
 
 
 func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
-	if _backend and _backend.has_method("end_token_drag"):
+	if _backend != null:
 		_backend.end_token_drag(token_id, new_world_pos)
 	_player_state_dirty = true
 	# Broadcast updated token position to player displays.
@@ -2970,7 +2960,7 @@ func _run_perception_check() -> void:
 	# Gather player positions from live DM token nodes (same source MapView uses).
 	var positions: Array = []
 	var perceptions: Array = []
-	if _backend != null and _backend.has_method("get_dm_token_nodes"):
+	if _backend != null:
 		var token_nodes: Dictionary = _backend.get_dm_token_nodes()
 		for pid in token_nodes.keys():
 			var node: Node2D = token_nodes[pid] as Node2D
@@ -2987,9 +2977,7 @@ func _run_perception_check() -> void:
 	if positions.is_empty():
 		return
 	var svc: ITokenService = registry.token.service
-	if not svc.has_method("check_perception_proximity"):
-		return
-	var newly_revealed: Array = (svc as TokenService).check_perception_proximity(positions, perceptions)
+	var newly_revealed: Array = svc.check_perception_proximity(positions, perceptions)
 	for id in newly_revealed:
 		_on_token_visibility_changed(str(id), true)
 
@@ -3171,18 +3159,19 @@ func _on_map_bundle_selected(path: String) -> void:
 		return
 	var map: MapData = null
 	var ms := _map_service()
-	if ms != null and ms.has_method("load_map_from_bundle"):
-		map = ms.load_map_from_bundle(bundle_path)
+	# load_from_bundle calls MapService.load_map → _sync_tokens_from_map, so
+	# TokenService is populated before _apply_map reads it for sprite creation.
+	if ms != null and ms.service != null:
+		map = ms.load_from_bundle(bundle_path)
 	else:
 		map = _load_map_from_bundle(bundle_path)
+		if map != null and ms != null:
+			ms.load(map)
 	if map == null:
 		_set_status("Failed to load map from: %s" % bundle_path.get_file())
 		return
 	_active_map_bundle_path = bundle_path
 	_apply_map(map)
-	# Ensure map manager and service know about this map
-	if ms != null:
-		ms.load(map)
 	_nm_broadcast_map(map)
 	_set_status("Opened: %s" % map.map_name)
 
@@ -3256,7 +3245,7 @@ func _save_game_to_bundle(save_name: String) -> void:
 		return
 
 	# Ensure latest fog is flushed
-	if _map_view != null and _map_view.has_method("force_fog_sync"):
+	if _map_view != null:
 		_map_view.force_fog_sync()
 	_map_view.save_camera_to_map()
 
@@ -3275,11 +3264,20 @@ func _save_game_to_bundle(save_name: String) -> void:
 		gs.player_camera_zoom = _player_cam_zoom
 		gs.player_camera_rotation = _player_cam_rotation
 
-	# Persist
+	# Persist the session.  save_game_bundle copies the original .map bundle
+	# into the .sav, then we overwrite the embedded map.json with the latest
+	# token state.  This keeps the original .map untouched — only Save Map
+	# should write there.
+	var ms := _map_service()
 	if gs != null:
 		var ok := gs.save_session(save_name, fog_image, _active_map_bundle_path)
 		if ok:
 			_active_save_bundle_path = _saves_dir_abs().path_join(save_name + ".sav")
+			# Flush current token state into the EMBEDDED map.json inside the
+			# .sav bundle (not the original .map).
+			if ms != null and ms.service != null:
+				var embedded_map_path: String = _active_save_bundle_path.path_join("map.map")
+				ms.service.save_map_to_bundle(embedded_map_path)
 			_set_status("Game saved: %s" % save_name)
 		else:
 			_set_status("Error: failed to save game.")
@@ -3329,15 +3327,46 @@ func _on_load_game_path_selected(path: String) -> void:
 	if not map_bundle.is_empty():
 		var map: MapData = null
 		var ms := _map_service()
-		if ms != null and ms.has_method("load_map_from_bundle"):
-			map = ms.load_map_from_bundle(map_bundle)
+		# load_from_bundle calls MapService.load_map → _sync_tokens_from_map, so
+		# TokenService is populated before we apply session overrides below.
+		if ms != null and ms.service != null:
+			map = ms.load_from_bundle(map_bundle)
 		else:
 			map = _load_map_from_bundle(map_bundle)
+			if map != null and ms != null:
+				ms.load(map)
 		if map != null:
-			_active_map_bundle_path = map_bundle
+			# ── Apply token visibility overrides BEFORE _apply_map so that the
+			# sprites created there already reflect the saved session state.
+			# token_states is the authoritative session record; map.json is a
+			# best-effort copy that may lag if save_map_to_bundle failed.
+			if state_val != null:
+				var ts: Variant = state_val.token_states
+				if ts is Dictionary and not (ts as Dictionary).is_empty():
+					var tok_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+					if tok_reg != null and tok_reg.token != null and tok_reg.token.service != null:
+						var tok_svc: ITokenService = tok_reg.token.service
+						for tid_var in (ts as Dictionary).keys():
+							var tstate: Variant = (ts as Dictionary)[tid_var]
+							if tstate is Dictionary:
+								tok_svc.set_token_visibility(
+										str(tid_var),
+										bool((tstate as Dictionary).get("is_visible_to_players", false)))
+			# Resolve the active map bundle path for future Save Map writes.
+			# Priority: 1) standard maps dir by name  2) recorded original
+			# path if it is NOT inside the saves dir  3) embedded copy.
+			var maps_candidate: String = _bundle_dir_abs(map.map_name) if not map.map_name.is_empty() else ""
+			var saves_dir: String = _saves_dir_abs()
+			if not maps_candidate.is_empty() and DirAccess.dir_exists_absolute(maps_candidate):
+				_active_map_bundle_path = maps_candidate
+			else:
+				var recorded_path: String = "" if state_val == null else str(state_val.map_bundle_path)
+				var resolved_path: String = ProjectSettings.globalize_path(recorded_path) if not recorded_path.is_empty() else ""
+				if not resolved_path.is_empty() and DirAccess.dir_exists_absolute(resolved_path) and not resolved_path.begins_with(saves_dir):
+					_active_map_bundle_path = recorded_path
+				else:
+					_active_map_bundle_path = map_bundle
 			_apply_map(map, true)
-			if ms != null:
-				ms.update(map)
 
 	# Restore fog from the saved image
 	if fog_image is Image and not (fog_image as Image).is_empty():
@@ -3353,17 +3382,20 @@ func _on_load_game_path_selected(path: String) -> void:
 		_update_viewport_indicator()
 
 	# Sync restored player positions to backend tokens
-	if _backend and _backend.has_method("sync_profiles"):
+	if _backend != null:
 		_backend.sync_profiles()
-	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
+	if _map_view != null and _backend != null:
 		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 
 	_active_save_bundle_path = bundle_path
 
-	# Broadcast everything to connected displays
+	# Broadcast everything to connected displays.
+	# _broadcast_token_state is called last so player displays receive the
+	# fully-resolved visibility state (after all overrides are applied).
 	_broadcast_player_viewport()
 	_broadcast_fog_state()
 	_broadcast_player_state()
+	_broadcast_token_state()
 
 	var save_label := bundle_path.get_file().get_basename()
 	_set_status("Game loaded: %s" % save_label)
@@ -3420,11 +3452,8 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	if not from_save:
 		# Player cam is initialised to the DM's initial view once the camera settles.
 		call_deferred("_init_player_cam_from_dm")
-	if _backend and _backend.has_method("reset_for_new_map"):
-		_backend.reset_for_new_map()
-	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
-		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
-	# Load DM-placed token sprites from the token service (populated by MapService.load_map).
+	# Load DM-placed token sprites FIRST so that reset_for_new_map can add
+	# player sprites into the same layer without being clobbered.
 	if _map_view != null:
 		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		if reg != null and reg.token != null and reg.token.service != null:
@@ -3435,6 +3464,10 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 				if td != null:
 					dicts.append(td.to_dict())
 			_map_view.load_token_sprites(dicts, true)
+	if _backend != null:
+		_backend.reset_for_new_map()
+	if _map_view != null and _backend != null:
+		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 	if not from_save:
 		_broadcast_fog_state()
 		_broadcast_player_state()
@@ -3446,8 +3479,6 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 
 func _simulate_player_movement(delta: float) -> bool:
 	if _backend == null:
-		return false
-	if not _backend.has_method("step"):
 		return false
 	return bool(_backend.step(delta))
 
@@ -3469,7 +3500,7 @@ func _keyboard_temp_vector() -> Vector2:
 
 func _broadcast_player_state() -> void:
 	var players: Array = []
-	if _backend and _backend.has_method("build_player_state_payload"):
+	if _backend != null:
 		players = _backend.build_player_state_payload()
 	_nm_broadcast_to_displays({"msg": "state", "players": players})
 
@@ -3595,8 +3626,7 @@ func _broadcast_fog_state() -> void:
 	if _nm_displays_under_backpressure():
 		_queue_fog_snapshot_sync(0.5)
 		return
-	if _map_view.has_method("force_fog_sync"):
-		_map_view.force_fog_sync()
+	_map_view.force_fog_sync()
 	_fog_snapshot_in_flight = true
 	_broadcast_fog_state_after_frame()
 
@@ -3737,11 +3767,9 @@ func _save_map_data(map: MapData) -> void:
 	var d := map.to_dict()
 	d["image_path"] = map.image_path.get_file()
 	var ms := _map_service()
-	if ms != null and ms.has_method("save_map_to_bundle"):
-		# Let MapService handle bundle serialization/consistency when available.
-		if ms.has_method("update_map"):
-			ms.update_map(map)
-		ms.save_map_to_bundle(_active_map_bundle_path)
+	if ms != null:
+		ms.update(map)
+		ms.save_to_bundle(_active_map_bundle_path)
 		return
 
 	var fa := FileAccess.open(path, FileAccess.WRITE)

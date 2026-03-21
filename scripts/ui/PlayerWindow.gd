@@ -1,4 +1,5 @@
 extends Node
+class_name PlayerWindow
 
 # ---------------------------------------------------------------------------
 # PlayerWindow — root controller for the shared Player / TV display window.
@@ -17,7 +18,7 @@ const DEBUG_FOG_SNAPSHOT: bool = true
 
 signal fog_snapshot_applied(payload: Dictionary)
 
-var _map_view: Node2D = null
+var _map_view: MapView = null
 var _tokens_by_id: Dictionary = {}
 var _has_loaded_map: bool = false
 var _pending_fog_snapshot: Dictionary = {}
@@ -26,7 +27,7 @@ var _incoming_fog_snapshot_chunks: Dictionary = {}
 
 
 func _ready() -> void:
-	_map_view = MapViewScene.instantiate()
+	_map_view = MapViewScene.instantiate() as MapView
 	_map_view.name = "MapView"
 	add_child(_map_view)
 	_map_view.allow_keyboard_pan = false
@@ -40,8 +41,8 @@ func _map() -> MapData:
 		var m: MapData = registry.map.service.get_map() as MapData
 		if m != null:
 			return m
-	if _map_view != null and _map_view.has_method("get_map"):
-		return _map_view.get_map() as MapData
+	if _map_view != null:
+		return _map_view.get_map()
 	return null
 
 
@@ -177,8 +178,7 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 	if DEBUG_FOG_SNAPSHOT:
 		print("PlayerWindow: fog snapshot recv (stamp_bytes=%d stamp_hash=%d)" % [fog_state_png.size(), snapshot_hash])
 
-	if _map_view and _map_view.has_method("apply_fog_snapshot"):
-		_map_view.apply_fog_snapshot(fog_state_png)
+	_map_view.apply_fog_snapshot(fog_state_png)
 
 	print("PlayerWindow: fog_state_snapshot applied (stamp_bytes=%d)" % fog_state_png.size())
 	fog_snapshot_applied.emit({
@@ -249,8 +249,6 @@ func _handle_fog_updated(data: Dictionary) -> void:
 	if not _has_loaded_map or _map() == null:
 		_pending_fog_deltas.append(data.duplicate(true))
 		return
-	if not _map_view.has_method("apply_fog_state"):
-		return
 	var cell_px := int(data.get("fog_cell_px", 32))
 	var hidden_cells := data.get("hidden_cells", []) as Array
 	_map_view.apply_fog_state(cell_px, hidden_cells)
@@ -259,8 +257,6 @@ func _handle_fog_updated(data: Dictionary) -> void:
 func _handle_fog_delta(data: Dictionary) -> void:
 	if not _has_loaded_map or _map() == null:
 		_pending_fog_deltas.append(data.duplicate(true))
-		return
-	if not _map_view.has_method("apply_fog_delta"):
 		return
 	var cell_px := int(data.get("fog_cell_px", 32))
 	var revealed := data.get("revealed_cells", []) as Array
@@ -295,8 +291,8 @@ func _handle_player_state(data: Dictionary) -> void:
 		if player_id.is_empty():
 			continue
 		active_ids[player_id] = true
-		var token := _ensure_token(player_id)
-		if token and token.has_method("apply_from_state"):
+		var token: PlayerSprite = _ensure_token(player_id)
+		if token != null:
 			token.apply_from_state(item)
 
 	for existing_id in _tokens_by_id.keys():
@@ -308,21 +304,18 @@ func _handle_player_state(data: Dictionary) -> void:
 		_tokens_by_id.erase(existing_id)
 
 
-func _ensure_token(player_id: String) -> Node2D:
+func _ensure_token(player_id: String) -> PlayerSprite:
 	if _tokens_by_id.has(player_id):
-		var existing = _tokens_by_id[player_id]
+		var existing: PlayerSprite = _tokens_by_id[player_id] as PlayerSprite
 		if is_instance_valid(existing):
 			return existing
 		_tokens_by_id.erase(player_id)
-	var token: Node2D = null
-	if token == null:
-		var scene: PackedScene = load("res://scenes/PlayerSprite.tscn") as PackedScene
-		token = scene.instantiate() as Node2D if scene else null
+	var scene: PackedScene = load("res://scenes/PlayerSprite.tscn") as PackedScene
+	var token: PlayerSprite = scene.instantiate() as PlayerSprite if scene else null
 	if token == null:
 		return null
 	token.name = "PlayerToken_%s" % player_id.left(8)
-	if token.has_method("enable_remote_smoothing"):
-		token.enable_remote_smoothing(true)
+	token.enable_remote_smoothing(true)
 	var token_layer: Node2D = _map_view.get_token_layer()
 	token_layer.add_child(token)
 	_tokens_by_id[player_id] = token
@@ -340,11 +333,10 @@ func _clear_tokens() -> void:
 func _apply_token_size_from_map(map: MapData) -> void:
 	var token_diameter_px := map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 	for id in _tokens_by_id.keys():
-		var token = _tokens_by_id[id]
+		var token: PlayerSprite = _tokens_by_id[id] as PlayerSprite
 		if not is_instance_valid(token):
 			continue
-		if token.has_method("set_token_diameter_px"):
-			token.set_token_diameter_px(token_diameter_px)
+		token.set_token_diameter_px(token_diameter_px)
 
 
 func _apply_pending_fog_packets() -> void:
@@ -377,23 +369,20 @@ func _handle_token_state(token_dicts: Array) -> void:
 	## Replace all DM-placed tokens in MapView with the current visible snapshot.
 	if _map_view == null:
 		return
-	if _map_view.has_method("load_token_sprites"):
-		_map_view.load_token_sprites(token_dicts, false)
+	_map_view.load_token_sprites(token_dicts, false)
 
 
 func _handle_token_added(token_dict: Dictionary) -> void:
 	if _map_view == null or token_dict.is_empty():
 		return
 	var data: TokenData = TokenData.from_dict(token_dict)
-	if _map_view.has_method("add_token_sprite"):
-		_map_view.add_token_sprite(data, false)
+	_map_view.add_token_sprite(data, false)
 
 
 func _handle_token_removed(id: String) -> void:
 	if _map_view == null or id.is_empty():
 		return
-	if _map_view.has_method("remove_token_sprite"):
-		_map_view.remove_token_sprite(id)
+	_map_view.remove_token_sprite(id)
 
 
 func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:

@@ -45,9 +45,7 @@ func get_map() -> Object:
 func get_map_dict() -> Dictionary:
 	if _current_map == null:
 		return {}
-	if _current_map.has_method("to_dict"):
-		return _current_map.to_dict()
-	return {}
+	return _current_map.to_dict()
 
 func save_map_to_bundle(bundle_path: String) -> bool:
 	if _current_map == null:

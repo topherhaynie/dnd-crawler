@@ -84,7 +84,7 @@ func _start_dm_mode() -> void:
 
 func _ensure_network_started() -> void:
 	var nm := _network_manager()
-	if nm != null and nm.has_method("start_server"):
+	if nm != null:
 		nm.start_server()
 		return
 	# Try again next idle until the service appears.

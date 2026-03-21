@@ -135,6 +135,15 @@ func save_session(save_name: String, fog_image: Image, map_bundle_path: String) 
 	state.player_camera_zoom = _model.player_camera_zoom
 	state.player_camera_rotation = _model.player_camera_rotation
 
+	# Token runtime state (is_visible_to_players etc.)
+	if reg.token != null and reg.token.service != null:
+		var all_tokens: Array = reg.token.service.get_all_tokens()
+		for raw in all_tokens:
+			var td: TokenData = raw as TokenData
+			if td == null:
+				continue
+			state.token_states[td.id] = {"is_visible_to_players": td.is_visible_to_players}
+
 	# Timestamps
 	if _model.active_save != null and not _model.active_save.created_at.is_empty():
 		state.created_at = _model.active_save.created_at

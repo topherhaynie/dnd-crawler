@@ -74,3 +74,9 @@ func get_visible_tokens() -> Array:
 func get_token_by_id(_id: String) -> TokenData:
 	push_error("ITokenService.get_token_by_id: not implemented")
 	return null
+
+## Auto-reveals tokens whose perception DC is met by nearby players.
+## Returns an Array of token ids that were newly revealed.
+func check_perception_proximity(_player_positions: Array, _player_perceptions: Array) -> Array:
+	push_error("ITokenService.check_perception_proximity: not implemented")
+	return []

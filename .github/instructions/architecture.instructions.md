@@ -116,3 +116,34 @@ The `get_service(String)` method exists only as a backwards-compat shim — do n
 - **Player process** — render-only, connects via WebSocket, does not run service bootstrap
 
 The player display receives `map_loaded`, `fog_updated`, `camera_update`, `state`/`delta` messages from the DM and applies them without running game logic.
+
+## Never Use `has_method` on Typed Objects
+
+`has_method()` creates **silent-failure** code: when a method is absent the branch is silently skipped with no error, making bugs invisible. Protocol base classes eliminate the need for `has_method` entirely — every declared method has a `push_error` stub, so calling on a null-stubbed service produces a visible error instead of a silent no-op.
+
+**Rules:**
+- Never call `obj.has_method("foo")` when `obj` is typed to a protocol, service, manager, or any class with a `class_name`. The method is guaranteed present.
+- Guard on `null` when the object might be absent — not on `has_method`.
+- If a method is missing from a protocol, **add a stub** to the protocol rather than adding a `has_method` guard at the call site.
+- When adding a new method to a concrete service, also add the corresponding stub to the protocol (`IXxxService.gd`) in the same commit.
+
+```gdscript
+# Wrong — has_method on a typed service variable
+if nm != null and nm.has_method("bind_peer"):
+    nm.bind_peer(peer_id, player_id)
+
+# Wrong — has_method on a typed concrete class variable
+if _backend and _backend.has_method("step"):
+    _backend.step(delta)
+
+# Correct — null guard only; the method is guaranteed by the protocol stub
+if nm != null:
+    nm.bind_peer(peer_id, player_id)
+
+if _backend != null:
+    _backend.step(delta)
+```
+
+**Legitimate exceptions** (the only cases where `has_method` is acceptable):
+- Godot engine **version compatibility** checks on engine-provided objects (e.g. `ws_peer.has_method("get_current_outbound_buffered_amount")`)
+- Genuinely **polymorphic scene nodes** stored as `Node` where no common typed base class can be used (e.g. mixed `TokenSprite` / `PlayerSprite` nodes in the same layer in `MapView`)

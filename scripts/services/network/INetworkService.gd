@@ -45,3 +45,14 @@ func get_connected_input_peers() -> Array:
 func get_peer_bound_player(_peer_id: int) -> String:
 	push_error("INetworkService.get_peer_bound_player: not implemented")
 	return ""
+
+func clear_all_peer_bindings() -> void:
+	push_error("INetworkService.clear_all_peer_bindings: not implemented")
+
+func displays_under_backpressure() -> bool:
+	push_error("INetworkService.displays_under_backpressure: not implemented")
+	return false
+
+func is_display_peer_connected(_peer_id: int) -> bool:
+	push_error("INetworkService.is_display_peer_connected: not implemented")
+	return false

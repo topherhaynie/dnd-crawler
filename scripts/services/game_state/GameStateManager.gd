@@ -163,7 +163,7 @@ func load_session(save_path: String) -> Dictionary:
 	var bundle := service.load_session(save_path)
 	if not bundle.is_empty():
 		var state: Variant = bundle.get("state", null)
-		if state != null and state.has_method("to_dict"):
+		if state != null:
 			session_loaded.emit(state.save_name)
 	return bundle
 

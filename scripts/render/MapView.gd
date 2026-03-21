@@ -1,4 +1,5 @@
 extends Node2D
+class_name MapView
 
 # ---------------------------------------------------------------------------
 # MapView — shared map viewport used by both the DM window and the Player
@@ -424,10 +425,18 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
 	_cancel_token_resize()
 	_hovered_token_id = null # nodes are being freed; skip set_show_handles
+	# Only clear DM-placed TokenSprite children; preserve PlayerSprite nodes.
 	for child in token_layer.get_children():
-		child.queue_free()
-	_draggable_tokens.clear()
-	_token_drag_order.clear()
+		if child is TokenSprite:
+			child.queue_free()
+	# Remove TokenSprite entries from draggable tracking (keep PlayerSprite).
+	var stale_ids: Array = []
+	for tid in _draggable_tokens.keys():
+		if _draggable_tokens[tid] is TokenSprite:
+			stale_ids.append(tid)
+	for tid in stale_ids:
+		_draggable_tokens.erase(tid)
+		_token_drag_order.erase(tid)
 	for raw in token_dicts:
 		if raw is Dictionary:
 			var data: TokenData = TokenData.from_dict(raw as Dictionary)
@@ -477,7 +486,16 @@ func _add_token_sprite_node(data: TokenData, is_dm: bool) -> void:
 
 
 func set_draggable_tokens(tokens: Dictionary) -> void:
-	_draggable_tokens = tokens
+	# Merge player tokens into the draggable set.  TokenSprite (map token)
+	# entries are preserved; only stale PlayerSprite entries are removed.
+	var stale_player_ids: Array = []
+	for tid in _draggable_tokens.keys():
+		if _draggable_tokens[tid] is PlayerSprite and not tokens.has(tid):
+			stale_player_ids.append(tid)
+	for tid in stale_player_ids:
+		_draggable_tokens.erase(tid)
+	for tid in tokens.keys():
+		_draggable_tokens[tid] = tokens[tid]
 	# Rebuild drag order: preserve existing order for surviving tokens, append new ones
 	var new_order: Array = []
 	for tid in _token_drag_order:
@@ -1149,6 +1167,10 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 			var sb := event as InputEventMouseButton
 			if sb.pressed:
 				var mouse_pos := get_global_mouse_position()
+				# Tokens take priority over walls — let the outer handler deal
+				# with them instead of consuming the click here.
+				if _hit_test_token_handle(mouse_pos).size() > 0 or _hit_test_tokens(mouse_pos) != null:
+					return false
 				# Indicator (handles and body) takes priority over wall selection.
 				if _viewport_indicator != Rect2() and _indicator_overlay != null:
 					if _indicator_overlay.get_handle_at(mouse_pos) >= 0 or _indicator_has_point(mouse_pos):
