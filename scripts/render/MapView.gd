@@ -428,6 +428,8 @@ func _update_cursor(world_pos: Vector2) -> void:
 		shape = DisplayServer.CURSOR_MOVE
 	elif active_tool == Tool.SELECT and _hit_test_tokens(world_pos) != null:
 		shape = DisplayServer.CURSOR_DRAG
+	elif active_tool == Tool.SELECT and _hit_test_spawn_point(world_pos) >= 0:
+		shape = DisplayServer.CURSOR_DRAG
 	if shape != _current_cursor_shape:
 		_current_cursor_shape = shape
 		DisplayServer.cursor_set_shape(shape)
@@ -538,14 +540,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	# --- Spawn point tool input -------------------------------------------
-	if active_tool == Tool.SPAWN_POINT and _handle_spawn_point_input(event):
+	if (active_tool == Tool.SPAWN_POINT or active_tool == Tool.SELECT) and _handle_spawn_point_input(event):
 		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and not key_event.echo and (key_event.keycode == KEY_DELETE or key_event.keycode == KEY_BACKSPACE):
-			if active_tool == Tool.SPAWN_POINT and _selected_spawn_index >= 0:
+			if (active_tool == Tool.SPAWN_POINT or active_tool == Tool.SELECT) and _selected_spawn_index >= 0:
 				remove_spawn_point(_selected_spawn_index)
 				get_viewport().set_input_as_handled()
 				return
@@ -1558,8 +1560,8 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 					_dragging_spawn_index = hit
 					select_spawn_point(hit)
 					return true
-				else:
-					# Click on empty space: place new spawn point
+				elif active_tool == Tool.SPAWN_POINT:
+					# Click on empty space: place new spawn point (SPAWN_POINT tool only)
 					add_spawn_point(world_pos)
 					select_spawn_point(_map.spawn_points.size() - 1)
 					return true
