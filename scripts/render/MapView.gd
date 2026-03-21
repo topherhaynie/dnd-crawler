@@ -423,7 +423,7 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 ## is_dm controls visibility / alpha for hidden tokens.
 func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
 	_cancel_token_resize()
-	_hovered_token_id = null  # nodes are being freed; skip set_show_handles
+	_hovered_token_id = null # nodes are being freed; skip set_show_handles
 	for child in token_layer.get_children():
 		child.queue_free()
 	_draggable_tokens.clear()
@@ -610,8 +610,8 @@ func _cursor_for_handle(handle_idx: int) -> int:
 		2, 6: return DisplayServer.CURSOR_BDIAGSIZE
 		1, 5: return DisplayServer.CURSOR_VSIZE
 		3, 7: return DisplayServer.CURSOR_HSIZE
-		8:    return DisplayServer.CURSOR_POINTING_HAND
-		_:    return DisplayServer.CURSOR_FDIAGSIZE
+		8: return DisplayServer.CURSOR_POINTING_HAND
+		_: return DisplayServer.CURSOR_FDIAGSIZE
 
 
 func _reset_cursor() -> void:

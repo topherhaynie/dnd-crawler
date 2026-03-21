@@ -153,7 +153,7 @@ func _draw() -> void:
 		for hp: Vector2 in handle_positions:
 			draw_rect(Rect2(hp.x - sq * 0.5, hp.y - sq * 0.5, sq, sq), Color(1.0, 1.0, 1.0, 0.9))
 		# Rotation handle: circle 22 px above top bounding edge.
-		var rot_y: float = -ry - 22.0
+		var rot_y: float = - ry - 22.0
 		draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
 		draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
 
