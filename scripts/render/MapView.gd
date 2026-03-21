@@ -673,7 +673,7 @@ func _process(delta: float) -> void:
 		var vp := get_viewport()
 		if vp != null:
 			var screen_size := vp.get_visible_rect().size
-			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size)
+			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size, _map_rotation)
 
 	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
 		fog_overlay.sync_player_revealers(token_layer.get_children())

@@ -325,15 +325,23 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 # === Viewport-Local Fog ===
 
 
-func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2) -> void:
+func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2, rotation_deg: int = 0) -> void:
 	## Called every frame by the player MapView.  Re-positions and re-sizes
 	## the fog SubViewports when the camera moves beyond the current margin.
 	if not _viewport_local or not _fog_enabled:
 		return
-	# Compute world-space visible rect.
+	# Compute world-space visible rect, accounting for camera rotation.
+	# When the camera is rotated, the axis-aligned bounding box of the
+	# rotated screen rectangle is larger than the unrotated one.
 	var world_size := screen_size / maxf(zoom, 0.01)
-	var world_pos := camera_pos - world_size * 0.5
-	var visible_rect := Rect2(world_pos, world_size)
+	var rad := deg_to_rad(float(rotation_deg))
+	var abs_cos := absf(cos(rad))
+	var abs_sin := absf(sin(rad))
+	var rotated_w := world_size.x * abs_cos + world_size.y * abs_sin
+	var rotated_h := world_size.x * abs_sin + world_size.y * abs_cos
+	var aabb_size := Vector2(rotated_w, rotated_h)
+	var world_pos := camera_pos - aabb_size * 0.5
+	var visible_rect := Rect2(world_pos, aabb_size)
 	# If the current fog rect still encloses the visible area, nothing to do.
 	if _fog_world_rect.size.x > 0 and _fog_world_rect.encloses(visible_rect):
 		return
