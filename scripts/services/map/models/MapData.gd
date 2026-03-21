@@ -56,6 +56,11 @@ var spawn_points: Array = []
 # Kept here so save/load round-trips without Phase 6 code loaded.
 var map_objects: Array = []
 
+# --- Tokens ---------------------------------------------------------------
+# Array of serialised TokenData dictionaries (see TokenData.to_dict()).
+# Persisted in map.json so tokens survive map bundle reloads.
+var tokens: Array = []
+
 # --- Viewport state (optional, remembered across sessions) -----------------
 var camera_position: Vector2 = Vector2.ZERO
 var camera_zoom: float = 1.0
@@ -78,6 +83,7 @@ func to_dict() -> Dictionary:
 		"fog_cell_px": fog_cell_px,
 		"spawn_points": _serialise_points(spawn_points),
 		"map_objects": map_objects.duplicate(true),
+		"tokens": tokens.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
 		"camera_rotation": camera_rotation,
@@ -97,6 +103,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.fog_cell_px = int(d.get("fog_cell_px", 4))
 	m.spawn_points = _deserialise_points(d.get("spawn_points", []))
 	m.map_objects = d.get("map_objects", []).duplicate(true)
+	m.tokens = d.get("tokens", []).duplicate(true)
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
 	m.camera_zoom = float(d.get("camera_zoom", 1.0))

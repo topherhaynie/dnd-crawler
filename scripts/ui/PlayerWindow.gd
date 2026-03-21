@@ -72,6 +72,16 @@ func on_state(data: Dictionary) -> void:
 			_handle_camera_update(data)
 		"state", "delta":
 			_handle_player_state(data)
+		"token_state":
+			_handle_token_state(data.get("tokens", []) as Array)
+		"token_added":
+			_handle_token_added(data.get("token", {}) as Dictionary)
+		"token_removed":
+			_handle_token_removed(str(data.get("token_id", "")))
+		"token_moved":
+			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary)
+		"token_updated":
+			_handle_token_added(data.get("token", {}) as Dictionary)
 		_:
 			pass
 
@@ -357,3 +367,45 @@ func _apply_pending_fog_packets() -> void:
 				_handle_fog_updated(packet as Dictionary)
 			elif msg == "fog_delta":
 				_handle_fog_delta(packet as Dictionary)
+
+
+# ---------------------------------------------------------------------------
+# Token message handlers (player receive side)
+# ---------------------------------------------------------------------------
+
+func _handle_token_state(token_dicts: Array) -> void:
+	## Replace all DM-placed tokens in MapView with the current visible snapshot.
+	if _map_view == null:
+		return
+	if _map_view.has_method("load_token_sprites"):
+		_map_view.load_token_sprites(token_dicts, false)
+
+
+func _handle_token_added(token_dict: Dictionary) -> void:
+	if _map_view == null or token_dict.is_empty():
+		return
+	var data: TokenData = TokenData.from_dict(token_dict)
+	if _map_view.has_method("add_token_sprite"):
+		_map_view.add_token_sprite(data, false)
+
+
+func _handle_token_removed(id: String) -> void:
+	if _map_view == null or id.is_empty():
+		return
+	if _map_view.has_method("remove_token_sprite"):
+		_map_view.remove_token_sprite(id)
+
+
+func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
+	if _map_view == null or id.is_empty():
+		return
+	var new_pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("y", 0.0)))
+	# Update the sprite position directly.
+	var token_layer: Node2D = _map_view.get_token_layer()
+	if token_layer == null:
+		return
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == id:
+			ts.global_position = new_pos
+			return

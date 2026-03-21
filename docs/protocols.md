@@ -304,3 +304,109 @@ and publish migration notes here so clients can adapt gracefully.
 ## Message types
 
 See code comments and `scripts/protocols` for detailed message schemas.
+
+---
+
+## Token messages (DM → display)
+
+Token messages are broadcast by the DM process to all connected display clients
+whenever the visible token set changes.  Display clients are **render-only** —
+they never send token mutations back to the DM.
+
+### `token_state` — full snapshot
+
+Sent on initial connect and after every map load.  Contains the complete list of
+tokens currently visible to players (`is_visible_to_players == true`).
+
+```json
+{
+  "msg": "token_state",
+  "tokens": [
+    {
+      "id": "1714000000_4028",
+      "label": "Iron Door",
+      "category": 0,
+      "world_pos": { "x": 320.0, "y": 480.0 },
+      "is_visible_to_players": true,
+      "perception_dc": -1,
+      "autopause": false,
+      "pause_on_interact": false,
+      "notes": "",
+      "icon_key": ""
+    }
+  ]
+}
+```
+
+**Fields:**
+- `tokens` (Array): zero or more serialised `TokenData` objects (visible tokens only).
+
+---
+
+### `token_added` — single token revealed or created
+
+Sent when the DM places a new token that is immediately visible, or toggles an
+existing token from hidden → visible.
+
+```json
+{
+  "msg": "token_added",
+  "token": { "id": "…", "label": "Goblin Scout", "category": 4, "world_pos": { "x": 640.0, "y": 320.0 }, "is_visible_to_players": true, "perception_dc": -1, "autopause": false, "pause_on_interact": false, "notes": "", "icon_key": "" }
+}
+```
+
+---
+
+### `token_removed` — token hidden or deleted
+
+Sent when the DM deletes a token or toggles it from visible → hidden.
+
+```json
+{
+  "msg": "token_removed",
+  "token_id": "1714000000_4028"
+}
+```
+
+---
+
+### `token_moved` — position update
+
+Sent when the DM drags a visible token to a new world position.
+
+```json
+{
+  "msg": "token_moved",
+  "token_id": "1714000000_4028",
+  "world_pos": { "x": 400.0, "y": 512.0 }
+}
+```
+
+---
+
+### `token_updated` — metadata change
+
+Sent when the DM edits a visible token's label, category, or other non-position
+fields via the token editor popup.
+
+```json
+{
+  "msg": "token_updated",
+  "token": { "id": "…", "label": "Trapped Chest", "category": 1, "world_pos": { "x": 200.0, "y": 300.0 }, "is_visible_to_players": true, "perception_dc": 15, "autopause": false, "pause_on_interact": true, "notes": "Deals 2d6 piercing on trigger.", "icon_key": "" }
+}
+```
+
+---
+
+### `TokenCategory` enum reference
+
+| Value | Name |
+|---|---|
+| 0 | DOOR |
+| 1 | TRAP |
+| 2 | HIDDEN_OBJECT |
+| 3 | SECRET_PASSAGE |
+| 4 | MONSTER |
+| 5 | EVENT |
+| 6 | NPC |
+| 7 | GENERIC |

@@ -107,6 +107,22 @@ func _on_wall_tool_selected(index: int) -> void:
 		_set_status("Wall Polygon: click to add points, double-click/right-click/Escape to finish")
 var _wall_delete_btn: Button = null
 
+# ── Token placement & editing ───────────────────────────────────────────────
+var _token_btn: Button = null
+## Token editor popup fields
+var _token_editor_dialog: ConfirmationDialog = null
+var _token_editor_id: String = ""         ## empty = new token
+var _token_label_edit: LineEdit = null
+var _token_category_option: OptionButton = null
+var _token_visible_check: CheckBox = null
+var _token_perception_spin: SpinBox = null
+var _token_autopause_check: CheckBox = null
+var _token_pause_interact_check: CheckBox = null
+var _token_notes_edit: TextEdit = null
+## Right-click context menu for tokens
+var _token_context_menu: PopupMenu = null
+var _token_context_id: String = ""
+
 # ── Phase 3: player profiles ------------------------------------------------
 var _profiles_dialog: AcceptDialog = null
 var _profiles_list: ItemList = null
@@ -168,6 +184,8 @@ const _FOG_DELTA_MAX_CELLS: int = 1200
 const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
 const DEBUG_FOG_SNAPSHOT: bool = false
 const DEBUG_FOG_TELEMETRY: bool = false
+const _PERCEPTION_CHECK_INTERVAL: float = 2.0
+var _perception_timer: float = 0.0
 var _broadcast_dirty: bool = false
 var _broadcast_countdown: float = 0.0
 var _player_state_dirty: bool = false
@@ -384,6 +402,13 @@ func _process(delta: float) -> void:
 		_player_state_dirty = false
 		_broadcast_player_state()
 
+	# Periodic perception-proximity check — auto-reveal tokens whose DC is
+	# met by a nearby player's passive perception.
+	_perception_timer -= delta
+	if _perception_timer <= 0.0:
+		_perception_timer = _PERCEPTION_CHECK_INTERVAL
+		_run_perception_check()
+
 
 # ---------------------------------------------------------------------------
 # UI construction
@@ -402,6 +427,8 @@ func _build_ui() -> void:
 	_map_view.spawn_points_changed.connect(_on_map_spawn_points_changed)
 	_map_view.token_drag_started.connect(_on_token_drag_started)
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
+	_map_view.token_place_requested.connect(_on_token_place_requested)
+	_map_view.token_right_clicked.connect(_on_token_right_clicked)
 	_backend = BackendRuntimeScript.new()
 	_backend.name = "BackendRuntime"
 	add_child(_backend)
@@ -694,6 +721,22 @@ func _build_ui() -> void:
 	spawn_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
 	spawn_btn.pressed.connect(func(): _on_palette_tool_activated("spawn_point"))
 	row8b.add_child(spawn_btn)
+
+	# Row 8c: Place Token tool
+	var row8c := HBoxContainer.new()
+	row8c.add_theme_constant_override("separation", 2)
+	btn_grid.add_child(row8c)
+
+	_token_btn = Button.new()
+	_token_btn.text = "✦"
+	_token_btn.toggle_mode = true
+	_token_btn.button_group = tool_group
+	_token_btn.focus_mode = Control.FOCUS_NONE
+	_token_btn.tooltip_text = "Place Token — click map to drop a token; right-click a token to edit/delete"
+	_token_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+	_token_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+	_token_btn.pressed.connect(func(): _on_palette_tool_activated("token"))
+	row8c.add_child(_token_btn)
 
 	btn_grid.add_child(HSeparator.new())
 
@@ -1035,6 +1078,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_nm_send_map_to_display(peer_id, map, false, fog_snapshot)
 	_broadcast_player_viewport()
 	_broadcast_player_state()
+	_broadcast_token_state()
 
 	# Retry if no ack and peer is still connected.
 	var retry_timer := get_tree().create_timer(1.0)
@@ -1316,6 +1360,10 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 			_map_view.set_fog_tool(0, 64.0)
 			_map_view._set_active_tool(_map_view.Tool.SPAWN_POINT)
 			_set_status("Spawn Point tool — click to place, drag to move, right-click to remove")
+		"token":
+			_map_view.set_fog_tool(0, 64.0)
+			_map_view._set_active_tool(_map_view.Tool.PLACE_TOKEN)
+			_set_status("Place Token — click map to drop a new token")
 
 
 # ---------------------------------------------------------------------------
@@ -2551,6 +2599,307 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	if _backend and _backend.has_method("end_token_drag"):
 		_backend.end_token_drag(token_id, new_world_pos)
 	_player_state_dirty = true
+	# Broadcast updated token position to player displays.
+	var id: String = str(token_id)
+	_nm_broadcast_to_displays({
+		"msg": "token_moved",
+		"token_id": id,
+		"world_pos": {"x": new_world_pos.x, "y": new_world_pos.y},
+	})
+
+
+# ---------------------------------------------------------------------------
+# Token placement / editing
+# ---------------------------------------------------------------------------
+
+func _on_token_place_requested(world_pos: Vector2) -> void:
+	## Left-click in PLACE_TOKEN tool mode — open editor for a brand-new token.
+	_token_editor_id = ""
+	_open_token_editor(TokenData.create(TokenData.TokenCategory.GENERIC, world_pos))
+
+
+func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
+	## Right-click on a token in SELECT mode — show context menu.
+	_token_context_id = id
+	if _token_context_menu == null:
+		_token_context_menu = PopupMenu.new()
+		_token_context_menu.id_pressed.connect(_on_token_context_menu_id)
+		add_child(_token_context_menu)
+	_token_context_menu.clear()
+	_token_context_menu.add_item("Edit Token…", 0)
+	_token_context_menu.add_separator()
+	_token_context_menu.add_item("Toggle Visibility", 1)
+	_token_context_menu.add_separator()
+	_token_context_menu.add_item("Delete Token", 2)
+	_token_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
+
+
+func _on_token_context_menu_id(id: int) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var svc: ITokenService = registry.token.service
+	match id:
+		0: # Edit
+			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			if data != null:
+				_open_token_editor(data)
+		1: # Toggle visibility
+			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			if data != null:
+				svc.set_token_visibility(_token_context_id, not data.is_visible_to_players)
+				_on_token_visibility_changed(_token_context_id, data.is_visible_to_players)
+		2: # Delete
+			svc.remove_token(_token_context_id)
+			if _map_view != null:
+				_map_view.remove_token_sprite(_token_context_id)
+			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id})
+
+
+func _open_token_editor(data: TokenData) -> void:
+	_token_editor_id = data.id
+	if _token_editor_dialog == null:
+		_build_token_editor_dialog()
+	# Populate fields from data.
+	if _token_label_edit != null:
+		_token_label_edit.text = data.label
+	if _token_category_option != null:
+		_token_category_option.selected = data.category
+	if _token_visible_check != null:
+		_token_visible_check.button_pressed = data.is_visible_to_players
+	if _token_perception_spin != null:
+		_token_perception_spin.value = float(data.perception_dc)
+	if _token_autopause_check != null:
+		_token_autopause_check.button_pressed = data.autopause
+	if _token_pause_interact_check != null:
+		_token_pause_interact_check.button_pressed = data.pause_on_interact
+	if _token_notes_edit != null:
+		_token_notes_edit.text = data.notes
+	# Store temporary placement position in editor id if brand new.
+	if _token_editor_dialog != null:
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		var is_new := (registry == null
+				or registry.token == null
+				or registry.token.service == null
+				or registry.token.service.get_token_by_id(data.id) == null)
+		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
+		## Store the new-token world_pos in meta so confirm can read it.
+		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
+		_token_editor_dialog.popup_centered(Vector2i(420, 440))
+
+
+func _build_token_editor_dialog() -> void:
+	_token_editor_dialog = ConfirmationDialog.new()
+	_token_editor_dialog.title = "Token"
+	_token_editor_dialog.min_size = Vector2i(400, 420)
+	_token_editor_dialog.confirmed.connect(_on_token_editor_confirmed)
+	add_child(_token_editor_dialog)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_token_editor_dialog.add_child(vbox)
+
+	# Label
+	var lbl_row := HBoxContainer.new()
+	var lbl_label := Label.new()
+	lbl_label.text = "Label:"
+	lbl_label.custom_minimum_size = Vector2(120, 0)
+	lbl_row.add_child(lbl_label)
+	_token_label_edit = LineEdit.new()
+	_token_label_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_label_edit.placeholder_text = "e.g. Iron Door"
+	lbl_row.add_child(_token_label_edit)
+	vbox.add_child(lbl_row)
+
+	# Category
+	var cat_row := HBoxContainer.new()
+	var cat_label := Label.new()
+	cat_label.text = "Category:"
+	cat_label.custom_minimum_size = Vector2(120, 0)
+	cat_row.add_child(cat_label)
+	_token_category_option = OptionButton.new()
+	_token_category_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for cat_val in range(8):
+		_token_category_option.add_item(TokenData.category_name(cat_val), cat_val)
+	cat_row.add_child(_token_category_option)
+	vbox.add_child(cat_row)
+
+	# Visible to players
+	var vis_row := HBoxContainer.new()
+	var vis_label := Label.new()
+	vis_label.text = "Visible to players:"
+	vis_label.custom_minimum_size = Vector2(120, 0)
+	vis_row.add_child(vis_label)
+	_token_visible_check = CheckBox.new()
+	vis_row.add_child(_token_visible_check)
+	vbox.add_child(vis_row)
+
+	# Perception DC
+	var perc_row := HBoxContainer.new()
+	var perc_label := Label.new()
+	perc_label.text = "Perception DC:"
+	perc_label.custom_minimum_size = Vector2(120, 0)
+	perc_row.add_child(perc_label)
+	_token_perception_spin = SpinBox.new()
+	_token_perception_spin.min_value = -1.0
+	_token_perception_spin.max_value = 30.0
+	_token_perception_spin.step = 1.0
+	_token_perception_spin.value = -1.0
+	_token_perception_spin.suffix = "(-1 = manual only)"
+	_token_perception_spin.custom_minimum_size = Vector2(170, 0)
+	perc_row.add_child(_token_perception_spin)
+	vbox.add_child(perc_row)
+
+	# Autopause
+	var ap_row := HBoxContainer.new()
+	var ap_label := Label.new()
+	ap_label.text = "Autopause on proximity:"
+	ap_label.custom_minimum_size = Vector2(120, 0)
+	ap_row.add_child(ap_label)
+	_token_autopause_check = CheckBox.new()
+	ap_row.add_child(_token_autopause_check)
+	vbox.add_child(ap_row)
+
+	# Pause on interact
+	var pi_row := HBoxContainer.new()
+	var pi_label := Label.new()
+	pi_label.text = "Pause on interact:"
+	pi_label.custom_minimum_size = Vector2(120, 0)
+	pi_row.add_child(pi_label)
+	_token_pause_interact_check = CheckBox.new()
+	pi_row.add_child(_token_pause_interact_check)
+	vbox.add_child(pi_row)
+
+	# Notes
+	var notes_label := Label.new()
+	notes_label.text = "Notes:"
+	vbox.add_child(notes_label)
+	_token_notes_edit = TextEdit.new()
+	_token_notes_edit.custom_minimum_size = Vector2(0, 80)
+	_token_notes_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_notes_edit.placeholder_text = "DM notes (not shown to players)"
+	vbox.add_child(_token_notes_edit)
+
+
+func _on_token_editor_confirmed() -> void:
+	var label_text: String = _token_label_edit.text.strip_edges() if _token_label_edit != null else ""
+	var category: int = _token_category_option.get_selected_id() if _token_category_option != null else 0
+	var is_vis: bool = _token_visible_check.button_pressed if _token_visible_check != null else false
+	var perc_dc: int = int(_token_perception_spin.value) if _token_perception_spin != null else -1
+	var do_ap: bool = _token_autopause_check.button_pressed if _token_autopause_check != null else false
+	var do_pi: bool = _token_pause_interact_check.button_pressed if _token_pause_interact_check != null else false
+	var notes_text: String = _token_notes_edit.text if _token_notes_edit != null else ""
+
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var svc: ITokenService = registry.token.service
+
+	var existing: TokenData = svc.get_token_by_id(_token_editor_id)
+	var data: TokenData
+	if existing != null:
+		data = existing
+	else:
+		data = TokenData.new()
+		data.id = _token_editor_id if not _token_editor_id.is_empty() else TokenData.generate_id()
+		if _token_editor_dialog != null and _token_editor_dialog.has_meta("pending_world_pos"):
+			data.world_pos = _token_editor_dialog.get_meta("pending_world_pos") as Vector2
+
+	data.label = label_text
+	data.category = category
+	data.is_visible_to_players = is_vis
+	data.perception_dc = perc_dc
+	data.autopause = do_ap
+	data.pause_on_interact = do_pi
+	data.notes = notes_text
+
+	if existing != null:
+		svc.update_token(data)
+		if _map_view != null:
+			_map_view.update_token_sprite(data)
+	else:
+		svc.add_token(data)
+		if _map_view != null:
+			_map_view.add_token_sprite(data, true)
+
+	# Broadcast to player displays.
+	_broadcast_token_change(data, existing == null)
+
+
+func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
+	## Refresh sprite and broadcast.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var data: TokenData = registry.token.service.get_token_by_id(id)
+	if data == null:
+		return
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+	if is_visible:
+		_nm_broadcast_to_displays({
+			"msg": "token_added",
+			"token": data.to_dict(),
+		})
+	else:
+		_nm_broadcast_to_displays({"msg": "token_removed", "token_id": id})
+
+
+## Broadcast a single-token change to all connected display clients.
+func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
+	if not data.is_visible_to_players:
+		return
+	var msg_type: String = "token_added" if is_new else "token_updated"
+	_nm_broadcast_to_displays({"msg": msg_type, "token": data.to_dict()})
+
+
+## Broadcast the full visible-token snapshot (called on initial client connect
+## or after a map load that includes pre-existing tokens).
+func _broadcast_token_state() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var visible: Array = registry.token.service.get_visible_tokens()
+	var dicts: Array = []
+	for raw in visible:
+		var td: TokenData = raw as TokenData
+		if td != null:
+			dicts.append(td.to_dict())
+	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts})
+
+
+## Collect player world positions and passive perceptions, then ask TokenService
+## to auto-reveal any tokens whose perception DC is met.  Called every
+## _PERCEPTION_CHECK_INTERVAL seconds from _process.
+func _run_perception_check() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	# Gather player positions from live DM token nodes (same source MapView uses).
+	var positions: Array = []
+	var perceptions: Array = []
+	if _backend != null and _backend.has_method("get_dm_token_nodes"):
+		var token_nodes: Dictionary = _backend.get_dm_token_nodes()
+		for pid in token_nodes.keys():
+			var node: Node2D = token_nodes[pid] as Node2D
+			if node == null or not is_instance_valid(node):
+				continue
+			positions.append(node.global_position)
+			# Look up passive perception from the profile service.
+			var pp: int = 10  ## default if profile not found
+			if registry.profile != null and registry.profile.service != null:
+				var prof: Variant = registry.profile.service.get_profile_by_id(str(pid))
+				if prof is PlayerProfile:
+					pp = (prof as PlayerProfile).get_passive_perception()
+			perceptions.append(pp)
+	if positions.is_empty():
+		return
+	var svc: ITokenService = registry.token.service
+	if not svc.has_method("check_perception_proximity"):
+		return
+	var newly_revealed: Array = (svc as TokenService).check_perception_proximity(positions, perceptions)
+	for id in newly_revealed:
+		_on_token_visibility_changed(str(id), true)
 
 
 func _on_profile_import_pressed() -> void:
@@ -2983,9 +3332,22 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 		_backend.reset_for_new_map()
 	if _map_view and _backend and _backend.has_method("get_dm_token_nodes"):
 		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
+	# Load DM-placed token sprites from the token service (populated by MapService.load_map).
+	if _map_view != null:
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.token != null and reg.token.service != null:
+			var all_tokens: Array = reg.token.service.get_all_tokens()
+			var dicts: Array = []
+			for raw in all_tokens:
+				var td: TokenData = raw as TokenData
+				if td != null:
+					dicts.append(td.to_dict())
+			_map_view.load_token_sprites(dicts, true)
 	if not from_save:
 		_broadcast_fog_state()
 		_broadcast_player_state()
+	# Broadcast visible token state after map load.
+	_broadcast_token_state()
 	_grid_option.disabled = false
 	_grid_option.select(_grid_option.get_item_index(map.grid_type))
 

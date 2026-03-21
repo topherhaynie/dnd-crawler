@@ -30,6 +30,9 @@ func _ready() -> void:
 	var input_svc := InputService.new()
 	input_svc.name = "InputService"
 
+	var token_svc := TokenService.new()
+	token_svc.name = "TokenService"
+
 	# --- Build registry and wire managers ---
 	var registry := ServiceRegistry.new()
 	registry.name = "ServiceRegistry"
@@ -71,6 +74,10 @@ func _ready() -> void:
 	input_mgr.model = input_model
 	registry.input = input_mgr
 
+	var token_mgr := TokenManager.new()
+	token_mgr.service = token_svc
+	registry.token = token_mgr
+
 	# --- Add to scene tree (deferred to avoid ready-order races) ---
 	var root := get_tree().root
 	root.call_deferred("add_child", registry)
@@ -81,5 +88,6 @@ func _ready() -> void:
 	root.call_deferred("add_child", ps_svc)
 	root.call_deferred("add_child", persistence_svc)
 	root.call_deferred("add_child", input_svc)
+	root.call_deferred("add_child", token_svc)
 
 	print("ServiceBootstrap: all services registered")

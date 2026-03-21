@@ -20,6 +20,7 @@ var game_state: GameStateManager = null
 var profile: ProfileManager = null
 var persistence: PersistenceManager = null
 var input: InputManager = null
+var token: TokenManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.
@@ -41,5 +42,7 @@ func get_service(svc_name: String) -> Object:
 			return persistence.service if persistence != null else null
 		"Input":
 			return input.service if input != null else null
+		"Token":
+			return token.service if token != null else null
 	push_warning("ServiceRegistry.get_service: unknown service key '%s'" % svc_name)
 	return null

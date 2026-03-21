@@ -37,7 +37,8 @@ enum Tool {
 	ZOOM,
 	PLAYER_ZOOM,
 	WALL,
-	SPAWN_POINT
+	SPAWN_POINT,
+	PLACE_TOKEN,
 }
 
 const ZOOM_MIN: float = 0.1
@@ -157,6 +158,8 @@ signal walls_changed(map: MapData)
 signal spawn_points_changed(map: MapData)
 signal token_drag_started(token_id: Variant)
 signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
+signal token_place_requested(world_pos: Vector2)
+signal token_right_clicked(token_id: String, screen_pos: Vector2)
 
 ## World-space rect — kept in sync with _indicator_overlay for hit-testing.
 var _viewport_indicator: Rect2 = Rect2()
@@ -394,6 +397,61 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 	camera.rotation_degrees = float(_map_rotation)
 
 
+# ---------------------------------------------------------------------------
+# Token sprite management (DM-placed tokens)
+# ---------------------------------------------------------------------------
+
+## Replace the entire token_layer contents from an array of serialised dicts.
+## is_dm controls visibility / alpha for hidden tokens.
+func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
+	for child in token_layer.get_children():
+		child.queue_free()
+	_draggable_tokens.clear()
+	_token_drag_order.clear()
+	for raw in token_dicts:
+		if raw is Dictionary:
+			var data: TokenData = TokenData.from_dict(raw as Dictionary)
+			_add_token_sprite_node(data, is_dm)
+
+
+## Add a single token sprite for a freshly created/revealed token.
+func add_token_sprite(data: TokenData, is_dm: bool) -> void:
+	# Remove existing node for this id if present (e.g. a re-reveal).
+	remove_token_sprite(data.id)
+	_add_token_sprite_node(data, is_dm)
+
+
+## Remove the token sprite for the given id.
+func remove_token_sprite(id: String) -> void:
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == id:
+			ts.queue_free()
+			_draggable_tokens.erase(id)
+			_token_drag_order.erase(id)
+			return
+
+
+## Refresh an existing token sprite in-place (label, visibility, position).
+func update_token_sprite(data: TokenData) -> void:
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == data.id:
+			ts.apply_from_data(data, is_dm_view)
+			return
+
+
+# Internal helper — instantiate and register one TokenSprite.
+func _add_token_sprite_node(data: TokenData, is_dm: bool) -> void:
+	var ts := TokenSprite.new()
+	ts.name = "Token_%s" % data.id
+	token_layer.add_child(ts)
+	ts.apply_from_data(data, is_dm)
+	_draggable_tokens[data.id] = ts
+	if not _token_drag_order.has(data.id):
+		_token_drag_order.append(data.id)
+
+
 func set_draggable_tokens(tokens: Dictionary) -> void:
 	_draggable_tokens = tokens
 	# Rebuild drag order: preserve existing order for surviving tokens, append new ones
@@ -484,6 +542,17 @@ func _cancel_token_drag() -> void:
 	_dragging_token_offset = Vector2.ZERO
 
 
+func _on_token_drag_completed(tid: Variant, new_world_pos: Vector2) -> void:
+	## Persist drag result to the TokenService so the model stays in sync.
+	if not is_dm_view:
+		return
+	var id: String = str(tid)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	registry.token.service.move_token(id, new_world_pos)
+
+
 func _ready() -> void:
 	_ensure_object_layer()
 	# Allow Camera2D to honour rotation_degrees (disabled by default in Godot 4).
@@ -496,6 +565,8 @@ func _ready() -> void:
 	add_child(_indicator_overlay)
 	_apply_layer_order()
 	apply_render_profile(RenderProfile.DM if is_dm_view else RenderProfile.PLAYER)
+	# Connect token drag completion to update the service model.
+	token_drag_completed.connect(_on_token_drag_completed)
 
 	# Shader-free black cover — blocks map exposure on the player side while
 	# the fog overlay's GPU shader compiles and SubViewports render.
@@ -671,6 +742,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_LEFT:
 				if btn_event.pressed:
+					# Place Token tool — emit world position and consume event.
+					if active_tool == Tool.PLACE_TOKEN:
+						token_place_requested.emit(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+						return
 					# Token drag takes priority over indicator and pan
 					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
 						var world_pos := get_global_mouse_position()
@@ -723,6 +799,13 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					elif _panning:
 						_panning = false
+						get_viewport().set_input_as_handled()
+			MOUSE_BUTTON_RIGHT:
+				if btn_event.pressed and active_tool == Tool.SELECT:
+					var world_pos_r := get_global_mouse_position()
+					var hit_id_r: Variant = _hit_test_tokens(world_pos_r)
+					if hit_id_r != null:
+						token_right_clicked.emit(str(hit_id_r), btn_event.position)
 						get_viewport().set_input_as_handled()
 		return
 
