@@ -48,6 +48,8 @@ const PAN_SPEED: float = 500.0 ## px/sec for arrow-key pan
 const WALL_HANDLE_HIT_RADIUS_PX: float = 12.0
 const WALL_HANDLE_SIZE_WORLD: float = 6.0
 const ROTATION_STEP: int = 90 ## degrees per rotate click
+const HANDLE_HIT_RADIUS_PX: float = 8.0 ## world-space hit radius for each token bounding-box handle
+const ROT_HANDLE_DIST_PX: float = 22.0 ## distance above bounding box top for the rotation handle
 
 @onready var camera: Camera2D = $Camera2D
 @onready var map_image: TextureRect = $MapImage
@@ -135,6 +137,8 @@ const SPAWN_LABEL_COLOR: Color = Color(1.0, 1.0, 1.0, 0.9)
 func _set_active_tool(tool: Tool) -> void:
 	# Clear transient input state when switching tools to avoid "stuck" drags
 	_cancel_token_drag()
+	_cancel_token_resize()
+	_clear_token_hover()
 	active_tool = tool
 	_panning = false
 	_dragging_indicator = false
@@ -158,6 +162,8 @@ signal walls_changed(map: MapData)
 signal spawn_points_changed(map: MapData)
 signal token_drag_started(token_id: Variant)
 signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
+signal token_resize_completed(token_id: String, new_width_px: float, new_height_px: float)
+signal token_rotation_completed(token_id: String, rotation_deg: float)
 signal token_place_requested(world_pos: Vector2)
 signal token_right_clicked(token_id: String, screen_pos: Vector2)
 
@@ -166,7 +172,7 @@ var _viewport_indicator: Rect2 = Rect2()
 var _indicator_rotation_deg: float = 0.0
 var _dragging_indicator: bool = false
 var _resizing_indicator: bool = false
-var _resize_handle_idx: int = -1  ## 0=TL, 1=TR, 2=BR, 3=BL
+var _resize_handle_idx: int = -1 ## 0=TL, 1=TR, 2=BR, 3=BL
 var _resize_anchor_world: Vector2 = Vector2.ZERO
 var _resize_start_rect: Rect2 = Rect2()
 
@@ -177,6 +183,18 @@ var _dragging_token_offset: Vector2 = Vector2.ZERO
 var _draggable_tokens: Dictionary = {}
 var _token_drag_order: Array = []
 var _current_cursor_shape: int = DisplayServer.CURSOR_ARROW
+## Token hover, resize, and rotation state (DM-view only)
+var _hovered_token_id: Variant = null
+var _resizing_token_id: Variant = null
+var _resize_token_node: Node2D = null
+var _resize_token_handle_idx: int = -1
+var _resize_start_width: float = 0.0
+var _resize_start_height: float = 0.0
+var _resize_start_aspect: float = 1.0
+var _rotating_token_id: Variant = null
+var _rotate_token_node: Node2D = null
+var _rotate_start_angle: float = 0.0
+var _rotate_start_mouse_angle: float = 0.0
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
@@ -404,6 +422,8 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 ## Replace the entire token_layer contents from an array of serialised dicts.
 ## is_dm controls visibility / alpha for hidden tokens.
 func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
+	_cancel_token_resize()
+	_hovered_token_id = null  # nodes are being freed; skip set_show_handles
 	for child in token_layer.get_children():
 		child.queue_free()
 	_draggable_tokens.clear()
@@ -423,6 +443,10 @@ func add_token_sprite(data: TokenData, is_dm: bool) -> void:
 
 ## Remove the token sprite for the given id.
 func remove_token_sprite(id: String) -> void:
+	if _hovered_token_id == id:
+		_hovered_token_id = null
+	if _resizing_token_id == id or _rotating_token_id == id:
+		_cancel_token_resize()
 	for child in token_layer.get_children():
 		var ts: TokenSprite = child as TokenSprite
 		if ts != null and ts.token_id == id:
@@ -475,13 +499,16 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 		var node: Node2D = _draggable_tokens[tid] as Node2D
 		if node == null or not is_instance_valid(node):
 			continue
-		var diameter_px: float = 48.0
-		if node.has_method("get_token_diameter_px"):
-			diameter_px = node.get_token_diameter_px()
-		var hit_radius: float = maxf(diameter_px * 0.5, 32.0)
-		var dist: float = world_pos.distance_to(node.global_position)
-		if dist <= hit_radius:
-			candidates.append({"id": tid, "dist": dist})
+		var rx: float = 24.0
+		var ry: float = 24.0
+		if node.has_method("get_token_width_px"):
+			rx = maxf(node.get_token_width_px() * 0.5, 16.0)
+		if node.has_method("get_token_height_px"):
+			ry = maxf(node.get_token_height_px() * 0.5, 16.0)
+		var local_pos: Vector2 = node.to_local(world_pos)
+		var ellipse_val: float = (local_pos.x / rx) * (local_pos.x / rx) + (local_pos.y / ry) * (local_pos.y / ry)
+		if ellipse_val <= 1.0:
+			candidates.append({"id": tid, "dist": local_pos.length()})
 	if candidates.is_empty():
 		return null
 	if candidates.size() == 1:
@@ -509,21 +536,82 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 	return best_tid
 
 
+## Returns the token_id if world_pos falls within the resize edge zone of any draggable token.
+## Returns {token_id, handle} if world_pos hits a token handle; empty dict if none.
+## handle 0-7 = bounding-box resize corners/edges (TL…L), handle 8 = rotation.
+func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
+	for tid in _draggable_tokens.keys():
+		var node: Node2D = _draggable_tokens[tid] as Node2D
+		if node == null or not is_instance_valid(node):
+			continue
+		var rx: float = 24.0
+		var ry: float = 24.0
+		if node.has_method("get_token_width_px"):
+			rx = node.get_token_width_px() * 0.5
+		if node.has_method("get_token_height_px"):
+			ry = node.get_token_height_px() * 0.5
+		var local_pos: Vector2 = node.to_local(world_pos)
+		# Rotation handle (above top bounding edge).
+		if local_pos.distance_to(Vector2(0.0, -ry - ROT_HANDLE_DIST_PX)) <= HANDLE_HIT_RADIUS_PX:
+			return {"token_id": tid, "handle": 8}
+		# 8 bounding-box resize handles.
+		var handles: Array = [
+			Vector2(-rx, -ry), Vector2(0.0, -ry), Vector2(rx, -ry),
+			Vector2(rx, 0.0), Vector2(rx, ry), Vector2(0.0, ry),
+			Vector2(-rx, ry), Vector2(-rx, 0.0),
+		]
+		for i: int in handles.size():
+			if local_pos.distance_to(handles[i]) <= HANDLE_HIT_RADIUS_PX:
+				return {"token_id": tid, "handle": i}
+	return {}
+
+
 func _update_cursor(world_pos: Vector2) -> void:
 	var shape: int = DisplayServer.CURSOR_ARROW
-	if _dragging_token_node != null:
+	if _rotating_token_id != null:
+		shape = DisplayServer.CURSOR_POINTING_HAND
+	elif _resizing_token_id != null:
+		shape = _cursor_for_handle(_resize_token_handle_idx)
+	elif _dragging_token_node != null:
 		shape = DisplayServer.CURSOR_MOVE
 	elif _resizing_indicator:
 		shape = DisplayServer.CURSOR_DRAG
-	elif active_tool == Tool.SELECT and _hit_test_tokens(world_pos) != null:
-		shape = DisplayServer.CURSOR_DRAG
-	elif active_tool == Tool.SELECT and _hit_test_spawn_point(world_pos) >= 0:
-		shape = DisplayServer.CURSOR_DRAG
-	elif active_tool == Tool.SELECT and _indicator_overlay != null and _indicator_overlay.get_handle_at(world_pos) >= 0:
-		shape = DisplayServer.CURSOR_DRAG
+	elif active_tool == Tool.SELECT:
+		var handle_result: Dictionary = _hit_test_token_handle(world_pos)
+		var token_hit: Variant = null
+		if handle_result.is_empty():
+			token_hit = _hit_test_tokens(world_pos)
+		if not handle_result.is_empty():
+			shape = _cursor_for_handle(int(handle_result.get("handle", -1)))
+		elif token_hit != null:
+			shape = DisplayServer.CURSOR_DRAG
+		elif _hit_test_spawn_point(world_pos) >= 0:
+			shape = DisplayServer.CURSOR_DRAG
+		elif _indicator_overlay != null and _indicator_overlay.get_handle_at(world_pos) >= 0:
+			shape = DisplayServer.CURSOR_DRAG
+		# Track hover to show/hide handles on TokenSprite nodes (DM only).
+		if is_dm_view and _rotating_token_id == null and _resizing_token_id == null and _dragging_token_node == null:
+			var new_hover: Variant = handle_result.get("token_id", null) if not handle_result.is_empty() else token_hit
+			if new_hover != _hovered_token_id:
+				_clear_token_hover()
+				_hovered_token_id = new_hover
+				if new_hover != null:
+					var hover_node: Node2D = _draggable_tokens.get(new_hover, null) as Node2D
+					if hover_node != null and is_instance_valid(hover_node) and hover_node.has_method("set_show_handles"):
+						hover_node.set_show_handles(true)
 	if shape != _current_cursor_shape:
 		_current_cursor_shape = shape
 		DisplayServer.cursor_set_shape(shape)
+
+
+func _cursor_for_handle(handle_idx: int) -> int:
+	match handle_idx:
+		0, 4: return DisplayServer.CURSOR_FDIAGSIZE
+		2, 6: return DisplayServer.CURSOR_BDIAGSIZE
+		1, 5: return DisplayServer.CURSOR_VSIZE
+		3, 7: return DisplayServer.CURSOR_HSIZE
+		8:    return DisplayServer.CURSOR_POINTING_HAND
+		_:    return DisplayServer.CURSOR_FDIAGSIZE
 
 
 func _reset_cursor() -> void:
@@ -540,6 +628,27 @@ func _cancel_token_drag() -> void:
 	_dragging_token_id = null
 	_dragging_token_node = null
 	_dragging_token_offset = Vector2.ZERO
+
+
+func _cancel_token_resize() -> void:
+	_resizing_token_id = null
+	_resize_token_node = null
+	_resize_token_handle_idx = -1
+	_resize_start_width = 0.0
+	_resize_start_height = 0.0
+	_resize_start_aspect = 1.0
+	_rotating_token_id = null
+	_rotate_token_node = null
+	_rotate_start_angle = 0.0
+	_rotate_start_mouse_angle = 0.0
+
+
+func _clear_token_hover() -> void:
+	if _hovered_token_id != null:
+		var old_node: Node2D = _draggable_tokens.get(_hovered_token_id, null) as Node2D
+		if old_node != null and is_instance_valid(old_node) and old_node.has_method("set_show_handles"):
+			old_node.set_show_handles(false)
+		_hovered_token_id = null
 
 
 func _on_token_drag_completed(tid: Variant, new_world_pos: Vector2) -> void:
@@ -747,9 +856,36 @@ func _unhandled_input(event: InputEvent) -> void:
 						token_place_requested.emit(get_global_mouse_position())
 						get_viewport().set_input_as_handled()
 						return
-					# Token drag takes priority over indicator and pan
+					# Token interaction — handle hit (resize/rotate) takes priority over body move.
 					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
 						var world_pos := get_global_mouse_position()
+						var handle_result: Dictionary = _hit_test_token_handle(world_pos)
+						if not handle_result.is_empty():
+							var htid: Variant = handle_result.get("token_id", null)
+							var hdl: int = int(handle_result.get("handle", -1))
+							var handle_node: Node2D = _draggable_tokens.get(htid, null) as Node2D
+							if handle_node != null and is_instance_valid(handle_node):
+								if hdl == 8:
+									_rotating_token_id = htid
+									_rotate_token_node = handle_node
+									_rotate_start_angle = handle_node.rotation
+									_rotate_start_mouse_angle = atan2(
+											world_pos.y - handle_node.global_position.y,
+											world_pos.x - handle_node.global_position.x)
+								else:
+									_resizing_token_id = htid
+									_resize_token_node = handle_node
+									_resize_token_handle_idx = hdl
+									_resize_start_width = 48.0
+									_resize_start_height = 48.0
+									if handle_node.has_method("get_token_width_px"):
+										_resize_start_width = handle_node.get_token_width_px()
+									if handle_node.has_method("get_token_height_px"):
+										_resize_start_height = handle_node.get_token_height_px()
+									_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
+								_update_cursor(world_pos)
+								get_viewport().set_input_as_handled()
+								return
 						var hit_id: Variant = _hit_test_tokens(world_pos)
 						if hit_id != null:
 							var hit_node: Node2D = _draggable_tokens.get(hit_id, null) as Node2D
@@ -782,7 +918,33 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					return
 				else:
-					if _dragging_token_node != null:
+					if _rotating_token_id != null:
+						var final_rot: float = 0.0
+						if _rotate_token_node != null:
+							final_rot = rad_to_deg(_rotate_token_node.rotation)
+						token_rotation_completed.emit(str(_rotating_token_id), final_rot)
+						_rotating_token_id = null
+						_rotate_token_node = null
+						_update_cursor(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+					elif _resizing_token_id != null:
+						var final_w: float = _resize_start_width
+						var final_h: float = _resize_start_height
+						if _resize_token_node != null:
+							if _resize_token_node.has_method("get_token_width_px"):
+								final_w = _resize_token_node.get_token_width_px()
+							if _resize_token_node.has_method("get_token_height_px"):
+								final_h = _resize_token_node.get_token_height_px()
+						token_resize_completed.emit(str(_resizing_token_id), final_w, final_h)
+						_resizing_token_id = null
+						_resize_token_node = null
+						_resize_token_handle_idx = -1
+						_resize_start_width = 0.0
+						_resize_start_height = 0.0
+						_resize_start_aspect = 1.0
+						_update_cursor(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+					elif _dragging_token_node != null:
 						token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
 						_token_drag_order.erase(_dragging_token_id)
 						_token_drag_order.push_front(_dragging_token_id)
@@ -812,6 +974,36 @@ func _unhandled_input(event: InputEvent) -> void:
 	# --- Mouse motion (panning + indicator drag) ----------------------------
 	if event is InputEventMouseMotion:
 		var motion_world_pos := get_global_mouse_position()
+		if _rotating_token_id != null and _rotate_token_node != null:
+			var center: Vector2 = _rotate_token_node.global_position
+			var cur_angle: float = atan2(motion_world_pos.y - center.y, motion_world_pos.x - center.x)
+			_rotate_token_node.rotation = _rotate_start_angle + (cur_angle - _rotate_start_mouse_angle)
+			_update_cursor(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
+		if _resizing_token_id != null and _resize_token_node != null:
+			var local_mouse: Vector2 = _resize_token_node.to_local(motion_world_pos)
+			const MAX_SZ: float = 1024.0
+			var new_w: float = _resize_start_width
+			var new_h: float = _resize_start_height
+			match _resize_token_handle_idx:
+				0, 2, 4, 6:
+					new_w = clampf(absf(local_mouse.x) * 2.0, 24.0, MAX_SZ)
+					new_h = clampf(absf(local_mouse.y) * 2.0, 24.0, MAX_SZ)
+					if Input.is_key_pressed(KEY_SHIFT):
+						if new_w / maxf(new_h, 1.0) > _resize_start_aspect:
+							new_w = clampf(new_h * _resize_start_aspect, 24.0, MAX_SZ)
+						else:
+							new_h = clampf(new_w / maxf(_resize_start_aspect, 0.001), 24.0, MAX_SZ)
+				1, 5:
+					new_h = clampf(absf(local_mouse.y) * 2.0, 24.0, MAX_SZ)
+				3, 7:
+					new_w = clampf(absf(local_mouse.x) * 2.0, 24.0, MAX_SZ)
+			if _resize_token_node.has_method("set_size_px"):
+				_resize_token_node.set_size_px(new_w, new_h)
+			_update_cursor(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
 		if _dragging_token_node != null:
 			_dragging_token_node.global_position = motion_world_pos + _dragging_token_offset
 			_update_cursor(motion_world_pos)
@@ -868,7 +1060,11 @@ func _process(delta: float) -> void:
 			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size, _map_rotation)
 
 	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
-		fog_overlay.sync_player_revealers(token_layer.get_children())
+		# Only player tokens (PlayerSprite) should act as fog revealers.
+		# DM-placed TokenSprite nodes must never receive a vision light.
+		var revealers: Array = token_layer.get_children().filter(
+				func(n: Node) -> bool: return not n is TokenSprite)
+		fog_overlay.sync_player_revealers(revealers)
 
 
 # ---------------------------------------------------------------------------

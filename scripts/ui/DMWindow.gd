@@ -111,7 +111,7 @@ var _wall_delete_btn: Button = null
 var _token_btn: Button = null
 ## Token editor popup fields
 var _token_editor_dialog: ConfirmationDialog = null
-var _token_editor_id: String = ""         ## empty = new token
+var _token_editor_id: String = "" ## empty = new token
 var _token_label_edit: LineEdit = null
 var _token_category_option: OptionButton = null
 var _token_visible_check: CheckBox = null
@@ -119,6 +119,9 @@ var _token_perception_spin: SpinBox = null
 var _token_autopause_check: CheckBox = null
 var _token_pause_interact_check: CheckBox = null
 var _token_notes_edit: TextEdit = null
+var _token_width_spin: SpinBox = null
+var _token_height_spin: SpinBox = null
+var _token_rotation_spin: SpinBox = null
 ## Right-click context menu for tokens
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
@@ -427,6 +430,8 @@ func _build_ui() -> void:
 	_map_view.spawn_points_changed.connect(_on_map_spawn_points_changed)
 	_map_view.token_drag_started.connect(_on_token_drag_started)
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
+	_map_view.token_resize_completed.connect(_on_token_resize_completed)
+	_map_view.token_rotation_completed.connect(_on_token_rotation_completed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
 	_backend = BackendRuntimeScript.new()
@@ -2608,6 +2613,33 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	})
 
 
+func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:
+	_player_state_dirty = true
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var data: TokenData = registry.token.service.get_token_by_id(token_id)
+	if data == null:
+		return
+	data.width_px = new_width_px
+	data.height_px = new_height_px
+	registry.token.service.update_token(data)
+	_broadcast_token_change(data, false)
+
+
+func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void:
+	_player_state_dirty = true
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.token.service == null:
+		return
+	var data: TokenData = registry.token.service.get_token_by_id(token_id)
+	if data == null:
+		return
+	data.rotation_deg = rotation_deg
+	registry.token.service.update_token(data)
+	_broadcast_token_change(data, false)
+
+
 # ---------------------------------------------------------------------------
 # Token placement / editing
 # ---------------------------------------------------------------------------
@@ -2669,6 +2701,12 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_visible_check.button_pressed = data.is_visible_to_players
 	if _token_perception_spin != null:
 		_token_perception_spin.value = float(data.perception_dc)
+	if _token_width_spin != null:
+		_token_width_spin.value = data.width_px
+	if _token_height_spin != null:
+		_token_height_spin.value = data.height_px
+	if _token_rotation_spin != null:
+		_token_rotation_spin.value = data.rotation_deg
 	if _token_autopause_check != null:
 		_token_autopause_check.button_pressed = data.autopause
 	if _token_pause_interact_check != null:
@@ -2685,7 +2723,7 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
 		## Store the new-token world_pos in meta so confirm can read it.
 		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
-		_token_editor_dialog.popup_centered(Vector2i(420, 440))
+		_token_editor_dialog.popup_centered(Vector2i(420, 530))
 
 
 func _build_token_editor_dialog() -> void:
@@ -2723,6 +2761,54 @@ func _build_token_editor_dialog() -> void:
 		_token_category_option.add_item(TokenData.category_name(cat_val), cat_val)
 	cat_row.add_child(_token_category_option)
 	vbox.add_child(cat_row)
+
+	# Width
+	var width_row := HBoxContainer.new()
+	var width_label := Label.new()
+	width_label.text = "Width (px):"
+	width_label.custom_minimum_size = Vector2(120, 0)
+	width_row.add_child(width_label)
+	_token_width_spin = SpinBox.new()
+	_token_width_spin.min_value = 24.0
+	_token_width_spin.max_value = 1024.0
+	_token_width_spin.step = 8.0
+	_token_width_spin.value = 48.0
+	_token_width_spin.suffix = "px"
+	_token_width_spin.custom_minimum_size = Vector2(130, 0)
+	width_row.add_child(_token_width_spin)
+	vbox.add_child(width_row)
+
+	# Height
+	var height_row := HBoxContainer.new()
+	var height_label := Label.new()
+	height_label.text = "Height (px):"
+	height_label.custom_minimum_size = Vector2(120, 0)
+	height_row.add_child(height_label)
+	_token_height_spin = SpinBox.new()
+	_token_height_spin.min_value = 24.0
+	_token_height_spin.max_value = 1024.0
+	_token_height_spin.step = 8.0
+	_token_height_spin.value = 48.0
+	_token_height_spin.suffix = "px"
+	_token_height_spin.custom_minimum_size = Vector2(130, 0)
+	height_row.add_child(_token_height_spin)
+	vbox.add_child(height_row)
+
+	# Rotation
+	var rot_row := HBoxContainer.new()
+	var rot_label := Label.new()
+	rot_label.text = "Rotation (°):"
+	rot_label.custom_minimum_size = Vector2(120, 0)
+	rot_row.add_child(rot_label)
+	_token_rotation_spin = SpinBox.new()
+	_token_rotation_spin.min_value = -360.0
+	_token_rotation_spin.max_value = 360.0
+	_token_rotation_spin.step = 15.0
+	_token_rotation_spin.value = 0.0
+	_token_rotation_spin.suffix = "°"
+	_token_rotation_spin.custom_minimum_size = Vector2(130, 0)
+	rot_row.add_child(_token_rotation_spin)
+	vbox.add_child(rot_row)
 
 	# Visible to players
 	var vis_row := HBoxContainer.new()
@@ -2789,6 +2875,9 @@ func _on_token_editor_confirmed() -> void:
 	var do_ap: bool = _token_autopause_check.button_pressed if _token_autopause_check != null else false
 	var do_pi: bool = _token_pause_interact_check.button_pressed if _token_pause_interact_check != null else false
 	var notes_text: String = _token_notes_edit.text if _token_notes_edit != null else ""
+	var w_px: float = _token_width_spin.value if _token_width_spin != null else 48.0
+	var h_px: float = _token_height_spin.value if _token_height_spin != null else 48.0
+	var rot_deg: float = _token_rotation_spin.value if _token_rotation_spin != null else 0.0
 
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null or registry.token.service == null:
@@ -2812,6 +2901,9 @@ func _on_token_editor_confirmed() -> void:
 	data.autopause = do_ap
 	data.pause_on_interact = do_pi
 	data.notes = notes_text
+	data.width_px = w_px
+	data.height_px = h_px
+	data.rotation_deg = rot_deg
 
 	if existing != null:
 		svc.update_token(data)
@@ -2886,7 +2978,7 @@ func _run_perception_check() -> void:
 				continue
 			positions.append(node.global_position)
 			# Look up passive perception from the profile service.
-			var pp: int = 10  ## default if profile not found
+			var pp: int = 10 ## default if profile not found
 			if registry.profile != null and registry.profile.service != null:
 				var prof: Variant = registry.profile.service.get_profile_by_id(str(pid))
 				if prof is PlayerProfile:

@@ -23,12 +23,12 @@ enum TokenCategory {
 }
 
 # --- Identity --------------------------------------------------------------
-var id: String = ""          ## Unique token ID; generated on creation
-var label: String = ""       ## Display name shown on the DM map
+var id: String = "" ## Unique token ID; generated on creation
+var label: String = "" ## Display name shown on the DM map
 
 # --- Placement -------------------------------------------------------------
-var category: int = TokenCategory.GENERIC  ## TokenCategory enum value
-var world_pos: Vector2 = Vector2.ZERO      ## World-space centre position
+var category: int = TokenCategory.GENERIC ## TokenCategory enum value
+var world_pos: Vector2 = Vector2.ZERO ## World-space centre position
 
 # --- Visibility -----------------------------------------------------------
 ## When false the token is hidden from players (DM sees it at reduced alpha).
@@ -48,6 +48,12 @@ var pause_on_interact: bool = false
 var notes: String = ""
 
 # --- Appearance -----------------------------------------------------------
+## Rendered size of the token in world-space pixels.
+## 48 = one standard grid cell at 1:1 zoom.
+var width_px: float = 48.0
+var height_px: float = 48.0
+## Rotation of the token around its centre, in degrees.
+var rotation_deg: float = 0.0
 ## Key used to look up a sprite frame or icon resource path.
 ## Empty string = use the category default colour placeholder.
 var icon_key: String = ""
@@ -86,6 +92,9 @@ func to_dict() -> Dictionary:
 		"autopause": autopause,
 		"pause_on_interact": pause_on_interact,
 		"notes": notes,
+		"width_px": width_px,
+		"height_px": height_px,
+		"rotation_deg": rotation_deg,
 		"icon_key": icon_key,
 	}
 
@@ -104,6 +113,10 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.autopause = bool(d.get("autopause", false))
 	t.pause_on_interact = bool(d.get("pause_on_interact", false))
 	t.notes = str(d.get("notes", ""))
+	var _compat_diam: float = float(d.get("diameter_px", 48.0))
+	t.width_px = float(d.get("width_px", _compat_diam))
+	t.height_px = float(d.get("height_px", _compat_diam))
+	t.rotation_deg = float(d.get("rotation_deg", 0.0))
 	t.icon_key = str(d.get("icon_key", ""))
 	return t
 
@@ -111,11 +124,11 @@ static func from_dict(d: Dictionary) -> TokenData:
 ## Human-readable category name for UI labels.
 static func category_name(cat: int) -> String:
 	match cat:
-		TokenCategory.DOOR:           return "Door"
-		TokenCategory.TRAP:           return "Trap"
-		TokenCategory.HIDDEN_OBJECT:  return "Hidden Object"
+		TokenCategory.DOOR: return "Door"
+		TokenCategory.TRAP: return "Trap"
+		TokenCategory.HIDDEN_OBJECT: return "Hidden Object"
 		TokenCategory.SECRET_PASSAGE: return "Secret Passage"
-		TokenCategory.MONSTER:        return "Monster"
-		TokenCategory.EVENT:          return "Event"
-		TokenCategory.NPC:            return "NPC"
-		_:                            return "Generic"
+		TokenCategory.MONSTER: return "Monster"
+		TokenCategory.EVENT: return "Event"
+		TokenCategory.NPC: return "NPC"
+		_: return "Generic"
