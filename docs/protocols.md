@@ -341,6 +341,33 @@ tokens currently visible to players (`is_visible_to_players == true`).
 **Fields:**
 - `tokens` (Array): zero or more serialised `TokenData` objects (visible tokens only).
 
+### `TokenData` field reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | String | generated | Unique token identifier (`"<unix_ms>_<rand>"`) |
+| `label` | String | `""` | Display name shown in DM overlay |
+| `category` | int | `0` (DOOR) | See `TokenCategory` enum below |
+| `world_pos` | `{x, y}` | `{0,0}` | Centre position in world-space pixels |
+| `is_visible_to_players` | bool | `false` | Whether this token is sent to display clients |
+| `perception_dc` | int | `-1` | Passive-perception DC for auto-reveal (`-1` = manual only) |
+| `autopause` | bool | `false` | Pause game on player proximity (stub) |
+| `pause_on_interact` | bool | `false` | Pause game on player interact (stub) |
+| `notes` | String | `""` | DM-only text notes |
+| `icon_key` | String | `""` | Asset key for the token's icon image |
+| `width_px` | float | `48` | Bounding box width in world-space pixels |
+| `height_px` | float | `48` | Bounding box height in world-space pixels |
+| `rotation_deg` | float | `0` | Visual rotation in degrees |
+| `token_shape` | int | `0` (ELLIPSE) | Shape used for drawing: `0`=Ellipse, `1`=Rectangle |
+| `blocks_los` | bool | `true` | When `false`, wall polygons overlapping this token's bounding rect are excluded from LOS/fog occluder construction. Only meaningful for DOOR (`0`) and SECRET_PASSAGE (`3`). |
+
+### `TokenShape` enum reference
+
+| Value | Name |
+|---|---|
+| 0 | ELLIPSE |
+| 1 | RECTANGLE |
+
 ---
 
 ### `token_added` — single token revealed or created

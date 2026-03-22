@@ -185,6 +185,21 @@ func _handle_packet(raw: String) -> void:
 				var is_fs := mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 				if not is_fs:
 					DisplayServer.window_set_size(Vector2i(w, h))
+		"token_state":
+			# Full token snapshot — sent on initial display connect
+			state_received.emit(data)
+		"token_added":
+			# A new visible token was placed on the map
+			state_received.emit(data)
+		"token_updated":
+			# An existing token's properties changed (position, LOS, shape…)
+			state_received.emit(data)
+		"token_removed":
+			# A token was deleted or hidden from players
+			state_received.emit(data)
+		"token_moved":
+			# Lightweight position update for a live token
+			state_received.emit(data)
 		"state":
 			# Full render-state snapshot (Phase 4 will flesh this out)
 			state_received.emit(data)

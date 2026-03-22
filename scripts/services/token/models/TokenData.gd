@@ -22,6 +22,11 @@ enum TokenCategory {
 	GENERIC,
 }
 
+enum TokenShape {
+	ELLIPSE = 0,
+	RECTANGLE = 1,
+}
+
 # --- Identity --------------------------------------------------------------
 var id: String = "" ## Unique token ID; generated on creation
 var label: String = "" ## Display name shown on the DM map
@@ -42,6 +47,10 @@ var perception_dc: int = -1
 var autopause: bool = false
 ## Pause the session when a player interacts with (clicks) this token.
 var pause_on_interact: bool = false
+## When false, wall polygons overlapping this token's bounding rect are
+## excluded from LOS/fog occluder construction. Only meaningful for DOOR
+## and SECRET_PASSAGE categories. Defaults true so existing maps are unaffected.
+var blocks_los: bool = true
 
 # --- Notes ----------------------------------------------------------------
 ## Free-form DM notes attached to this token.
@@ -57,6 +66,9 @@ var rotation_deg: float = 0.0
 ## Key used to look up a sprite frame or icon resource path.
 ## Empty string = use the category default colour placeholder.
 var icon_key: String = ""
+## Rendering shape: ELLIPSE (0) or RECTANGLE (1). Defaults ELLIPSE for
+## backwards compat; RECTANGLE is recommended for doors/passages.
+var token_shape: int = TokenShape.ELLIPSE
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +108,8 @@ func to_dict() -> Dictionary:
 		"height_px": height_px,
 		"rotation_deg": rotation_deg,
 		"icon_key": icon_key,
+		"token_shape": token_shape,
+		"blocks_los": blocks_los,
 	}
 
 
@@ -118,6 +132,8 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.height_px = float(d.get("height_px", _compat_diam))
 	t.rotation_deg = float(d.get("rotation_deg", 0.0))
 	t.icon_key = str(d.get("icon_key", ""))
+	t.token_shape = int(d.get("token_shape", TokenShape.ELLIPSE))
+	t.blocks_los = bool(d.get("blocks_los", true))
 	return t
 
 

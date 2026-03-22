@@ -122,6 +122,9 @@ var _token_notes_edit: TextEdit = null
 var _token_width_spin: SpinBox = null
 var _token_height_spin: SpinBox = null
 var _token_rotation_spin: SpinBox = null
+var _token_shape_option: OptionButton = null
+var _token_blocks_los_check: CheckBox = null
+var _token_blocks_los_row: HBoxContainer = null
 ## Right-click context menu for tokens
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
@@ -262,18 +265,18 @@ func _nm_broadcast_to_displays(msg: Dictionary) -> void:
 func _nm_broadcast_map(map: MapData) -> void:
 	var nm := _network()
 	if nm != null:
-		nm.broadcast_to_displays({"msg": "map_loaded", "map": map})
+		nm.broadcast_to_displays({"msg": "map_loaded", "map": map.to_dict()})
 
 func _nm_broadcast_map_update(map: MapData) -> void:
 	var nm := _network()
 	if nm != null:
-		nm.broadcast_to_displays({"msg": "map_updated", "map": map})
+		nm.broadcast_to_displays({"msg": "map_updated", "map": map.to_dict()})
 
 func _nm_send_map_to_display(peer_id: int, map: MapData, _is_update: bool, fog_snapshot: Dictionary) -> void:
 	var nm := _network()
 	if nm == null:
 		return
-	nm.send_to_display(peer_id, {"msg": "map_loaded", "map": map})
+	nm.send_to_display(peer_id, {"msg": "map_loaded", "map": map.to_dict()})
 	if not fog_snapshot.is_empty():
 		nm.send_to_display(peer_id, fog_snapshot)
 
@@ -1870,7 +1873,7 @@ func _on_calibrate_pressed() -> void:
 		_set_status("Load a map first.")
 		return
 	# Ensure we're in Select mode during calibration (no accidental drag pan)
-	_map_view._set_active_tool(0) # Tool.SELECT
+	_map_view._set_active_tool(_map_view.Tool.SELECT)
 	_select_btn.button_pressed = true
 	# Pre-fill offset spinboxes from current map data
 	_offset_x_spin.value = map.grid_offset.x
@@ -2594,8 +2597,17 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	if _backend != null:
 		_backend.end_token_drag(token_id, new_world_pos)
 	_player_state_dirty = true
-	# Broadcast updated token position to player displays.
 	var id: String = str(token_id)
+	# Persist the new position and refresh door/passthrough state.
+	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_drag != null and registry_drag.token != null and registry_drag.token.service != null:
+		var data: TokenData = registry_drag.token.service.get_token_by_id(id)
+		if data != null:
+			data.world_pos = new_world_pos
+			registry_drag.token.service.update_token(data)
+			if _map_view != null:
+				_map_view.apply_token_passthrough_state(data)
+	# Broadcast updated token position to player displays.
 	_nm_broadcast_to_displays({
 		"msg": "token_moved",
 		"token_id": id,
@@ -2614,6 +2626,8 @@ func _on_token_resize_completed(token_id: String, new_width_px: float, new_heigh
 	data.width_px = new_width_px
 	data.height_px = new_height_px
 	registry.token.service.update_token(data)
+	if _map_view != null:
+		_map_view.apply_token_passthrough_state(data)
 	_broadcast_token_change(data, false)
 
 
@@ -2651,6 +2665,17 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 	_token_context_menu.add_item("Edit Token…", 0)
 	_token_context_menu.add_separator()
 	_token_context_menu.add_item("Toggle Visibility", 1)
+	# Show door open/close toggle for DOOR and SECRET_PASSAGE categories.
+	var registry_cm := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var td: TokenData = registry_cm.token.service.get_token_by_id(id) if (registry_cm != null and registry_cm.token != null and registry_cm.token.service != null) else null
+	if td != null and (td.category == TokenData.TokenCategory.DOOR or td.category == TokenData.TokenCategory.SECRET_PASSAGE):
+		_token_context_menu.add_separator()
+		var toggle_label: String
+		if td.category == TokenData.TokenCategory.DOOR:
+			toggle_label = "Open Door" if td.blocks_los else "Close Door"
+		else:
+			toggle_label = "Close (restore LOS)" if not td.blocks_los else "Open (allow LOS)"
+		_token_context_menu.add_item(toggle_label, 3)
 	_token_context_menu.add_separator()
 	_token_context_menu.add_item("Delete Token", 2)
 	_token_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
@@ -2676,6 +2701,14 @@ func _on_token_context_menu_id(id: int) -> void:
 			if _map_view != null:
 				_map_view.remove_token_sprite(_token_context_id)
 			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id})
+		3: # Toggle open/closed (DOOR / SECRET_PASSAGE)
+			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			if data != null:
+				data.blocks_los = not data.blocks_los
+				svc.update_token(data)
+				if _map_view != null:
+					_map_view.apply_token_passthrough_state(data)
+				_broadcast_token_change(data, false)
 
 
 func _open_token_editor(data: TokenData) -> void:
@@ -2701,6 +2734,13 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_autopause_check.button_pressed = data.autopause
 	if _token_pause_interact_check != null:
 		_token_pause_interact_check.button_pressed = data.pause_on_interact
+	if _token_shape_option != null:
+		_token_shape_option.select(_token_shape_option.get_item_index(data.token_shape))
+	if _token_blocks_los_check != null:
+		_token_blocks_los_check.button_pressed = data.blocks_los
+	if _token_blocks_los_row != null:
+		var is_door_type: bool = data.category == TokenData.TokenCategory.DOOR or data.category == TokenData.TokenCategory.SECRET_PASSAGE
+		_token_blocks_los_row.visible = is_door_type
 	if _token_notes_edit != null:
 		_token_notes_edit.text = data.notes
 	# Store temporary placement position in editor id if brand new.
@@ -2713,7 +2753,7 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
 		## Store the new-token world_pos in meta so confirm can read it.
 		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
-		_token_editor_dialog.popup_centered(Vector2i(420, 530))
+		_token_editor_dialog.popup_centered(Vector2i(420, 620))
 
 
 func _build_token_editor_dialog() -> void:
@@ -2846,6 +2886,34 @@ func _build_token_editor_dialog() -> void:
 	pi_row.add_child(_token_pause_interact_check)
 	vbox.add_child(pi_row)
 
+	# Shape
+	var shape_row := HBoxContainer.new()
+	var shape_label := Label.new()
+	shape_label.text = "Shape:"
+	shape_label.custom_minimum_size = Vector2(120, 0)
+	shape_row.add_child(shape_label)
+	_token_shape_option = OptionButton.new()
+	_token_shape_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_shape_option.add_item("Ellipse", TokenData.TokenShape.ELLIPSE)
+	_token_shape_option.add_item("Rectangle", TokenData.TokenShape.RECTANGLE)
+	shape_row.add_child(_token_shape_option)
+	vbox.add_child(shape_row)
+
+	# Blocks LOS (DOOR / SECRET_PASSAGE only)
+	_token_blocks_los_row = HBoxContainer.new()
+	var blos_label := Label.new()
+	blos_label.text = "Blocks LOS:"
+	blos_label.custom_minimum_size = Vector2(120, 0)
+	_token_blocks_los_row.add_child(blos_label)
+	_token_blocks_los_check = CheckBox.new()
+	_token_blocks_los_check.button_pressed = true
+	_token_blocks_los_row.add_child(_token_blocks_los_check)
+	vbox.add_child(_token_blocks_los_row)
+
+	# Connect category change to show/hide blocks_los row.
+	if _token_category_option != null:
+		_token_category_option.item_selected.connect(_on_token_category_changed)
+
 	# Notes
 	var notes_label := Label.new()
 	notes_label.text = "Notes:"
@@ -2855,6 +2923,13 @@ func _build_token_editor_dialog() -> void:
 	_token_notes_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_token_notes_edit.placeholder_text = "DM notes (not shown to players)"
 	vbox.add_child(_token_notes_edit)
+
+
+func _on_token_category_changed(idx: int) -> void:
+	var cat: int = _token_category_option.get_item_id(idx) if _token_category_option != null else -1
+	var is_door_type: bool = cat == TokenData.TokenCategory.DOOR or cat == TokenData.TokenCategory.SECRET_PASSAGE
+	if _token_blocks_los_row != null:
+		_token_blocks_los_row.visible = is_door_type
 
 
 func _on_token_editor_confirmed() -> void:
@@ -2868,6 +2943,8 @@ func _on_token_editor_confirmed() -> void:
 	var w_px: float = _token_width_spin.value if _token_width_spin != null else 48.0
 	var h_px: float = _token_height_spin.value if _token_height_spin != null else 48.0
 	var rot_deg: float = _token_rotation_spin.value if _token_rotation_spin != null else 0.0
+	var shape_val: int = _token_shape_option.get_selected_id() if _token_shape_option != null else 0
+	var blos_val: bool = _token_blocks_los_check.button_pressed if _token_blocks_los_check != null else true
 
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null or registry.token.service == null:
@@ -2894,6 +2971,8 @@ func _on_token_editor_confirmed() -> void:
 	data.width_px = w_px
 	data.height_px = h_px
 	data.rotation_deg = rot_deg
+	data.token_shape = shape_val
+	data.blocks_los = blos_val
 
 	if existing != null:
 		svc.update_token(data)
@@ -2903,6 +2982,9 @@ func _on_token_editor_confirmed() -> void:
 		svc.add_token(data)
 		if _map_view != null:
 			_map_view.add_token_sprite(data, true)
+
+	if _map_view != null:
+		_map_view.apply_token_passthrough_state(data)
 
 	# Broadcast to player displays.
 	_broadcast_token_change(data, existing == null)

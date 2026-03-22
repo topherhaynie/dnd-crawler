@@ -24,6 +24,7 @@ var _spawn_initialized: bool = false
 var _force_los_reveal: bool = true
 var _cached_wall_edges: Array = []
 var _cached_wall_signature: String = ""
+var _cached_passthrough_version: int = -1
 var _los_prev_origin_by_token: Dictionary = {}
 var _dragging_token_ids: Dictionary = {}
 
@@ -92,7 +93,8 @@ func step(delta: float) -> bool:
 	if map == null:
 		return false
 	var wall_sig := _wall_signature(map)
-	if wall_sig != _cached_wall_signature:
+	var pt_ver: int = _map_view.get_passthrough_version() if _map_view != null else 0
+	if wall_sig != _cached_wall_signature or pt_ver != _cached_passthrough_version:
 		_rebuild_cached_wall_edges(map)
 	_ensure_spawn_positions()
 
@@ -154,6 +156,8 @@ func _wall_signature(map: MapData) -> String:
 func _rebuild_cached_wall_edges(map: MapData) -> void:
 	_cached_wall_edges.clear()
 	_cached_wall_signature = _wall_signature(map)
+	_cached_passthrough_version = _map_view.get_passthrough_version() if _map_view != null else 0
+	var pass_rects: Dictionary = _map_view.get_passthrough_rects() if _map_view != null else {}
 	if map == null:
 		return
 	for poly in map.wall_polygons:
@@ -162,11 +166,31 @@ func _rebuild_cached_wall_edges(map: MapData) -> void:
 		var pts := poly as Array
 		if pts.size() < 2:
 			continue
-		for i in range(pts.size()):
-			var av: Variant = pts[i]
-			var bv: Variant = pts[(i + 1) % pts.size()]
-			if av is Vector2 and bv is Vector2:
-				_cached_wall_edges.append([av, bv])
+		# Clip polygon by open-door passthrough rects so only the door
+		# opening is removed — the rest of the wall keeps its edges.
+		var packed := PackedVector2Array()
+		for raw_pt: Variant in pts:
+			if raw_pt is Vector2:
+				packed.append(raw_pt as Vector2)
+		if packed.size() < 3:
+			continue
+		var fragments := _clip_polygon_by_passthroughs(packed, pass_rects)
+		for frag in fragments:
+			for i in range(frag.size()):
+				_cached_wall_edges.append([frag[i], frag[(i + 1) % frag.size()]])
+
+	# Include edges from closed DOOR token wall rects.
+	var door_rects: Dictionary = _map_view.get_door_wall_rects() if _map_view != null else {}
+	for door_rect: Variant in door_rects.values():
+		var rect: Rect2 = door_rect as Rect2
+		var corners: Array[Vector2] = [
+			rect.position,
+			Vector2(rect.end.x, rect.position.y),
+			rect.end,
+			Vector2(rect.position.x, rect.end.y),
+		]
+		for i in range(4):
+			_cached_wall_edges.append([corners[i], corners[(i + 1) % 4]])
 
 
 func build_player_state_payload() -> Array:
@@ -405,7 +429,32 @@ func _is_point_blocked_for_radius(pos: Vector2, map: MapData, radius_px: float) 
 	return false
 
 
+func _clip_polygon_by_passthroughs(points: PackedVector2Array, pass_rects: Dictionary) -> Array[PackedVector2Array]:
+	if pass_rects.is_empty():
+		return [points]
+	var current: Array[PackedVector2Array] = [points]
+	for pass_rect: Variant in pass_rects.values():
+		var rect: Rect2 = pass_rect as Rect2
+		var clip_poly := PackedVector2Array([
+			rect.position,
+			Vector2(rect.end.x, rect.position.y),
+			rect.end,
+			Vector2(rect.position.x, rect.end.y),
+		])
+		var next_frags: Array[PackedVector2Array] = []
+		for frag in current:
+			var clipped := Geometry2D.clip_polygons(frag, clip_poly)
+			for c in clipped:
+				if c.size() >= 3:
+					next_frags.append(c)
+		current = next_frags
+		if current.is_empty():
+			break
+	return current
+
+
 func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
+	var pass_rects: Dictionary = _map_view.get_passthrough_rects() if _map_view != null else {}
 	for poly in map.wall_polygons:
 		if not poly is Array:
 			continue
@@ -415,7 +464,15 @@ func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 				points.append(p)
 		if points.size() < 3:
 			continue
-		if Geometry2D.is_point_in_polygon(pos, points):
+		# Clip by open-door passthrough rects; check remaining fragments.
+		var fragments := _clip_polygon_by_passthroughs(points, pass_rects)
+		for frag in fragments:
+			if Geometry2D.is_point_in_polygon(pos, frag):
+				return true
+	# Check closed DOOR token wall rects.
+	var door_rects: Dictionary = _map_view.get_door_wall_rects() if _map_view != null else {}
+	for door_rect: Variant in door_rects.values():
+		if (door_rect as Rect2).has_point(pos):
 			return true
 	return false
 

@@ -370,6 +370,11 @@ func _handle_token_state(token_dicts: Array) -> void:
 	if _map_view == null:
 		return
 	_map_view.load_token_sprites(token_dicts, false)
+	# Seed passthrough rects for any doors/portals already open in the snapshot.
+	for raw in token_dicts:
+		if raw is Dictionary:
+			var td: TokenData = TokenData.from_dict(raw as Dictionary)
+			_map_view.apply_token_passthrough_state(td)
 
 
 func _handle_token_added(token_dict: Dictionary) -> void:
@@ -377,24 +382,37 @@ func _handle_token_added(token_dict: Dictionary) -> void:
 		return
 	var data: TokenData = TokenData.from_dict(token_dict)
 	_map_view.add_token_sprite(data, false)
+	_map_view.apply_token_passthrough_state(data)
 
 
 func _handle_token_removed(id: String) -> void:
 	if _map_view == null or id.is_empty():
 		return
 	_map_view.remove_token_sprite(id)
+	_map_view.clear_token_passthrough(id)
 
 
 func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
 	if _map_view == null or id.is_empty():
 		return
 	var new_pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("y", 0.0)))
-	# Update the sprite position directly.
 	var token_layer: Node2D = _map_view.get_token_layer()
 	if token_layer == null:
 		return
+	var matched_sprite: TokenSprite = null
 	for child in token_layer.get_children():
 		var ts: TokenSprite = child as TokenSprite
 		if ts != null and ts.token_id == id:
 			ts.global_position = new_pos
-			return
+			matched_sprite = ts
+			break
+	# Rebuild door wall / passthrough rect at the new position.
+	if matched_sprite != null:
+		var td := TokenData.new()
+		td.id = id
+		td.world_pos = new_pos
+		td.category = matched_sprite.get_token_category()
+		td.width_px = matched_sprite.get_token_width_px()
+		td.height_px = matched_sprite.get_token_height_px()
+		td.blocks_los = matched_sprite.get_token_blocks_los()
+		_map_view.apply_token_passthrough_state(td)

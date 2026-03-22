@@ -55,10 +55,12 @@ const CATEGORY_SYMBOLS: Dictionary = {
 var token_id: String = ""
 
 var _category: int = 0
+var _blocks_los: bool = true
 var _is_dm: bool = false
 var _is_visible_to_players: bool = false
 var _width_px: float = TOKEN_DIAMETER_PX
 var _height_px: float = TOKEN_DIAMETER_PX
+var _shape: int = 0 ## 0 = ELLIPSE, 1 = RECTANGLE (mirrors TokenData.TokenShape)
 var _label_node: Label = null
 var _icon_texture: Texture2D = null
 var _icon_key_map: Dictionary = {}
@@ -88,80 +90,139 @@ func _draw() -> void:
 	var inner_r: float = minf(rx, ry)
 	var fill_color: Color = CATEGORY_COLORS.get(_category, Color.GRAY)
 	var seg: int = 40
-	# Ellipse fill via scaled draw context.
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(rx, ry))
-	draw_circle(Vector2.ZERO, 1.0, fill_color)
-	draw_set_transform(Vector2.ZERO)
-	# Icon or letter symbol.
-	if _icon_texture != null:
-		var icon_size: float = inner_r * 2.0 * 0.85
-		draw_texture_rect(
-			_icon_texture,
-			Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
-			false
-		)
-	else:
-		var sym_size: int = maxi(8, int(inner_r * 0.7))
-		var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
-		draw_string(
-			ThemeDB.fallback_font,
-			Vector2(-inner_r, sym_size * 0.38),
-			sym,
-			HORIZONTAL_ALIGNMENT_CENTER,
-			int(inner_r * 2.0),
-			sym_size,
-			Color(1.0, 1.0, 1.0, 0.9)
-		)
-	# Ellipse border.
-	var border_pts := PackedVector2Array()
-	for i: int in seg:
-		var a: float = TAU * float(i) / float(seg)
-		border_pts.append(Vector2(cos(a) * rx, sin(a) * ry))
-	draw_polyline(border_pts + PackedVector2Array([border_pts[0]]), Color(0.0, 0.0, 0.0, 0.6), 2.0)
-	# Hidden badge: top-right corner (DM view only).
-	if _is_dm and not _is_visible_to_players:
-		var badge_r: float = maxf(6.0, inner_r * 0.22)
-		var badge_pos := Vector2(rx - badge_r * 0.7, -ry + badge_r * 0.7)
-		draw_circle(badge_pos, badge_r, Color(0.0, 0.0, 0.0, 0.82))
-		var b_size: int = maxi(7, int(badge_r * 1.3))
-		draw_string(
-			ThemeDB.fallback_font,
-			Vector2(badge_pos.x - badge_r, badge_pos.y + b_size * 0.38),
-			"?",
-			HORIZONTAL_ALIGNMENT_CENTER,
-			int(badge_r * 2.0),
-			b_size,
-			Color(1.0, 0.92, 0.1, 1.0)
-		)
-	# Resize and rotation handles (DM hover only).
-	if _show_handles and _is_dm:
-		# Ellipse ring outside the token boundary.
-		var ring_rx: float = rx + 5.0
-		var ring_ry: float = ry + 5.0
-		var ring_pts := PackedVector2Array()
+
+	if _shape == 1: # RECTANGLE
+		draw_rect(Rect2(-rx, -ry, _width_px, _height_px), fill_color)
+		# Icon or letter symbol.
+		if _icon_texture != null:
+			var icon_size: float = inner_r * 2.0 * 0.85
+			draw_texture_rect(
+				_icon_texture,
+				Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+				false
+			)
+		else:
+			var sym_size: int = maxi(8, int(inner_r * 0.7))
+			var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(-inner_r, sym_size * 0.38),
+				sym,
+				HORIZONTAL_ALIGNMENT_CENTER,
+				int(inner_r * 2.0),
+				sym_size,
+				Color(1.0, 1.0, 1.0, 0.9)
+			)
+		# Rectangle border.
+		draw_rect(Rect2(-rx, -ry, _width_px, _height_px), Color(0.0, 0.0, 0.0, 0.6), false, 2.0)
+		# Hidden badge: top-right corner (DM view only).
+		if _is_dm and not _is_visible_to_players:
+			var badge_r: float = maxf(6.0, inner_r * 0.22)
+			var badge_pos := Vector2(rx - badge_r * 0.7, -ry + badge_r * 0.7)
+			draw_circle(badge_pos, badge_r, Color(0.0, 0.0, 0.0, 0.82))
+			var b_size: int = maxi(7, int(badge_r * 1.3))
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(badge_pos.x - badge_r, badge_pos.y + b_size * 0.38),
+				"?",
+				HORIZONTAL_ALIGNMENT_CENTER,
+				int(badge_r * 2.0),
+				b_size,
+				Color(1.0, 0.92, 0.1, 1.0)
+			)
+		# Resize and rotation handles (DM hover only).
+		if _show_handles and _is_dm:
+			# Rect ring outside the token boundary.
+			draw_rect(Rect2(- (rx + 5.0), - (ry + 5.0), _width_px + 10.0, _height_px + 10.0), Color(1.0, 1.0, 1.0, 0.85), false, 1.5)
+			# 8 bounding-box handle squares (TL T TR  R  BR B BL  L).
+			var sq: float = maxf(5.0, inner_r * 0.09)
+			var handle_positions: Array = [
+				Vector2(-rx, -ry), Vector2(0.0, -ry), Vector2(rx, -ry),
+				Vector2(rx, 0.0), Vector2(rx, ry), Vector2(0.0, ry),
+				Vector2(-rx, ry), Vector2(-rx, 0.0),
+			]
+			for hp: Vector2 in handle_positions:
+				draw_rect(Rect2(hp.x - sq * 0.5, hp.y - sq * 0.5, sq, sq), Color(1.0, 1.0, 1.0, 0.9))
+			# Rotation handle: circle 22 px above top bounding edge.
+			var rot_y: float = - ry - 22.0
+			draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
+			draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
+	else: # ELLIPSE (default)
+		# Ellipse fill via scaled draw context.
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2(rx, ry))
+		draw_circle(Vector2.ZERO, 1.0, fill_color)
+		draw_set_transform(Vector2.ZERO)
+		# Icon or letter symbol.
+		if _icon_texture != null:
+			var icon_size: float = inner_r * 2.0 * 0.85
+			draw_texture_rect(
+				_icon_texture,
+				Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+				false
+			)
+		else:
+			var sym_size: int = maxi(8, int(inner_r * 0.7))
+			var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(-inner_r, sym_size * 0.38),
+				sym,
+				HORIZONTAL_ALIGNMENT_CENTER,
+				int(inner_r * 2.0),
+				sym_size,
+				Color(1.0, 1.0, 1.0, 0.9)
+			)
+		# Ellipse border.
+		var border_pts := PackedVector2Array()
 		for i: int in seg:
 			var a: float = TAU * float(i) / float(seg)
-			ring_pts.append(Vector2(cos(a) * ring_rx, sin(a) * ring_ry))
-		draw_polyline(ring_pts + PackedVector2Array([ring_pts[0]]), Color(1.0, 1.0, 1.0, 0.85), 1.5)
-		# 8 bounding-box handle squares (TL T TR  R  BR B BL  L).
-		var sq: float = maxf(5.0, inner_r * 0.09)
-		var handle_positions: Array = [
-			Vector2(-rx, -ry), Vector2(0.0, -ry), Vector2(rx, -ry),
-			Vector2(rx, 0.0), Vector2(rx, ry), Vector2(0.0, ry),
-			Vector2(-rx, ry), Vector2(-rx, 0.0),
-		]
-		for hp: Vector2 in handle_positions:
-			draw_rect(Rect2(hp.x - sq * 0.5, hp.y - sq * 0.5, sq, sq), Color(1.0, 1.0, 1.0, 0.9))
-		# Rotation handle: circle 22 px above top bounding edge.
-		var rot_y: float = - ry - 22.0
-		draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
-		draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
+			border_pts.append(Vector2(cos(a) * rx, sin(a) * ry))
+		draw_polyline(border_pts + PackedVector2Array([border_pts[0]]), Color(0.0, 0.0, 0.0, 0.6), 2.0)
+		# Hidden badge: top-right corner (DM view only).
+		if _is_dm and not _is_visible_to_players:
+			var badge_r: float = maxf(6.0, inner_r * 0.22)
+			var badge_pos := Vector2(rx - badge_r * 0.7, -ry + badge_r * 0.7)
+			draw_circle(badge_pos, badge_r, Color(0.0, 0.0, 0.0, 0.82))
+			var b_size: int = maxi(7, int(badge_r * 1.3))
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(badge_pos.x - badge_r, badge_pos.y + b_size * 0.38),
+				"?",
+				HORIZONTAL_ALIGNMENT_CENTER,
+				int(badge_r * 2.0),
+				b_size,
+				Color(1.0, 0.92, 0.1, 1.0)
+			)
+		# Resize and rotation handles (DM hover only).
+		if _show_handles and _is_dm:
+			# Ellipse ring outside the token boundary.
+			var ring_rx: float = rx + 5.0
+			var ring_ry: float = ry + 5.0
+			var ring_pts := PackedVector2Array()
+			for i: int in seg:
+				var a: float = TAU * float(i) / float(seg)
+				ring_pts.append(Vector2(cos(a) * ring_rx, sin(a) * ring_ry))
+			draw_polyline(ring_pts + PackedVector2Array([ring_pts[0]]), Color(1.0, 1.0, 1.0, 0.85), 1.5)
+			# 8 bounding-box handle squares (TL T TR  R  BR B BL  L).
+			var sq: float = maxf(5.0, inner_r * 0.09)
+			var handle_positions: Array = [
+				Vector2(-rx, -ry), Vector2(0.0, -ry), Vector2(rx, -ry),
+				Vector2(rx, 0.0), Vector2(rx, ry), Vector2(0.0, ry),
+				Vector2(-rx, ry), Vector2(-rx, 0.0),
+			]
+			for hp: Vector2 in handle_positions:
+				draw_rect(Rect2(hp.x - sq * 0.5, hp.y - sq * 0.5, sq, sq), Color(1.0, 1.0, 1.0, 0.9))
+			# Rotation handle: circle 22 px above top bounding edge.
+			var rot_y: float = - ry - 22.0
+			draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
+			draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
 
 
 ## Apply all fields from a TokenData instance.
 func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	token_id = data.id
 	_category = data.category
+	_blocks_los = data.blocks_los
 	_is_dm = is_dm
 	_is_visible_to_players = data.is_visible_to_players
 	_width_px = maxf(24.0, data.width_px)
@@ -180,6 +241,7 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 		icon_key = str(default_key)
 	var tex_val: Variant = _icon_key_map.get(icon_key, null)
 	_icon_texture = tex_val as Texture2D
+	_shape = data.token_shape
 	_refresh_visibility()
 	queue_redraw()
 
@@ -195,6 +257,14 @@ func get_token_width_px() -> float:
 
 func get_token_height_px() -> float:
 	return _height_px
+
+
+func get_token_category() -> int:
+	return _category
+
+
+func get_token_blocks_los() -> bool:
+	return _blocks_los
 
 
 ## Show or hide the resize handle ring (called by MapView on DM hover).
