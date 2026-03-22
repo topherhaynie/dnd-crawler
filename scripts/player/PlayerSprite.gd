@@ -68,7 +68,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if _lock_label != null and _lock_label.visible:
 		_lock_label.position = Vector2(-20, -20).rotated(-rotation)
-		_lock_label.rotation = -rotation
+		_lock_label.rotation = - rotation
 	if not _remote_smoothing_enabled:
 		return
 	var dist := global_position.distance_to(_remote_target_position)
@@ -210,7 +210,7 @@ func _update_visuals() -> void:
 	if _lock_label != null:
 		_lock_label.visible = is_locked
 		# Counter-rotate so the label stays upright regardless of sprite rotation.
-		_lock_label.rotation = -rotation
+		_lock_label.rotation = - rotation
 
 
 func set_vision_radius_px(radius_px: float) -> void:
