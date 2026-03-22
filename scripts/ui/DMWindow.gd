@@ -2723,10 +2723,10 @@ func _build_passage_panel() -> void:
 	hbox.add_child(_passage_mode_label)
 
 	_passage_mode_option = OptionButton.new()
-	_passage_mode_option.add_item("Off", 0)        # PassageTool.NONE
-	_passage_mode_option.add_item("Freehand", 1)   # PassageTool.FREEHAND
-	_passage_mode_option.add_item("Polyline", 2)   # PassageTool.POLYLINE
-	_passage_mode_option.add_item("Erase", 3)      # PassageTool.ERASE
+	_passage_mode_option.add_item("Off", 0) # PassageTool.NONE
+	_passage_mode_option.add_item("Freehand", 1) # PassageTool.FREEHAND
+	_passage_mode_option.add_item("Polyline", 2) # PassageTool.POLYLINE
+	_passage_mode_option.add_item("Erase", 3) # PassageTool.ERASE
 	_passage_mode_option.selected = 0
 	_passage_mode_option.focus_mode = Control.FOCUS_NONE
 	_passage_mode_option.item_selected.connect(_on_passage_mode_selected)
@@ -2790,7 +2790,7 @@ func _on_passage_mode_selected(index: int) -> void:
 	if _map_view == null or _selected_passage_token_id.is_empty():
 		return
 	var mode: int = _passage_mode_option.get_item_id(index)
-	if mode == 0:  # Off / NONE
+	if mode == 0: # Off / NONE
 		if _map_view._passage_tool != MapView.PassageTool.NONE:
 			_map_view.deactivate_passage_tool()
 		return
