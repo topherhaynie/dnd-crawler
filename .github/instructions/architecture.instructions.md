@@ -12,11 +12,11 @@ The codebase uses a **Service-Oriented Architecture** (SOA) with a typed registr
 **Always** use the typed manager properties on `ServiceRegistry`. Never call `get_service(String)` for new code.
 
 ```gdscript
-# Correct — typed registry access
+# Correct — typed registry access via manager
 var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 if registry == null or registry.fog == null:
     return
-registry.fog.service.set_fog_enabled(true)
+registry.fog.set_fog_enabled(true)
 
 # Wrong — string-based lookup
 registry.get_service("Fog").set_fog_enabled(true)
@@ -88,6 +88,33 @@ registry.fog.service.set_fog_enabled(true)
 **Corollary:** Every capability that a view needs must be exposed as a method on the manager, not accessed via `manager.service`. If the manager is missing a method, add it there — do not work around the gap by reaching into `manager.service` from a view.
 
 **Corollary:** All core service functionality must be bound by its protocol (`IXxxService`). No method should exist on a concrete service without a corresponding stub in the protocol. This ensures managers can always depend on typed, protocol-guaranteed APIs rather than concrete implementations.
+
+### Exception: Signal Subscription
+
+Signals are declared on `IXxxService` (a `Node`) and emitted by the concrete service instance. A `RefCounted` manager **cannot re-emit them** without its own Node scaffold. Therefore, the **one approved exception** to the view-must-call-manager rule is:
+
+> A view may access `registry.xxx.service` **solely to connect signals**. All method calls must still go through the manager.
+
+```gdscript
+# Correct — signal subscription accesses service directly (approved exception)
+var svc: INetworkService = registry.network.service
+svc.display_peer_registered.connect(_on_display_peer_registered)
+
+# Correct — method call uses the manager
+registry.network.broadcast_to_displays({"msg": "map_loaded"})
+
+# Wrong — method call bypasses the manager
+registry.network.service.broadcast_to_displays({"msg": "map_loaded"})
+```
+
+Mark these call sites with a comment explaining the exception so reviewers do not mistake them for violations:
+
+```gdscript
+# Signal subscription: INetworkService extends Node; signals live on the Node
+# instance. RefCounted manager cannot re-emit them — approved narrow exception.
+var svc: INetworkService = nm.service
+svc.client_disconnected.connect(_on_client_disconnected)
+```
 
 ## ServiceRegistry
 

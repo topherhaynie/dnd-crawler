@@ -158,6 +158,7 @@ func _rebuild_cached_wall_edges(map: MapData) -> void:
 	_cached_wall_signature = _wall_signature(map)
 	_cached_passthrough_version = _map_view.get_passthrough_version() if _map_view != null else 0
 	var pass_rects: Dictionary = _map_view.get_passthrough_rects() if _map_view != null else {}
+	var pass_polys: Dictionary = _map_view.get_passthrough_polys() if _map_view != null else {}
 	if map == null:
 		return
 	for poly in map.wall_polygons:
@@ -166,15 +167,15 @@ func _rebuild_cached_wall_edges(map: MapData) -> void:
 		var pts := poly as Array
 		if pts.size() < 2:
 			continue
-		# Clip polygon by open-door passthrough rects so only the door
-		# opening is removed — the rest of the wall keeps its edges.
+		# Clip polygon by open-door passthrough rects and passage corridor
+		# quads so the opening is removed — the rest of the wall keeps edges.
 		var packed := PackedVector2Array()
 		for raw_pt: Variant in pts:
 			if raw_pt is Vector2:
 				packed.append(raw_pt as Vector2)
 		if packed.size() < 3:
 			continue
-		var fragments := _clip_polygon_by_passthroughs(packed, pass_rects)
+		var fragments := _clip_polygon_by_passthroughs(packed, pass_rects, pass_polys)
 		for frag in fragments:
 			for i in range(frag.size()):
 				_cached_wall_edges.append([frag[i], frag[(i + 1) % frag.size()]])
@@ -429,10 +430,11 @@ func _is_point_blocked_for_radius(pos: Vector2, map: MapData, radius_px: float) 
 	return false
 
 
-func _clip_polygon_by_passthroughs(points: PackedVector2Array, pass_rects: Dictionary) -> Array[PackedVector2Array]:
-	if pass_rects.is_empty():
+func _clip_polygon_by_passthroughs(points: PackedVector2Array, pass_rects: Dictionary, pass_polys: Dictionary = {}) -> Array[PackedVector2Array]:
+	if pass_rects.is_empty() and pass_polys.is_empty():
 		return [points]
 	var current: Array[PackedVector2Array] = [points]
+	# Subtract AABB rect openings (doors and passage fallback).
 	for pass_rect: Variant in pass_rects.values():
 		var rect: Rect2 = pass_rect as Rect2
 		var clip_poly := PackedVector2Array([
@@ -450,11 +452,35 @@ func _clip_polygon_by_passthroughs(points: PackedVector2Array, pass_rects: Dicti
 		current = next_frags
 		if current.is_empty():
 			break
+	if current.is_empty():
+		return current
+	# Subtract passage corridor segment quads (precise polygon clipping).
+	for raw_quads: Variant in pass_polys.values():
+		if not raw_quads is Array:
+			continue
+		for raw_q: Variant in raw_quads as Array:
+			if not raw_q is PackedVector2Array:
+				continue
+			var quad: PackedVector2Array = raw_q as PackedVector2Array
+			if quad.size() < 3:
+				continue
+			var next2: Array[PackedVector2Array] = []
+			for frag in current:
+				var clipped := Geometry2D.clip_polygons(frag, quad)
+				for c in clipped:
+					if c.size() >= 3:
+						next2.append(c)
+			current = next2
+			if current.is_empty():
+				break
+		if current.is_empty():
+			break
 	return current
 
 
 func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 	var pass_rects: Dictionary = _map_view.get_passthrough_rects() if _map_view != null else {}
+	var pass_polys: Dictionary = _map_view.get_passthrough_polys() if _map_view != null else {}
 	for poly in map.wall_polygons:
 		if not poly is Array:
 			continue
@@ -464,8 +490,9 @@ func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 				points.append(p)
 		if points.size() < 3:
 			continue
-		# Clip by open-door passthrough rects; check remaining fragments.
-		var fragments := _clip_polygon_by_passthroughs(points, pass_rects)
+		# Clip by open-door passthrough rects and passage corridor quads;
+		# check remaining fragments.
+		var fragments := _clip_polygon_by_passthroughs(points, pass_rects, pass_polys)
 		for frag in fragments:
 			if Geometry2D.is_point_in_polygon(pos, frag):
 				return true

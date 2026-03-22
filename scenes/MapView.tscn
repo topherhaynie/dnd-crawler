@@ -18,6 +18,8 @@ script = ExtResource("2_GridOverlay")
 
 [node name="WallLayer" type="Node2D" parent="."]
 
+[node name="CorridorLayer" type="Node2D" parent="."]
+
 [node name="WallVisualLayer" type="Node2D" parent="."]
 
 [node name="SpawnPointLayer" type="Node2D" parent="."]

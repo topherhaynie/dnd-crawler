@@ -70,6 +70,14 @@ var icon_key: String = ""
 ## backwards compat; RECTANGLE is recommended for doors/passages.
 var token_shape: int = TokenShape.ELLIPSE
 
+# --- Passage geometry (SECRET_PASSAGE category only) ---------------------
+## Array of polyline chains defining the passage corridor geometry.
+## Each element is a PackedVector2Array of world-space points.
+## Supports branching: multiple chains can share endpoints (junctions).
+var passage_paths: Array = []
+## Half-width of the rendered corridor in world-space pixels.
+var passage_width_px: float = 48.0
+
 
 # ---------------------------------------------------------------------------
 # Factory helpers
@@ -110,6 +118,8 @@ func to_dict() -> Dictionary:
 		"icon_key": icon_key,
 		"token_shape": token_shape,
 		"blocks_los": blocks_los,
+		"passage_paths": _serialize_passage_paths(),
+		"passage_width_px": passage_width_px,
 	}
 
 
@@ -134,7 +144,59 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.icon_key = str(d.get("icon_key", ""))
 	t.token_shape = int(d.get("token_shape", TokenShape.ELLIPSE))
 	t.blocks_los = bool(d.get("blocks_los", true))
+	t.passage_width_px = float(d.get("passage_width_px", 48.0))
+	t.passage_paths = _deserialize_passage_paths(d)
 	return t
+
+
+## Serialise passage_paths to a JSON-safe Array[Array[{x,y}]].
+func _serialize_passage_paths() -> Array:
+	var result: Array = []
+	for raw in passage_paths:
+		var chain: PackedVector2Array
+		if raw is PackedVector2Array:
+			chain = raw as PackedVector2Array
+		else:
+			continue
+		var pts: Array = []
+		for v: Vector2 in chain:
+			pts.append({"x": v.x, "y": v.y})
+		result.append(pts)
+	return result
+
+
+## Deserialise passage_paths from a dict, including backwards-compat for old
+## "passage_path" key (flat Array[{x,y}] → wrapped as single-element array).
+static func _deserialize_passage_paths(d: Dictionary) -> Array:
+	var result: Array = []
+	# Backwards-compat: old single-chain key
+	if not d.has("passage_paths") and d.has("passage_path"):
+		var old_raw: Variant = d.get("passage_path", [])
+		if old_raw is Array:
+			var chain := _pts_array_to_packed(old_raw as Array)
+			if chain.size() > 0:
+				result.append(chain)
+		return result
+	var raw_paths: Variant = d.get("passage_paths", [])
+	if not raw_paths is Array:
+		return result
+	for raw_chain: Variant in raw_paths as Array:
+		if not raw_chain is Array:
+			continue
+		var chain := _pts_array_to_packed(raw_chain as Array)
+		if chain.size() > 0:
+			result.append(chain)
+	return result
+
+
+static func _pts_array_to_packed(pts: Array) -> PackedVector2Array:
+	var chain := PackedVector2Array()
+	for raw_pt: Variant in pts:
+		if not raw_pt is Dictionary:
+			continue
+		var pt := raw_pt as Dictionary
+		chain.append(Vector2(float(pt.get("x", 0.0)), float(pt.get("y", 0.0))))
+	return chain
 
 
 ## Human-readable category name for UI labels.

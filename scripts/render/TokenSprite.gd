@@ -65,6 +65,8 @@ var _label_node: Label = null
 var _icon_texture: Texture2D = null
 var _icon_key_map: Dictionary = {}
 var _show_handles: bool = false
+var _passage_paths: Array = []
+var _passage_width_px: float = 48.0
 
 
 func _ready() -> void:
@@ -90,6 +92,10 @@ func _draw() -> void:
 	var inner_r: float = minf(rx, ry)
 	var fill_color: Color = CATEGORY_COLORS.get(_category, Color.GRAY)
 	var seg: int = 40
+
+	if _category == TokenData.TokenCategory.SECRET_PASSAGE and _passage_paths.size() > 0:
+		_draw_passage_corridors()
+		return
 
 	if _shape == 1: # RECTANGLE
 		draw_rect(Rect2(-rx, -ry, _width_px, _height_px), fill_color)
@@ -242,6 +248,8 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	var tex_val: Variant = _icon_key_map.get(icon_key, null)
 	_icon_texture = tex_val as Texture2D
 	_shape = data.token_shape
+	_passage_paths = data.passage_paths.duplicate()
+	_passage_width_px = data.passage_width_px
 	_refresh_visibility()
 	queue_redraw()
 
@@ -303,3 +311,117 @@ func _refresh_visibility() -> void:
 		# Player only sees tokens explicitly the DM has revealed.
 		self.visible = _is_visible_to_players
 		self.modulate = Color.WHITE
+
+
+## Draw the passage corridor when this is a SECRET_PASSAGE token with path data.
+## Points in passage_paths are world-space; to_local() converts them for draw_*.
+func _draw_passage_corridors() -> void:
+	var fill_color: Color = CATEGORY_COLORS.get(_category, Color.GRAY)
+	var junction_map: Dictionary = _classify_passage_endpoints()
+	var half_w: float = _passage_width_px
+
+	# Pre-convert all chains to local space once.
+	var local_chains: Array[PackedVector2Array] = []
+	for raw: Variant in _passage_paths:
+		if not (raw is PackedVector2Array) or (raw as PackedVector2Array).size() < 2:
+			local_chains.append(PackedVector2Array())
+			continue
+		var lp := PackedVector2Array()
+		for v: Vector2 in (raw as PackedVector2Array):
+			lp.append(to_local(v))
+		local_chains.append(lp)
+
+	# Two-pass rendering: all borders first so fills always cover junction artifacts.
+	# Border and fill circles at each chain's endpoints simulate the round caps
+	# that Line2D draws during WIP editing, so the committed result matches.
+	for lp: PackedVector2Array in local_chains:
+		if lp.size() < 2:
+			continue
+		draw_circle(lp[0], half_w + 2.0, Color(0.0, 0.0, 0.0, 0.55))
+		draw_circle(lp[lp.size() - 1], half_w + 2.0, Color(0.0, 0.0, 0.0, 0.55))
+		draw_polyline(lp, Color(0.0, 0.0, 0.0, 0.55), half_w * 2.0 + 4.0, false)
+	for lp: PackedVector2Array in local_chains:
+		if lp.size() < 2:
+			continue
+		draw_circle(lp[0], half_w, fill_color)
+		draw_circle(lp[lp.size() - 1], half_w, fill_color)
+		draw_polyline(lp, fill_color, half_w * 2.0, true)
+
+	# Draw endpoint markers: tunnel icon at terminals, connector dot at junctions.
+	var drawn_endpoints: Dictionary = {}
+	for raw: Variant in _passage_paths:
+		if not raw is PackedVector2Array:
+			continue
+		var chain: PackedVector2Array = raw as PackedVector2Array
+		if chain.size() < 1:
+			continue
+		var endpoints: PackedVector2Array = PackedVector2Array([chain[0], chain[chain.size() - 1]])
+		for pt: Vector2 in endpoints:
+			var pt_key: Vector2 = pt.snapped(Vector2.ONE * 0.01)
+			if drawn_endpoints.has(pt_key):
+				continue
+			drawn_endpoints[pt_key] = true
+			var degree: Variant = junction_map.get(pt_key, 1)
+			var local_pt: Vector2 = to_local(pt)
+			if int(degree) > 1:
+				# Junction: filled dot with border.
+				draw_circle(local_pt, half_w * 0.45, Color(0.0, 0.0, 0.0, 0.7))
+				draw_circle(local_pt, half_w * 0.32, fill_color)
+			else:
+				# Terminal: tunnel icon or crosshatch marker.
+				if _icon_texture != null:
+					var icon_s: float = half_w * 1.6
+					draw_texture_rect(
+						_icon_texture,
+						Rect2(local_pt.x - icon_s * 0.5, local_pt.y - icon_s * 0.5, icon_s, icon_s),
+						false
+					)
+				else:
+					draw_circle(local_pt, half_w * 0.45, Color(0.0, 0.0, 0.0, 0.7))
+					draw_circle(local_pt, half_w * 0.32, fill_color)
+					# Cross-hair to distinguish terminals from junctions.
+					var arm: float = half_w * 0.28
+					draw_line(local_pt + Vector2(-arm, 0.0), local_pt + Vector2(arm, 0.0),
+						Color(1.0, 1.0, 1.0, 0.85), 2.0)
+					draw_line(local_pt + Vector2(0.0, -arm), local_pt + Vector2(0.0, arm),
+						Color(1.0, 1.0, 1.0, 0.85), 2.0)
+
+	# DM anchor handle: always-visible marker at local origin so the token can be
+	# clicked after corridors have replaced the ellipse visual.  Displayed on the
+	# DM side only; players never see this indicator.
+	if _is_dm:
+		var anchor_r: float = maxf(10.0, half_w * 0.22)
+		draw_circle(Vector2.ZERO, anchor_r + 2.0, Color(0.0, 0.0, 0.0, 0.55))
+		draw_circle(Vector2.ZERO, anchor_r, fill_color.lightened(0.25))
+		var arm: float = anchor_r * 0.55
+		draw_line(Vector2(-arm, 0.0), Vector2(arm, 0.0), Color(1.0, 1.0, 1.0, 0.9), 1.5)
+		draw_line(Vector2(0.0, -arm), Vector2(0.0, arm), Color(1.0, 1.0, 1.0, 0.9), 1.5)
+
+	# Hidden badge at local origin (DM view only).
+	if _is_dm and not _is_visible_to_players:
+		var badge_r: float = 9.0
+		var badge_pos := Vector2(half_w * 0.3, -half_w * 0.3)
+		draw_circle(badge_pos, badge_r, Color(0.0, 0.0, 0.0, 0.82))
+		var b_size: int = 9
+		draw_string(
+			ThemeDB.fallback_font,
+			Vector2(badge_pos.x - badge_r, badge_pos.y + b_size * 0.38),
+			"?", HORIZONTAL_ALIGNMENT_CENTER,
+			int(badge_r * 2.0), b_size, Color(1.0, 0.92, 0.1, 1.0)
+		)
+
+
+## Counts passage endpoint degrees so the renderer can distinguish terminals
+## (degree 1) from junctions (degree >= 2).  Keys are snapped Vector2 positions.
+func _classify_passage_endpoints() -> Dictionary:
+	var result: Dictionary = {}
+	for raw: Variant in _passage_paths:
+		if not raw is PackedVector2Array:
+			continue
+		var chain: PackedVector2Array = raw as PackedVector2Array
+		if chain.size() < 1:
+			continue
+		for pt: Vector2 in [chain[0], chain[chain.size() - 1]]:
+			var key: Vector2 = pt.snapped(Vector2.ONE * 0.01)
+			result[key] = int(result.get(key, 0)) + 1
+	return result

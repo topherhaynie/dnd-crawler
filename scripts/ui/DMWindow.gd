@@ -129,6 +129,17 @@ var _token_blocks_los_row: HBoxContainer = null
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
 
+# ── Passage paint panel ────────────────────────────────────────────────────
+var _passage_panel: PanelContainer = null
+var _passage_mode_option: OptionButton = null
+var _passage_brush_slider: HSlider = null
+var _passage_token_label: Label = null
+var _passage_mode_label: Label = null
+var _passage_brush_label: Label = null
+var _passage_commit_btn: Button = null
+var _passage_clear_btn: Button = null
+var _selected_passage_token_id: String = ""
+
 # ── Phase 3: player profiles ------------------------------------------------
 var _profiles_dialog: AcceptDialog = null
 var _profiles_list: ItemList = null
@@ -242,11 +253,11 @@ func _ensure_game_state_bindings() -> void:
 	_refresh_freeze_panel()
 
 
-func _network() -> INetworkService:
+func _network() -> NetworkManager:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.network == null:
 		return null
-	return registry.network.service
+	return registry.network
 
 
 func _input_service() -> InputManager:
@@ -317,6 +328,13 @@ func _game_state() -> GameStateManager:
 	return registry.game_state
 
 
+func _token_manager() -> TokenManager:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return null
+	return registry.token
+
+
 func _map_service() -> MapManager:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.map == null:
@@ -339,22 +357,28 @@ func _init_network_binding() -> void:
 		# Try again later if not yet registered
 		call_deferred("_init_network_binding")
 		return
-	# keep local nm reference only; avoid storing legacy global
+	# Signals are declared on INetworkService (a Node), not on the RefCounted manager.
+	# This is the one approved location where we access registry.network.service directly
+	# for signal subscription only — all method calls elsewhere use nm (the manager).
+	var svc: INetworkService = nm.service
+	if svc == null:
+		call_deferred("_init_network_binding")
+		return
 	var connected_any := false
-	if nm.has_signal("display_peer_registered") and not nm.is_connected("display_peer_registered", Callable(self , "_on_display_peer_registered")):
-		nm.display_peer_registered.connect(_on_display_peer_registered)
+	if not svc.is_connected("display_peer_registered", Callable(self , "_on_display_peer_registered")):
+		svc.display_peer_registered.connect(_on_display_peer_registered)
 		connected_any = true
-	if nm.has_signal("client_disconnected") and not nm.is_connected("client_disconnected", Callable(self , "_on_client_disconnected")):
-		nm.client_disconnected.connect(_on_client_disconnected)
+	if not svc.is_connected("client_disconnected", Callable(self , "_on_client_disconnected")):
+		svc.client_disconnected.connect(_on_client_disconnected)
 		connected_any = true
-	if nm.has_signal("display_viewport_resized") and not nm.is_connected("display_viewport_resized", Callable(self , "_on_display_viewport_resized")):
-		nm.display_viewport_resized.connect(_on_display_viewport_resized)
+	if not svc.is_connected("display_viewport_resized", Callable(self , "_on_display_viewport_resized")):
+		svc.display_viewport_resized.connect(_on_display_viewport_resized)
 		connected_any = true
-	if nm.has_signal("display_fullscreen_changed") and not nm.is_connected("display_fullscreen_changed", Callable(self , "_on_display_fullscreen_changed")):
-		nm.display_fullscreen_changed.connect(_on_display_fullscreen_changed)
+	if not svc.is_connected("display_fullscreen_changed", Callable(self , "_on_display_fullscreen_changed")):
+		svc.display_fullscreen_changed.connect(_on_display_fullscreen_changed)
 		connected_any = true
-	if nm.has_signal("display_sync_applied") and not nm.is_connected("display_sync_applied", Callable(self , "_on_display_sync_applied")):
-		nm.display_sync_applied.connect(_on_display_sync_applied)
+	if not svc.is_connected("display_sync_applied", Callable(self , "_on_display_sync_applied")):
+		svc.display_sync_applied.connect(_on_display_sync_applied)
 		connected_any = true
 	# If the service exists but hasn't yet exposed the expected signals, retry shortly.
 	if not connected_any:
@@ -428,6 +452,8 @@ func _build_ui() -> void:
 	_map_view.token_rotation_completed.connect(_on_token_rotation_completed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
+	_map_view.token_selected.connect(_on_token_selected)
+	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
 	_backend = BackendRuntimeScript.new() as BackendRuntime
 	_backend.name = "BackendRuntime"
 	add_child(_backend)
@@ -824,6 +850,7 @@ func _build_ui() -> void:
 	# Added directly to _ui_layer (not _ui_root) so _ui_root.scale does not
 	# push it off-screen on HiDPI / Retina displays.
 	_build_freeze_panel()
+	_build_passage_panel()
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -2599,9 +2626,10 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	_player_state_dirty = true
 	var id: String = str(token_id)
 	# Persist the new position and refresh door/passthrough state.
+	var data: TokenData = null
 	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry_drag != null and registry_drag.token != null:
-		var data: TokenData = registry_drag.token.get_token_by_id(id)
+		data = registry_drag.token.get_token_by_id(id)
 		if data != null:
 			data.world_pos = new_world_pos
 			registry_drag.token.update_token(data)
@@ -2613,6 +2641,11 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 		"token_id": id,
 		"world_pos": {"x": new_world_pos.x, "y": new_world_pos.y},
 	})
+	# For DOOR and SECRET_PASSAGE tokens, also broadcast the full token_updated
+	# so the player display can rebuild passthrough geometry with shifted paths.
+	if data != null and (data.category == TokenData.TokenCategory.DOOR
+			or data.category == TokenData.TokenCategory.SECRET_PASSAGE):
+		_broadcast_token_change(data, false)
 
 
 func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:
@@ -2641,6 +2674,193 @@ func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void
 		return
 	data.rotation_deg = rotation_deg
 	registry.token.update_token(data)
+	_broadcast_token_change(data, false)
+
+
+# ---------------------------------------------------------------------------
+# Passage paint panel — build, signals, handlers
+# ---------------------------------------------------------------------------
+
+func _build_passage_panel() -> void:
+	# Anchored directly in _ui_layer (same as _freeze_panel) so _ui_root.scale
+	# does not push it off-screen on HiDPI / Retina displays.
+	_passage_panel = PanelContainer.new()
+	_passage_panel.name = "PassagePanel"
+	_passage_panel.visible = false
+	# Bottom bar: anchors to bottom edge, full width, grows upward.
+	_passage_panel.anchor_left = 0.0
+	_passage_panel.anchor_right = 1.0
+	_passage_panel.anchor_top = 1.0
+	_passage_panel.anchor_bottom = 1.0
+	_passage_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_passage_panel.offset_left = 0.0
+	_passage_panel.offset_right = 0.0
+	_passage_panel.offset_top = -44.0
+	_passage_panel.offset_bottom = 0.0
+	_ui_layer.add_child(_passage_panel)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 8)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 6)
+	margin.add_theme_constant_override("margin_right", 6)
+	margin.add_theme_constant_override("margin_top", 4)
+	margin.add_theme_constant_override("margin_bottom", 4)
+	margin.add_child(hbox)
+	_passage_panel.add_child(margin)
+
+	var icon_label := Label.new()
+	icon_label.text = "🌀"
+	hbox.add_child(icon_label)
+
+	_passage_token_label = Label.new()
+	_passage_token_label.text = "Secret Passage"
+	_passage_token_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(_passage_token_label)
+
+	_passage_mode_label = Label.new()
+	_passage_mode_label.text = "Mode:"
+	hbox.add_child(_passage_mode_label)
+
+	_passage_mode_option = OptionButton.new()
+	_passage_mode_option.add_item("Off", 0)        # PassageTool.NONE
+	_passage_mode_option.add_item("Freehand", 1)   # PassageTool.FREEHAND
+	_passage_mode_option.add_item("Polyline", 2)   # PassageTool.POLYLINE
+	_passage_mode_option.add_item("Erase", 3)      # PassageTool.ERASE
+	_passage_mode_option.selected = 0
+	_passage_mode_option.focus_mode = Control.FOCUS_NONE
+	_passage_mode_option.item_selected.connect(_on_passage_mode_selected)
+	hbox.add_child(_passage_mode_option)
+
+	_passage_brush_label = Label.new()
+	_passage_brush_label.text = "Width:"
+	hbox.add_child(_passage_brush_label)
+
+	_passage_brush_slider = HSlider.new()
+	_passage_brush_slider.min_value = 12.0
+	_passage_brush_slider.max_value = 192.0
+	_passage_brush_slider.step = 4.0
+	_passage_brush_slider.value = 48.0
+	_passage_brush_slider.custom_minimum_size = Vector2(120.0, 0.0)
+	_passage_brush_slider.focus_mode = Control.FOCUS_NONE
+	_passage_brush_slider.value_changed.connect(_on_passage_brush_changed)
+	hbox.add_child(_passage_brush_slider)
+
+	_passage_commit_btn = Button.new()
+	_passage_commit_btn.text = "Commit"
+	_passage_commit_btn.focus_mode = Control.FOCUS_NONE
+	_passage_commit_btn.tooltip_text = "Save passage geometry to this token"
+	_passage_commit_btn.pressed.connect(_on_passage_commit_pressed)
+	hbox.add_child(_passage_commit_btn)
+
+	_passage_clear_btn = Button.new()
+	_passage_clear_btn.text = "Clear"
+	_passage_clear_btn.focus_mode = Control.FOCUS_NONE
+	_passage_clear_btn.tooltip_text = "Erase all WIP passage paths"
+	_passage_clear_btn.pressed.connect(_on_passage_clear_pressed)
+	hbox.add_child(_passage_clear_btn)
+
+
+func _on_token_selected(token_id: String) -> void:
+	## Show the passage paint panel when a SECRET_PASSAGE token is selected.
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null or data.category != TokenData.TokenCategory.SECRET_PASSAGE:
+		_hide_passage_panel()
+		return
+	_selected_passage_token_id = token_id
+	if _passage_panel != null:
+		_passage_panel.visible = true
+		_passage_token_label.text = "Passage: %s" % data.label if not data.label.is_empty() else "Secret Passage"
+
+
+func _hide_passage_panel() -> void:
+	if _map_view != null and _map_view._passage_tool != MapView.PassageTool.NONE:
+		_map_view.deactivate_passage_tool()
+	_selected_passage_token_id = ""
+	if _passage_panel != null:
+		_passage_panel.visible = false
+	if _passage_mode_option != null:
+		_passage_mode_option.selected = 0
+
+
+func _on_passage_mode_selected(index: int) -> void:
+	if _map_view == null or _selected_passage_token_id.is_empty():
+		return
+	var mode: int = _passage_mode_option.get_item_id(index)
+	if mode == 0:  # Off / NONE
+		if _map_view._passage_tool != MapView.PassageTool.NONE:
+			_map_view.deactivate_passage_tool()
+		return
+	# Activate / switch mode.
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var brush_size: float = _passage_brush_slider.value if _passage_brush_slider != null else 48.0
+	if _map_view._active_passage_token_id != _selected_passage_token_id:
+		var data: TokenData = tm.get_token_by_id(_selected_passage_token_id)
+		var initial_paths: Array = data.passage_paths if data != null else []
+		_map_view.activate_passage_tool(_selected_passage_token_id, initial_paths, brush_size)
+	_map_view.set_passage_tool(mode)
+
+
+func _on_passage_brush_changed(value: float) -> void:
+	if _map_view != null and _map_view._active_passage_token_id != "":
+		_map_view._wip_brush_size = value
+		_map_view._rebuild_passage_wip_lines()
+
+
+func _on_passage_commit_pressed() -> void:
+	if _map_view != null:
+		_map_view.deactivate_passage_tool()
+	if _passage_mode_option != null:
+		_passage_mode_option.selected = 0
+
+
+func _on_passage_clear_pressed() -> void:
+	if _map_view != null:
+		_map_view.clear_passage_wip()
+	# Immediately commit empty passage data so the token sprite and LOS
+	# geometry update right away rather than waiting for a separate Commit.
+	if _selected_passage_token_id.is_empty():
+		return
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(_selected_passage_token_id)
+	if data == null:
+		return
+	data.passage_paths = []
+	data.passage_width_px = 0.0
+	tm.update_token(data)
+	_player_state_dirty = true
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+		_map_view.apply_token_passthrough_state(data)
+	_broadcast_token_change(data, false)
+
+
+func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float) -> void:
+	## Mirrors _on_token_resize_completed: update token data and broadcast.
+	_player_state_dirty = true
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null:
+		return
+	data.passage_paths = paths
+	data.passage_width_px = width_px
+	# Auto-open the passage when corridors are painted.  The DM can always
+	# re-close it via right-click → "Close (restore LOS)".
+	if paths.size() > 0:
+		data.blocks_los = false
+	tm.update_token(data)
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+		_map_view.apply_token_passthrough_state(data)
 	_broadcast_token_change(data, false)
 
 
@@ -3010,7 +3230,14 @@ func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
 
 ## Broadcast a single-token change to all connected display clients.
 func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
-	if not data.is_visible_to_players:
+	# DOOR and SECRET_PASSAGE tokens affect wall/passthrough geometry on the
+	# player display, so they must always be broadcast regardless of token
+	# visibility.  Other token categories are only sent when visible.
+	var is_passthrough_category: bool = (
+		data.category == TokenData.TokenCategory.DOOR
+		or data.category == TokenData.TokenCategory.SECRET_PASSAGE
+	)
+	if not data.is_visible_to_players and not is_passthrough_category:
 		return
 	var msg_type: String = "token_added" if is_new else "token_updated"
 	_nm_broadcast_to_displays({"msg": msg_type, "token": data.to_dict()})
@@ -3027,6 +3254,15 @@ func _broadcast_token_state() -> void:
 	for raw in visible:
 		var td: TokenData = raw as TokenData
 		if td != null:
+			dicts.append(td.to_dict())
+	# Include non-visible DOOR and SECRET_PASSAGE tokens so the player display
+	# can rebuild wall/passthrough geometry even for tokens the player can't see.
+	for raw in registry.token.get_all_tokens():
+		var td: TokenData = raw as TokenData
+		if td == null or td.is_visible_to_players:
+			continue
+		if td.category == TokenData.TokenCategory.DOOR \
+				or td.category == TokenData.TokenCategory.SECRET_PASSAGE:
 			dicts.append(td.to_dict())
 	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts})
 
@@ -3922,6 +4158,39 @@ func _apply_freeze_panel_size() -> void:
 	_freeze_panel.offset_bottom = 0.0
 
 
+func _apply_passage_panel_size() -> void:
+	## Reposition and rescale the passage panel at the screen bottom.
+	## The panel lives directly in _ui_layer, so it is NOT affected by _ui_root.scale.
+	## Widget sizes/fonts are explicitly scaled here to match the rest of the UI.
+	if _passage_panel == null:
+		return
+	var scale := _ui_scale()
+	var panel_h := roundi(56.0 * scale)
+	_passage_panel.offset_left = 0.0
+	_passage_panel.offset_right = 0.0
+	_passage_panel.offset_top = float(-panel_h)
+	_passage_panel.offset_bottom = 0.0
+	var font_size: int = roundi(15.0 * scale)
+	var btn_h: int = roundi(34.0 * scale)
+	if _passage_token_label:
+		_passage_token_label.add_theme_font_size_override("font_size", font_size)
+	if _passage_mode_label:
+		_passage_mode_label.add_theme_font_size_override("font_size", font_size)
+	if _passage_brush_label:
+		_passage_brush_label.add_theme_font_size_override("font_size", font_size)
+	if _passage_mode_option:
+		_passage_mode_option.custom_minimum_size = Vector2(roundi(130.0 * scale), btn_h)
+		_passage_mode_option.add_theme_font_size_override("font_size", font_size)
+	if _passage_brush_slider:
+		_passage_brush_slider.custom_minimum_size = Vector2(roundi(120.0 * scale), roundi(20.0 * scale))
+	if _passage_commit_btn:
+		_passage_commit_btn.custom_minimum_size = Vector2(roundi(80.0 * scale), btn_h)
+		_passage_commit_btn.add_theme_font_size_override("font_size", font_size)
+	if _passage_clear_btn:
+		_passage_clear_btn.custom_minimum_size = Vector2(roundi(70.0 * scale), btn_h)
+		_passage_clear_btn.add_theme_font_size_override("font_size", font_size)
+
+
 func _apply_ui_scale() -> void:
 	var scale := _ui_scale()
 	if _toolbar:
@@ -3931,6 +4200,8 @@ func _apply_ui_scale() -> void:
 		_ui_root.scale = Vector2(scale, scale)
 	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
 		_apply_freeze_panel_size()
+	if _passage_panel and _passage_panel.get_parent() == _ui_layer:
+		_apply_passage_panel_size()
 	# Update freeze panel static widget sizes and rebuild rows at new scale.
 	if _freeze_undock_btn:
 		_freeze_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))
