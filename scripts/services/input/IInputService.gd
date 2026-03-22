@@ -10,6 +10,8 @@ class_name IInputService
 signal input_vector_changed(player_id: Variant, vector: Vector2)
 @warning_ignore("unused_signal")
 signal input_binding_changed(player_id: Variant)
+@warning_ignore("unused_signal")
+signal input_action_pressed(player_id: Variant, action: String)
 
 func get_vector(_player_id: Variant) -> Vector2:
 	push_error("IInputService.get_vector: not implemented")
@@ -42,4 +44,17 @@ func get_gamepad_bindings() -> Dictionary:
 
 func has_gamepad_binding(_device_id: int) -> bool:
 	push_error("IInputService.has_gamepad_binding: not implemented")
+	return false
+
+
+func dispatch_action(_player_id: Variant, _action: String) -> void:
+	push_error("IInputService.dispatch_action: not implemented")
+
+
+func set_dash_state(_player_id: Variant, _is_dashing: bool) -> void:
+	push_error("IInputService.set_dash_state: not implemented")
+
+
+func is_dashing(_player_id: Variant) -> bool:
+	push_error("IInputService.is_dashing: not implemented")
 	return false

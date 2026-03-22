@@ -88,3 +88,21 @@ func has_gamepad_binding(device_id: int) -> bool:
 	if service != null:
 		return service.has_gamepad_binding(device_id)
 	return false
+
+
+func set_dash_state(player_id: Variant, dashing: bool) -> void:
+	if service == null:
+		return
+	service.set_dash_state(player_id, dashing)
+
+
+func is_dashing(player_id: Variant) -> bool:
+	if service == null:
+		return false
+	return service.is_dashing(player_id)
+
+
+func dispatch_action(player_id: Variant, action: String) -> void:
+	if service == null:
+		return
+	service.dispatch_action(player_id, action)

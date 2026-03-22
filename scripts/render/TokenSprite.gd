@@ -67,6 +67,8 @@ var _icon_key_map: Dictionary = {}
 var _show_handles: bool = false
 var _passage_paths: Array = []
 var _passage_width_px: float = 48.0
+var _is_detected: bool = false
+var _trigger_radius_px: float = 96.0
 
 
 func _ready() -> void:
@@ -222,6 +224,44 @@ func _draw() -> void:
 			var rot_y: float = - ry - 22.0
 			draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
 			draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
+	# Trigger-radius dashed circle + drag handle (DM view, handles shown).
+	if _show_handles and _is_dm and _trigger_radius_px > 0.0:
+		var dash_segs: int = 48
+		var dash_color := Color(0.4, 0.85, 1.0, 0.55)
+		for i: int in dash_segs:
+			if i % 2 == 1:
+				continue
+			var a0: float = TAU * float(i) / float(dash_segs)
+			var a1: float = TAU * float(i + 1) / float(dash_segs)
+			draw_line(
+				Vector2(cos(a0) * _trigger_radius_px, sin(a0) * _trigger_radius_px),
+				Vector2(cos(a1) * _trigger_radius_px, sin(a1) * _trigger_radius_px),
+				dash_color, 1.5)
+		# Drag handle at rightmost point.
+		var handle_pos := Vector2(_trigger_radius_px, 0.0)
+		draw_circle(handle_pos, 6.0, Color(0.4, 0.85, 1.0, 0.9))
+		draw_circle(handle_pos, 6.0, Color.WHITE, false, 1.5)
+
+	# Detection badge: yellow "!" shown on player displays when token is
+	# sensed but not yet revealed (perception < DC while within range).
+	if _is_detected and not _is_visible_to_players:
+		var det_size: int = maxi(14, int(minf(_width_px, _height_px) * 0.5))
+		draw_string(
+			ThemeDB.fallback_font,
+			Vector2(-float(det_size) * 0.3, float(det_size) * 0.4),
+			"!",
+			HORIZONTAL_ALIGNMENT_CENTER,
+			det_size,
+			det_size,
+			Color(1.0, 0.92, 0.1, 1.0)
+		)
+
+
+func set_detected(detected: bool) -> void:
+	if _is_detected == detected:
+		return
+	_is_detected = detected
+	queue_redraw()
 
 
 ## Apply all fields from a TokenData instance.
@@ -250,6 +290,7 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	_shape = data.token_shape
 	_passage_paths = data.passage_paths.duplicate()
 	_passage_width_px = data.passage_width_px
+	_trigger_radius_px = maxf(0.0, data.trigger_radius_px)
 	_refresh_visibility()
 	queue_redraw()
 
@@ -265,6 +306,15 @@ func get_token_width_px() -> float:
 
 func get_token_height_px() -> float:
 	return _height_px
+
+
+func get_trigger_radius_px() -> float:
+	return _trigger_radius_px
+
+
+func set_trigger_radius_px(radius: float) -> void:
+	_trigger_radius_px = maxf(0.0, radius)
+	queue_redraw()
 
 
 func get_token_category() -> int:

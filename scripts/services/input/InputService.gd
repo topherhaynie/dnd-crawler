@@ -12,6 +12,8 @@ const _SOURCE_ORDER: Array[int] = [InputSource.DM, InputSource.GAMEPAD, InputSou
 
 var _source_vectors: Dictionary = {}
 var gamepad_bindings: Dictionary = {}
+var _prev_gamepad_buttons: Dictionary = {} ## {device_id: {button: bool}}
+var _dash_states: Dictionary = {} ## {player_id: bool}
 
 func _game_state() -> GameStateManager:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -42,6 +44,17 @@ func _process(_delta: float) -> void:
 			raw = raw.normalized() * ((raw.length() - DEAD_ZONE) / (1.0 - DEAD_ZONE))
 			raw = raw.clampf(-1.0, 1.0)
 		set_gamepad_vector(player_id, raw)
+		# --- Button edge detection for action dispatch ---
+		var prev: Dictionary = _prev_gamepad_buttons.get(device_id, {}) as Dictionary
+		var btn_a_now: bool = Input.is_joy_button_pressed(device_id, JOY_BUTTON_A)
+		var btn_b_now: bool = Input.is_joy_button_pressed(device_id, JOY_BUTTON_B)
+		if btn_a_now and not bool(prev.get(JOY_BUTTON_A, false)):
+			dispatch_action(player_id, "interact")
+		if btn_b_now and not bool(prev.get(JOY_BUTTON_B, false)):
+			set_dash_state(player_id, true)
+		if not btn_b_now and bool(prev.get(JOY_BUTTON_B, false)):
+			set_dash_state(player_id, false)
+		_prev_gamepad_buttons[device_id] = {JOY_BUTTON_A: btn_a_now, JOY_BUTTON_B: btn_b_now}
 
 func get_vector(player_id) -> Vector2:
 	var gs := _game_state()
@@ -126,3 +139,25 @@ func get_gamepad_bindings() -> Dictionary:
 
 func has_gamepad_binding(device_id: int) -> bool:
 	return gamepad_bindings.has(device_id)
+
+
+func dispatch_action(player_id: Variant, action: String) -> void:
+	if action == "dash_start":
+		set_dash_state(player_id, true)
+		return
+	if action == "dash_end":
+		set_dash_state(player_id, false)
+		return
+	input_action_pressed.emit(player_id, action)
+
+
+func set_dash_state(player_id: Variant, dashing: bool) -> void:
+	var was: bool = bool(_dash_states.get(player_id, false))
+	if was == dashing:
+		return
+	_dash_states[player_id] = dashing
+	input_action_pressed.emit(player_id, "dash")
+
+
+func is_dashing(player_id: Variant) -> bool:
+	return bool(_dash_states.get(player_id, false))

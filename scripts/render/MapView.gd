@@ -201,6 +201,7 @@ signal token_rotation_completed(token_id: String, rotation_deg: float)
 signal token_place_requested(world_pos: Vector2)
 signal token_right_clicked(token_id: String, screen_pos: Vector2)
 signal token_selected(token_id: String)
+signal token_trigger_radius_changed(token_id: String, new_radius_px: float)
 @warning_ignore("unused_signal")
 signal passage_paths_committed(token_id: String, paths: Array, width_px: float)
 
@@ -232,6 +233,8 @@ var _rotating_token_id: Variant = null
 var _rotate_token_node: Node2D = null
 var _rotate_start_angle: float = 0.0
 var _rotate_start_mouse_angle: float = 0.0
+var _trigger_radius_dragging_id: Variant = null
+var _trigger_radius_drag_node: Node2D = null
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
@@ -528,7 +531,7 @@ func add_token_sprite(data: TokenData, is_dm: bool) -> void:
 func remove_token_sprite(id: String) -> void:
 	if _hovered_token_id == id:
 		_hovered_token_id = null
-	if _resizing_token_id == id or _rotating_token_id == id:
+	if _resizing_token_id == id or _rotating_token_id == id or _trigger_radius_dragging_id == id:
 		_cancel_token_resize()
 	for child in token_layer.get_children():
 		var ts: TokenSprite = child as TokenSprite
@@ -546,6 +549,15 @@ func update_token_sprite(data: TokenData) -> void:
 		var ts: TokenSprite = child as TokenSprite
 		if ts != null and ts.token_id == data.id:
 			ts.apply_from_data(data, is_dm_view)
+			return
+
+
+## Mark a token as detected (shows `!` badge) or undetected.
+func set_token_detected(token_id: String, detected: bool) -> void:
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == token_id:
+			ts.set_detected(detected)
 			return
 
 
@@ -1166,12 +1178,19 @@ func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
 		for i: int in handles.size():
 			if local_pos.distance_to(handles[i]) <= HANDLE_HIT_RADIUS_PX:
 				return {"token_id": tid, "handle": i}
+		# Trigger-radius drag handle (rightmost point of trigger circle).
+		if ts != null and ts.get_trigger_radius_px() > 0.0:
+			var tr_handle := Vector2(ts.get_trigger_radius_px(), 0.0)
+			if local_pos.distance_to(tr_handle) <= HANDLE_HIT_RADIUS_PX:
+				return {"token_id": tid, "handle": 9}
 	return {}
 
 
 func _update_cursor(world_pos: Vector2) -> void:
 	var shape: int = DisplayServer.CURSOR_ARROW
-	if _rotating_token_id != null:
+	if _trigger_radius_dragging_id != null:
+		shape = DisplayServer.CURSOR_HSIZE
+	elif _rotating_token_id != null:
 		shape = DisplayServer.CURSOR_POINTING_HAND
 	elif _resizing_token_id != null:
 		shape = _cursor_for_handle(_resize_token_handle_idx)
@@ -1193,7 +1212,7 @@ func _update_cursor(world_pos: Vector2) -> void:
 		elif _indicator_overlay != null and _indicator_overlay.get_handle_at(world_pos) >= 0:
 			shape = DisplayServer.CURSOR_DRAG
 		# Track hover to show/hide handles on TokenSprite nodes (DM only).
-		if is_dm_view and _rotating_token_id == null and _resizing_token_id == null and _dragging_token_node == null:
+		if is_dm_view and _rotating_token_id == null and _resizing_token_id == null and _dragging_token_node == null and _trigger_radius_dragging_id == null:
 			var new_hover: Variant = handle_result.get("token_id", null) if not handle_result.is_empty() else token_hit
 			if new_hover != _hovered_token_id:
 				_clear_token_hover()
@@ -1214,6 +1233,7 @@ func _cursor_for_handle(handle_idx: int) -> int:
 		1, 5: return DisplayServer.CURSOR_VSIZE
 		3, 7: return DisplayServer.CURSOR_HSIZE
 		8: return DisplayServer.CURSOR_POINTING_HAND
+		9: return DisplayServer.CURSOR_HSIZE
 		_: return DisplayServer.CURSOR_FDIAGSIZE
 
 
@@ -1244,6 +1264,8 @@ func _cancel_token_resize() -> void:
 	_rotate_token_node = null
 	_rotate_start_angle = 0.0
 	_rotate_start_mouse_angle = 0.0
+	_trigger_radius_dragging_id = null
+	_trigger_radius_drag_node = null
 
 
 func _clear_token_hover() -> void:
@@ -1503,6 +1525,9 @@ func _unhandled_input(event: InputEvent) -> void:
 									_rotate_start_mouse_angle = atan2(
 											world_pos.y - handle_node.global_position.y,
 											world_pos.x - handle_node.global_position.x)
+								elif hdl == 9:
+									_trigger_radius_dragging_id = htid
+									_trigger_radius_drag_node = handle_node
 								else:
 									_resizing_token_id = htid
 									_resize_token_node = handle_node
@@ -1550,7 +1575,17 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					return
 				else:
-					if _rotating_token_id != null:
+					if _trigger_radius_dragging_id != null:
+						var final_radius: float = 96.0
+						var tr_ts := _trigger_radius_drag_node as TokenSprite
+						if tr_ts != null:
+							final_radius = tr_ts.get_trigger_radius_px()
+						token_trigger_radius_changed.emit(str(_trigger_radius_dragging_id), final_radius)
+						_trigger_radius_dragging_id = null
+						_trigger_radius_drag_node = null
+						_update_cursor(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+					elif _rotating_token_id != null:
 						var final_rot: float = 0.0
 						if _rotate_token_node != null:
 							final_rot = rad_to_deg(_rotate_token_node.rotation)
@@ -1605,6 +1640,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	# --- Mouse motion (panning + indicator drag) ----------------------------
 	if event is InputEventMouseMotion:
 		var motion_world_pos := get_global_mouse_position()
+		if _trigger_radius_dragging_id != null and _trigger_radius_drag_node != null:
+			var local_mouse: Vector2 = _trigger_radius_drag_node.to_local(motion_world_pos)
+			var new_radius: float = maxf(24.0, local_mouse.length())
+			var drag_ts := _trigger_radius_drag_node as TokenSprite
+			if drag_ts != null:
+				drag_ts.set_trigger_radius_px(new_radius)
+			_update_cursor(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
 		if _rotating_token_id != null and _rotate_token_node != null:
 			var center: Vector2 = _rotate_token_node.global_position
 			var cur_angle: float = atan2(motion_world_pos.y - center.y, motion_world_pos.x - center.x)

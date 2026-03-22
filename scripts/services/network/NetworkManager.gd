@@ -68,3 +68,15 @@ func is_display_peer_connected(peer_id: int) -> bool:
 	if service == null:
 		return false
 	return service.is_display_peer_connected(peer_id)
+
+
+func get_display_peer_ids() -> Array:
+	if service == null:
+		return []
+	return service.get_display_peer_ids()
+
+
+func get_peer_role(peer_id: int) -> String:
+	if service == null:
+		return ""
+	return service.get_peer_role(peer_id)

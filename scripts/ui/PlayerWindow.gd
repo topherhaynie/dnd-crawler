@@ -24,6 +24,7 @@ var _has_loaded_map: bool = false
 var _pending_fog_snapshot: Dictionary = {}
 var _pending_fog_deltas: Array = []
 var _incoming_fog_snapshot_chunks: Dictionary = {}
+var _bound_player_id: String = ""
 
 
 func _ready() -> void:
@@ -83,6 +84,15 @@ func on_state(data: Dictionary) -> void:
 			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary)
 		"token_updated":
 			_handle_token_added(data.get("token", {}) as Dictionary)
+		"token_detected":
+			if _map_view != null:
+				_map_view.set_token_detected(str(data.get("token_id", "")), true)
+		"token_undetected":
+			if _map_view != null:
+				_map_view.set_token_detected(str(data.get("token_id", "")), false)
+		"player_bind":
+			_bound_player_id = str(data.get("player_id", ""))
+			print("PlayerWindow: bound to player_id=%s" % _bound_player_id)
 		_:
 			pass
 

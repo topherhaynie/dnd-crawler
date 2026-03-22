@@ -109,6 +109,15 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 				bind_peer(peer_id, pid)
 		return
 
+	if data.get("type", "") == "player_action":
+		var pid: String = _resolve_packet_player_id(peer_id, data)
+		var act: String = str(data.get("action", "")).strip_edges()
+		if pid != "" and act != "":
+			var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if reg != null and reg.input != null and reg.input.service != null:
+				reg.input.service.dispatch_action(pid, act)
+		return
+
 	if data.get("type", "") == "viewport_resize" and peer_id in _display_peers:
 		var vp := Vector2(
 			float(data.get("viewport_width", 1920)),
@@ -243,6 +252,12 @@ func get_connected_input_peers() -> Array[int]:
 
 func is_display_peer_connected(peer_id: int) -> bool:
 	return peer_id in _display_peers
+
+func get_display_peer_ids() -> Array:
+	return _display_peers.duplicate()
+
+func get_peer_role(peer_id: int) -> String:
+	return str(ws_peer_roles.get(peer_id, ""))
 
 func _register_display_peer(peer_id: int, viewport_size: Vector2) -> void:
 	if peer_id in _display_peers:

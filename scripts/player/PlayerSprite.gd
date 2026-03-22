@@ -15,6 +15,7 @@ var vision_type: int = VisionType.NORMAL
 var darkvision_range: float = 60.0
 var perception_mod: int = 0
 var is_dashing: bool = false
+var is_locked: bool = false
 var vision_scale: float = 1.0
 var vision_radius_px: float = 60.0
 var indicator_color_str: String = "" ## hex from PlayerProfile.indicator_color; empty = fall back to id-hash
@@ -29,6 +30,7 @@ var _vision_radius_tween: Tween = null
 var _token_diameter_px: float = _TOKEN_TEXTURE_DIAMETER_PX
 var _light_suppressed: bool = false
 var _saved_light_energy: float = 1.4
+var _lock_label: Label = null
 
 static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
@@ -47,10 +49,26 @@ func _ready() -> void:
 	vision_light.range_item_cull_mask = 2
 	vision_light.shadow_item_cull_mask = 2
 	_remote_target_position = global_position
+	_lock_label = Label.new()
+	_lock_label.text = "\u26a0"
+	_lock_label.add_theme_font_size_override("font_size", 32)
+	_lock_label.add_theme_color_override("font_color", Color.YELLOW)
+	_lock_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_lock_label.add_theme_constant_override("outline_size", 4)
+	_lock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lock_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_lock_label.size = Vector2(40, 40)
+	_lock_label.position = Vector2(-20, -20)
+	_lock_label.z_index = 10
+	_lock_label.visible = false
+	add_child(_lock_label)
 	_update_visuals()
 
 
 func _process(delta: float) -> void:
+	if _lock_label != null and _lock_label.visible:
+		_lock_label.position = Vector2(-20, -20).rotated(-rotation)
+		_lock_label.rotation = -rotation
 	if not _remote_smoothing_enabled:
 		return
 	var dist := global_position.distance_to(_remote_target_position)
@@ -68,6 +86,7 @@ func apply_from_state(data: Dictionary) -> void:
 	var prev_vision_type := vision_type
 	var prev_darkvision_range := darkvision_range
 	var prev_is_dashing := is_dashing
+	var prev_is_locked := is_locked
 	var prev_vision_scale := vision_scale
 	var prev_vision_radius_px := vision_radius_px
 	var prev_token_diameter := _token_diameter_px
@@ -79,9 +98,9 @@ func apply_from_state(data: Dictionary) -> void:
 	darkvision_range = float(data.get("darkvision_range", 60.0))
 	perception_mod = int(data.get("perception_mod", 0))
 	is_dashing = bool(data.get("is_dashing", false))
+	is_locked = bool(data.get("is_locked", false))
 	indicator_color_str = str(data.get("indicator_color", ""))
-	var default_vision_scale := 0.5 if is_dashing else 1.0
-	vision_scale = clampf(float(data.get("vision_scale", default_vision_scale)), 0.1, 4.0)
+	vision_scale = clampf(float(data.get("vision_scale", 1.0)), 0.1, 4.0)
 	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
 	vision_radius_px = maxf(float(data.get("vision_radius_px", default_radius_px)), 8.0)
 	var facing := float(data.get("facing", rotation))
@@ -106,6 +125,7 @@ func apply_from_state(data: Dictionary) -> void:
 		or vision_type != prev_vision_type
 		or absf(darkvision_range - prev_darkvision_range) > 0.01
 		or is_dashing != prev_is_dashing
+		or is_locked != prev_is_locked
 		or absf(vision_scale - prev_vision_scale) > 0.001
 		or absf(vision_radius_px - prev_vision_radius_px) > 0.01
 	)
@@ -187,6 +207,10 @@ func _update_visuals() -> void:
 	update_vision_radius(radius_px)
 	if vision_type == VisionType.NORMAL:
 		rotation = _last_nonzero_dir.angle()
+	if _lock_label != null:
+		_lock_label.visible = is_locked
+		# Counter-rotate so the label stays upright regardless of sprite rotation.
+		_lock_label.rotation = -rotation
 
 
 func set_vision_radius_px(radius_px: float) -> void:

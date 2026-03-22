@@ -118,6 +118,9 @@ var _token_visible_check: CheckBox = null
 var _token_perception_spin: SpinBox = null
 var _token_autopause_check: CheckBox = null
 var _token_pause_interact_check: CheckBox = null
+var _token_auto_reveal_check: CheckBox = null
+var _token_trigger_spin: SpinBox = null
+var _token_autopause_max_spin: SpinBox = null
 var _token_notes_edit: TextEdit = null
 var _token_width_spin: SpinBox = null
 var _token_height_spin: SpinBox = null
@@ -180,6 +183,8 @@ var _freeze_master_btn: Button = null ## "Freeze All" / "Free All" master toggle
 var _fp_vbox: VBoxContainer = null ## inner scale root — scaled by _apply_ui_scale like _ui_root
 var _freeze_rows: VBoxContainer = null
 var _freeze_row_buttons: Dictionary = {} ## {player_id: CheckButton}
+var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which locks came from autopause
+var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
 
 # ── Player viewport control ─────────────────────────────────────────────────
@@ -229,6 +234,8 @@ func _ready() -> void:
 	call_deferred("_ensure_profile_bindings")
 	# Defer game-state bindings for lock/unlock signal + initial freeze panel populate.
 	call_deferred("_ensure_game_state_bindings")
+	# Defer input-action bindings so InputService is registered by bootstrap.
+	call_deferred("_ensure_input_bindings")
 	_apply_ui_scale()
 	print("DMWindow: ready")
 
@@ -251,6 +258,18 @@ func _ensure_game_state_bindings() -> void:
 	if not gs.is_connected("player_lock_changed", Callable(self , "_on_player_lock_changed_external")):
 		gs.player_lock_changed.connect(_on_player_lock_changed_external)
 	_refresh_freeze_panel()
+
+
+func _ensure_input_bindings() -> void:
+	var input: InputManager = _input_service()
+	if input == null or input.service == null:
+		call_deferred("_ensure_input_bindings")
+		return
+	# Signal subscription: IInputService extends Node; signals live on the Node
+	# instance. RefCounted manager cannot re-emit them — approved narrow exception.
+	var svc: IInputService = input.service
+	if not svc.is_connected("input_action_pressed", Callable(self , "_on_player_action")):
+		svc.input_action_pressed.connect(_on_player_action)
 
 
 func _network() -> NetworkManager:
@@ -349,6 +368,13 @@ func _map() -> MapData:
 	if _map_view != null:
 		return _map_view.get_map()
 	return null
+
+
+func _pixels_per_5ft_current() -> float:
+	var map: MapData = _map()
+	if map == null:
+		return 60.0
+	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 
 
 func _init_network_binding() -> void:
@@ -450,6 +476,7 @@ func _build_ui() -> void:
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
 	_map_view.token_resize_completed.connect(_on_token_resize_completed)
 	_map_view.token_rotation_completed.connect(_on_token_rotation_completed)
+	_map_view.token_trigger_radius_changed.connect(_on_token_trigger_radius_changed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
@@ -1079,6 +1106,41 @@ func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 	_initial_sync_ack_pending[_peer_id] = true
 	_initial_sync_attempt_by_peer[_peer_id] = 0
 	_queue_initial_display_sync(_peer_id, 0.20)
+	_send_player_bind_to_display(_peer_id)
+
+
+## Send a player_bind message to a display peer, matching its handshake role
+## to a profile ID. If the role matches no profile, no message is sent.
+func _send_player_bind_to_display(peer_id: int) -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	var role: String = nm.get_peer_role(peer_id)
+	if role.is_empty():
+		return
+	var pm := _profile_service()
+	if pm == null:
+		return
+	var profiles_arr: Array = pm.get_profiles()
+	for profile in profiles_arr:
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		p.ensure_id()
+		if p.id == role or p.player_name == role:
+			nm.send_to_display(peer_id, {"msg": "player_bind", "player_id": p.id})
+			return
+
+
+## Re-send player_bind to every connected display peer (called after profile
+## re-bind so displays pick up updated player assignments).
+func _send_player_bind_to_all_displays() -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	var peers: Array = nm.get_display_peer_ids()
+	for peer_id_v in peers:
+		_send_player_bind_to_display(int(peer_id_v))
 
 
 func _queue_initial_display_sync(peer_id: int, delay_sec: float) -> void:
@@ -1572,7 +1634,12 @@ func _refresh_freeze_panel() -> void:
 		status_box.name = "StatusBox"
 		status_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		status_box.add_theme_constant_override("separation", 4)
-		status_box.modulate = Color(0.6, 1.0, 0.6) if not locked else Color(1.0, 0.6, 0.6)
+		if not locked:
+			status_box.modulate = Color(0.6, 1.0, 0.6)
+		elif _autopause_locked_ids.has(p.id):
+			status_box.modulate = Color(1.0, 0.85, 0.0)
+		else:
+			status_box.modulate = Color(1.0, 0.6, 0.6)
 		row.add_child(status_box)
 
 		var name_lbl := Label.new()
@@ -1621,8 +1688,10 @@ func _on_player_freeze_toggled(player_id: String, toggled_on: bool) -> void:
 		return
 	if toggled_on:
 		gs.unlock_player(player_id)
+		_autopause_locked_ids.erase(player_id)
 	else:
 		gs.lock_player(player_id)
+	_broadcast_player_state()
 
 	var row := _freeze_rows.get_node_or_null("FreezeRow_" + player_id) as HBoxContainer
 	if row != null:
@@ -1646,7 +1715,12 @@ func _on_player_lock_changed_external(player_id: Variant, locked: bool) -> void:
 	if row != null:
 		var sb := row.get_node_or_null("StatusBox") as HBoxContainer
 		if sb != null:
-			sb.modulate = Color(0.6, 1.0, 0.6) if not locked else Color(1.0, 0.6, 0.6)
+			if not locked:
+				sb.modulate = Color(0.6, 1.0, 0.6)
+			elif _autopause_locked_ids.has(pid):
+				sb.modulate = Color(1.0, 0.85, 0.0)
+			else:
+				sb.modulate = Color(1.0, 0.6, 0.6)
 	_update_master_toggle()
 
 
@@ -1670,6 +1744,7 @@ func _on_master_freeze_pressed() -> void:
 				gs.unlock_player(p.id)
 			else:
 				gs.lock_player(p.id)
+	_broadcast_player_state()
 	_refresh_freeze_panel()
 
 
@@ -2093,7 +2168,7 @@ func _build_profiles_dialog() -> void:
 
 	var dash_lbl := Label.new(); dash_lbl.text = "Dashing:"; form.add_child(dash_lbl)
 	_profile_dash_check = CheckBox.new()
-	_profile_dash_check.text = "Speed +50%, Vision -50%"
+	_profile_dash_check.text = "Dashing (Speed ×2, Perception ÷2 while active)"
 	_profile_dash_check.button_pressed = false
 	form.add_child(_profile_dash_check)
 
@@ -2321,7 +2396,11 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_perception_spin.value = p.perception_mod
 	_profile_passive_label.text = str(p.get_passive_perception())
 	if _profile_dash_check:
-		_profile_dash_check.button_pressed = bool(p.extras.get("is_dashing", false))
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		var dash_on: bool = false
+		if registry != null and registry.input != null:
+			dash_on = registry.input.is_dashing(p.id)
+		_profile_dash_check.button_pressed = dash_on
 	_profile_input_type_option.select(_profile_input_type_option.get_item_index(p.input_type))
 	_profile_input_id_edit.text = p.input_id
 	_profile_extras_edit.text = JSON.stringify(p.extras, "\t")
@@ -2469,7 +2548,10 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 			_set_status("Extras must be valid JSON object; profile not saved.")
 			return false
 		p.extras = (parsed as Dictionary).duplicate(true)
-	p.extras["is_dashing"] = _profile_dash_check.button_pressed if _profile_dash_check else false
+	var dash_val: bool = _profile_dash_check.button_pressed if _profile_dash_check else false
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.input != null:
+		registry.input.set_dash_state(p.id, dash_val)
 
 	p.ensure_id()
 	return true
@@ -2600,6 +2682,8 @@ func _apply_profile_bindings() -> void:
 					nm.bind_peer(int(p.input_id), p.id)
 	_player_state_dirty = true
 	_player_state_countdown = 0.0
+	# Send player_bind to all display peers after re-binding.
+	_send_player_bind_to_all_displays()
 
 
 func _on_profiles_changed() -> void:
@@ -2673,6 +2757,18 @@ func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void
 	if data == null:
 		return
 	data.rotation_deg = rotation_deg
+	registry.token.update_token(data)
+	_broadcast_token_change(data, false)
+
+
+func _on_token_trigger_radius_changed(token_id: String, new_radius_px: float) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var data: TokenData = registry.token.get_token_by_id(token_id)
+	if data == null:
+		return
+	data.trigger_radius_px = new_radius_px
 	registry.token.update_token(data)
 	_broadcast_token_change(data, false)
 
@@ -2944,14 +3040,21 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_visible_check.button_pressed = data.is_visible_to_players
 	if _token_perception_spin != null:
 		_token_perception_spin.value = float(data.perception_dc)
+	if _token_auto_reveal_check != null:
+		_token_auto_reveal_check.button_pressed = data.auto_reveal
 	if _token_width_spin != null:
 		_token_width_spin.value = data.width_px
 	if _token_height_spin != null:
 		_token_height_spin.value = data.height_px
 	if _token_rotation_spin != null:
 		_token_rotation_spin.value = data.rotation_deg
+	if _token_trigger_spin != null:
+		var px_per_5ft: float = _pixels_per_5ft_current()
+		_token_trigger_spin.value = data.trigger_radius_px / px_per_5ft * 5.0
 	if _token_autopause_check != null:
 		_token_autopause_check.button_pressed = data.autopause
+	if _token_autopause_max_spin != null:
+		_token_autopause_max_spin.value = float(data.autopause_max_triggers)
 	if _token_pause_interact_check != null:
 		_token_pause_interact_check.button_pressed = data.pause_on_interact
 	if _token_shape_option != null:
@@ -3080,10 +3183,37 @@ func _build_token_editor_dialog() -> void:
 	_token_perception_spin.max_value = 30.0
 	_token_perception_spin.step = 1.0
 	_token_perception_spin.value = -1.0
-	_token_perception_spin.suffix = "(-1 = manual only)"
+	_token_perception_spin.tooltip_text = "-1 = manual only"
 	_token_perception_spin.custom_minimum_size = Vector2(170, 0)
 	perc_row.add_child(_token_perception_spin)
 	vbox.add_child(perc_row)
+
+	# Auto Reveal (when perception DC is met)
+	var ar_row := HBoxContainer.new()
+	var ar_label := Label.new()
+	ar_label.text = "Auto-reveal on perception:"
+	ar_label.custom_minimum_size = Vector2(120, 0)
+	ar_row.add_child(ar_label)
+	_token_auto_reveal_check = CheckBox.new()
+	_token_auto_reveal_check.tooltip_text = "Reveal token to players when perception DC is met (otherwise just shows ! indicator)"
+	ar_row.add_child(_token_auto_reveal_check)
+	vbox.add_child(ar_row)
+
+	# Trigger Radius (displayed in feet, stored in pixels)
+	var tr_row := HBoxContainer.new()
+	var tr_label := Label.new()
+	tr_label.text = "Trigger Radius:"
+	tr_label.custom_minimum_size = Vector2(120, 0)
+	tr_row.add_child(tr_label)
+	_token_trigger_spin = SpinBox.new()
+	_token_trigger_spin.min_value = 5.0
+	_token_trigger_spin.max_value = 300.0
+	_token_trigger_spin.step = 5.0
+	_token_trigger_spin.value = 30.0
+	_token_trigger_spin.suffix = "ft"
+	_token_trigger_spin.custom_minimum_size = Vector2(130, 0)
+	tr_row.add_child(_token_trigger_spin)
+	vbox.add_child(tr_row)
 
 	# Autopause
 	var ap_row := HBoxContainer.new()
@@ -3094,6 +3224,22 @@ func _build_token_editor_dialog() -> void:
 	_token_autopause_check = CheckBox.new()
 	ap_row.add_child(_token_autopause_check)
 	vbox.add_child(ap_row)
+
+	# Max Autopause Triggers
+	var mt_row := HBoxContainer.new()
+	var mt_label := Label.new()
+	mt_label.text = "Max Triggers:"
+	mt_label.custom_minimum_size = Vector2(120, 0)
+	mt_row.add_child(mt_label)
+	_token_autopause_max_spin = SpinBox.new()
+	_token_autopause_max_spin.min_value = 0.0
+	_token_autopause_max_spin.max_value = 100.0
+	_token_autopause_max_spin.step = 1.0
+	_token_autopause_max_spin.value = 0.0
+	_token_autopause_max_spin.tooltip_text = "0 = unlimited"
+	_token_autopause_max_spin.custom_minimum_size = Vector2(170, 0)
+	mt_row.add_child(_token_autopause_max_spin)
+	vbox.add_child(mt_row)
 
 	# Pause on interact
 	var pi_row := HBoxContainer.new()
@@ -3156,7 +3302,11 @@ func _on_token_editor_confirmed() -> void:
 	var category: int = _token_category_option.get_selected_id() if _token_category_option != null else 0
 	var is_vis: bool = _token_visible_check.button_pressed if _token_visible_check != null else false
 	var perc_dc: int = int(_token_perception_spin.value) if _token_perception_spin != null else -1
+	var do_auto_reveal: bool = _token_auto_reveal_check.button_pressed if _token_auto_reveal_check != null else false
 	var do_ap: bool = _token_autopause_check.button_pressed if _token_autopause_check != null else false
+	var max_triggers: int = int(_token_autopause_max_spin.value) if _token_autopause_max_spin != null else 0
+	var trigger_feet: float = _token_trigger_spin.value if _token_trigger_spin != null else 30.0
+	var trigger_px: float = trigger_feet / 5.0 * _pixels_per_5ft_current()
 	var do_pi: bool = _token_pause_interact_check.button_pressed if _token_pause_interact_check != null else false
 	var notes_text: String = _token_notes_edit.text if _token_notes_edit != null else ""
 	var w_px: float = _token_width_spin.value if _token_width_spin != null else 48.0
@@ -3184,7 +3334,10 @@ func _on_token_editor_confirmed() -> void:
 	data.category = category
 	data.is_visible_to_players = is_vis
 	data.perception_dc = perc_dc
+	data.auto_reveal = do_auto_reveal
 	data.autopause = do_ap
+	data.autopause_max_triggers = max_triggers
+	data.trigger_radius_px = trigger_px
 	data.pause_on_interact = do_pi
 	data.notes = notes_text
 	data.width_px = w_px
@@ -3267,6 +3420,39 @@ func _broadcast_token_state() -> void:
 	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts})
 
 
+# ---------------------------------------------------------------------------
+# Player action handler (Phase 4)
+# ---------------------------------------------------------------------------
+
+func _on_player_action(player_id: Variant, action: String) -> void:
+	var pid: String = str(player_id)
+	if action == "dash":
+		_apply_profile_bindings()
+		_broadcast_player_state()
+	elif action == "interact":
+		_handle_interact_action(pid)
+
+
+func _handle_interact_action(player_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	if _backend == null:
+		return
+	var token_nodes: Dictionary = _backend.get_dm_token_nodes()
+	var node: Node2D = token_nodes.get(player_id, null) as Node2D
+	if node == null or not is_instance_valid(node):
+		return
+	var nearby: Array = registry.token.check_interact_proximity(node.global_position)
+	if nearby.is_empty():
+		return
+	var gs: GameStateManager = _game_state()
+	if gs != null:
+		gs.lock_player(player_id)
+		_set_status("Interact — %s paused near token" % player_id)
+		_broadcast_player_state()
+
+
 ## Collect player world positions and passive perceptions, then ask TokenService
 ## to auto-reveal any tokens whose perception DC is met.  Called every
 ## _PERCEPTION_CHECK_INTERVAL seconds from _process.
@@ -3277,6 +3463,7 @@ func _run_perception_check() -> void:
 	# Gather player positions from live DM token nodes (same source MapView uses).
 	var positions: Array = []
 	var perceptions: Array = []
+	var player_ids: Array = []
 	if _backend != null:
 		var token_nodes: Dictionary = _backend.get_dm_token_nodes()
 		for pid in token_nodes.keys():
@@ -3284,18 +3471,48 @@ func _run_perception_check() -> void:
 			if node == null or not is_instance_valid(node):
 				continue
 			positions.append(node.global_position)
+			player_ids.append(str(pid))
 			# Look up passive perception from the profile service.
 			var pp: int = 10 ## default if profile not found
 			if registry.profile != null:
 				var prof: Variant = registry.profile.get_profile_by_id(str(pid))
 				if prof is PlayerProfile:
-					pp = (prof as PlayerProfile).get_passive_perception()
+					var p_prof := prof as PlayerProfile
+					pp = p_prof.get_passive_perception()
+					var im: InputManager = registry.input if registry.input != null else null
+					if im != null and im.is_dashing(str(pid)):
+						pp = floori(float(pp) / 2.0)
 			perceptions.append(pp)
 	if positions.is_empty():
 		return
 	var newly_revealed: Array = registry.token.check_perception_proximity(positions, perceptions)
 	for id in newly_revealed:
 		_on_token_visibility_changed(str(id), true)
+
+	# --- Autopause proximity (Phase 3) ---
+	var gs: GameStateManager = _game_state()
+	if gs != null:
+		var paused_ids: Array = registry.token.check_autopause_proximity(positions, player_ids)
+		for pid in paused_ids:
+			var pid_s: String = str(pid)
+			if _autopause_locked_ids.has(pid_s):
+				continue
+			_autopause_locked_ids[pid_s] = true
+			gs.lock_player(pid_s)
+			_set_status("Autopause — %s paused by proximity trigger" % pid_s)
+		_broadcast_player_state()
+
+	# --- Detection exclamation (Phase 6) ---
+	var new_detected: Array = registry.token.check_detection_proximity(positions, player_ids, perceptions)
+	# Diff against previous detection set and broadcast changes.
+	for tid in new_detected:
+		var tid_s: String = str(tid)
+		if not _detected_token_ids.has(tid_s):
+			_nm_broadcast_to_displays({"msg": "token_detected", "token_id": tid_s})
+	for tid_s in _detected_token_ids:
+		if not new_detected.has(tid_s):
+			_nm_broadcast_to_displays({"msg": "token_undetected", "token_id": tid_s})
+	_detected_token_ids = new_detected
 
 
 func _on_profile_import_pressed() -> void:

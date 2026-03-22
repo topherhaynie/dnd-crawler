@@ -200,14 +200,19 @@ func build_player_state_payload() -> Array:
 		return players
 	var map: MapData = _map()
 	var token_diameter_px := _token_diameter_px_for_map(map) if map else 48.0
-	for profile in _game_state().list_profiles():
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var im: InputManager = registry.input if registry != null and registry.input != null else null
+	var gs_mgr: GameStateManager = _game_state()
+	for profile in gs_mgr.list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
 		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
 		if token and is_instance_valid(token):
-			_game_state().player_positions[p.id] = token.global_position
-		var pos: Vector2 = _game_state().player_positions.get(p.id, Vector2.ZERO)
+			gs_mgr.player_positions[p.id] = token.global_position
+		var pos: Vector2 = gs_mgr.player_positions.get(p.id, Vector2.ZERO)
+		var dashing: bool = im.is_dashing(p.id) if im != null else false
+		var locked: bool = gs_mgr.is_locked(p.id)
 		players.append({
 			"id": p.id,
 			"name": p.player_name,
@@ -216,7 +221,8 @@ func build_player_state_payload() -> Array:
 			"darkvision_range": p.darkvision_range,
 			"vision_radius_px": _profile_vision_radius_px(p, map),
 			"perception_mod": p.perception_mod,
-			"is_dashing": bool(p.extras.get("is_dashing", false)),
+			"is_dashing": dashing,
+			"is_locked": locked,
 			"vision_scale": _vision_scale_for_profile(p),
 			"token_diameter_px": token_diameter_px,
 			"facing": token.rotation if token and is_instance_valid(token) else 0.0,
@@ -288,6 +294,9 @@ func _ensure_spawn_positions() -> void:
 
 
 func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var im: InputManager = registry.input if registry != null and registry.input != null else null
+	var dashing: bool = im.is_dashing(profile.id) if im != null else false
 	if _dm_tokens.has(profile.id):
 		var existing: PlayerSprite = _dm_tokens[profile.id] as PlayerSprite
 		if is_instance_valid(existing):
@@ -299,7 +308,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 				"darkvision_range": profile.darkvision_range,
 				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 				"perception_mod": profile.perception_mod,
-				"is_dashing": bool(profile.extras.get("is_dashing", false)),
+				"is_dashing": dashing,
 				"vision_scale": _vision_scale_for_profile(profile), "indicator_color": profile.indicator_color.to_html(false), "position": {
 					"x": _game_state().player_positions.get(profile.id, Vector2.ZERO).x,
 					"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
@@ -322,9 +331,9 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 		"base_speed": profile.base_speed,
 		"vision_type": profile.vision_type,
 		"darkvision_range": profile.darkvision_range,
-			"vision_radius_px": _profile_vision_radius_px(profile, _map()),
+		"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 		"perception_mod": profile.perception_mod,
-		"is_dashing": bool(profile.extras.get("is_dashing", false)),
+		"is_dashing": dashing,
 		"vision_scale": _vision_scale_for_profile(profile),
 		"indicator_color": profile.indicator_color.to_html(false),
 		"position": {
@@ -339,8 +348,9 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float:
 	var px_per_5ft := _pixels_per_5ft(map)
 	var speed := (maxf(profile.base_speed, 5.0) / 5.0) * px_per_5ft
-	if bool(profile.extras.get("is_dashing", false)):
-		speed *= 1.5
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.input != null and registry.input.is_dashing(profile.id):
+		speed *= 2.0
 	return speed
 
 
@@ -357,10 +367,8 @@ func _pixels_per_5ft(map: MapData) -> float:
 	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
 
 
-func _vision_scale_for_profile(profile: PlayerProfile) -> float:
-	var dash := bool(profile.extras.get("is_dashing", false))
-	var scale := 0.5 if dash else 1.0
-	return clampf(scale, 0.1, 4.0)
+func _vision_scale_for_profile(_profile: PlayerProfile) -> float:
+	return 1.0
 
 
 func _token_diameter_px_for_map(map: MapData) -> float:

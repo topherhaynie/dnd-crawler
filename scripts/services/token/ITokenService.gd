@@ -80,3 +80,22 @@ func get_token_by_id(_id: String) -> TokenData:
 func check_perception_proximity(_player_positions: Array, _player_perceptions: Array) -> Array:
 	push_error("ITokenService.check_perception_proximity: not implemented")
 	return []
+
+
+## Returns player_ids of players within any autopause token's trigger_radius_px.
+func check_autopause_proximity(_positions: Array, _player_ids: Array) -> Array:
+	push_error("ITokenService.check_autopause_proximity: not implemented")
+	return []
+
+
+## Returns token IDs of pause_on_interact tokens within trigger_radius_px of pos.
+func check_interact_proximity(_pos: Vector2) -> Array:
+	push_error("ITokenService.check_interact_proximity: not implemented")
+	return []
+
+
+## Returns token IDs where a player is within trigger_radius_px but
+## passive perception < perception_dc (sensed but not identified).
+func check_detection_proximity(_positions: Array, _player_ids: Array, _perceptions: Array) -> Array:
+	push_error("ITokenService.check_detection_proximity: not implemented")
+	return []

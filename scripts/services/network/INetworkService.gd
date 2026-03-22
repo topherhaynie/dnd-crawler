@@ -56,3 +56,11 @@ func displays_under_backpressure() -> bool:
 func is_display_peer_connected(_peer_id: int) -> bool:
 	push_error("INetworkService.is_display_peer_connected: not implemented")
 	return false
+
+func get_display_peer_ids() -> Array:
+	push_error("INetworkService.get_display_peer_ids: not implemented")
+	return []
+
+func get_peer_role(_peer_id: int) -> String:
+	push_error("INetworkService.get_peer_role: not implemented")
+	return ""

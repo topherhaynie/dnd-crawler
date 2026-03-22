@@ -47,10 +47,23 @@ var perception_dc: int = -1
 var autopause: bool = false
 ## Pause the session when a player interacts with (clicks) this token.
 var pause_on_interact: bool = false
+## When true, meeting the perception DC auto-reveals this token to players.
+## When false, meeting the DC only produces a detection indicator ("!").
+var auto_reveal: bool = false
 ## When false, wall polygons overlapping this token's bounding rect are
 ## excluded from LOS/fog occluder construction. Only meaningful for DOOR
 ## and SECRET_PASSAGE categories. Defaults true so existing maps are unaffected.
 var blocks_los: bool = true
+## World-space radius (in pixels) for proximity triggers: autopause,
+## pause-on-interact, and perception auto-reveal. Authored in feet via the
+## token editor and converted to pixels on save using calibrated cell_px.
+var trigger_radius_px: float = 96.0
+## Maximum number of times an autopause trigger fires for this token.
+## 0 = unlimited. Decremented at runtime by TokenService.
+var autopause_max_triggers: int = 0
+## Runtime-only autopause trigger count. NOT serialised.
+@warning_ignore("unused_private_class_variable")
+var _trigger_count: int = 0
 
 # --- Notes ----------------------------------------------------------------
 ## Free-form DM notes attached to this token.
@@ -111,6 +124,7 @@ func to_dict() -> Dictionary:
 		"perception_dc": perception_dc,
 		"autopause": autopause,
 		"pause_on_interact": pause_on_interact,
+		"auto_reveal": auto_reveal,
 		"notes": notes,
 		"width_px": width_px,
 		"height_px": height_px,
@@ -118,6 +132,8 @@ func to_dict() -> Dictionary:
 		"icon_key": icon_key,
 		"token_shape": token_shape,
 		"blocks_los": blocks_los,
+		"trigger_radius_px": trigger_radius_px,
+		"autopause_max_triggers": autopause_max_triggers,
 		"passage_paths": _serialize_passage_paths(),
 		"passage_width_px": passage_width_px,
 	}
@@ -136,6 +152,7 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.perception_dc = int(d.get("perception_dc", -1))
 	t.autopause = bool(d.get("autopause", false))
 	t.pause_on_interact = bool(d.get("pause_on_interact", false))
+	t.auto_reveal = bool(d.get("auto_reveal", false))
 	t.notes = str(d.get("notes", ""))
 	var _compat_diam: float = float(d.get("diameter_px", 48.0))
 	t.width_px = float(d.get("width_px", _compat_diam))
@@ -144,6 +161,8 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.icon_key = str(d.get("icon_key", ""))
 	t.token_shape = int(d.get("token_shape", TokenShape.ELLIPSE))
 	t.blocks_los = bool(d.get("blocks_los", true))
+	t.trigger_radius_px = float(d.get("trigger_radius_px", 96.0))
+	t.autopause_max_triggers = int(d.get("autopause_max_triggers", 0))
 	t.passage_width_px = float(d.get("passage_width_px", 48.0))
 	t.passage_paths = _deserialize_passage_paths(d)
 	return t

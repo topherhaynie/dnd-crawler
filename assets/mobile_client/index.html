@@ -139,6 +139,35 @@
             color: var(--muted);
             font-size: 13px;
         }
+
+        .action-row {
+            display: flex;
+            gap: 10px;
+            padding: 0 4px;
+        }
+
+        .action-btn {
+            flex: 1;
+            border: 2px solid rgba(255, 255, 255, 0.16);
+            border-radius: 12px;
+            background: var(--panel-2);
+            color: var(--text);
+            font-weight: 700;
+            font-size: 17px;
+            padding: 16px 0;
+            text-align: center;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        .action-btn:active {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .action-btn.active {
+            background: var(--accent);
+            color: #201600;
+            border-color: var(--accent);
+        }
     </style>
 </head>
 
@@ -166,6 +195,11 @@
         </div>
     </section>
 
+    <section class="action-row">
+        <button id="dashBtn" class="action-btn" type="button">Dash</button>
+        <button id="interactBtn" class="action-btn" type="button">Interact</button>
+    </section>
+
     <section class="telemetry card">
         <div>x: <span id="xVal">0.00</span></div>
         <div>y: <span id="yVal">0.00</span></div>
@@ -182,6 +216,8 @@
         const knobEl = document.getElementById("knob");
         const xValEl = document.getElementById("xVal");
         const yValEl = document.getElementById("yVal");
+        const dashBtn = document.getElementById("dashBtn");
+        const interactBtn = document.getElementById("interactBtn");
 
         let ws = null;
         let sending = false;
@@ -190,6 +226,16 @@
         let activePointerId = null;
         let vectorX = 0;
         let vectorY = 0;
+        let isDashing = false;
+
+        function sendAction(action) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const pid = playerIdEl.value.trim();
+                if (pid) {
+                    ws.send(JSON.stringify({ type: "player_action", player_id: pid, action: action }));
+                }
+            }
+        }
 
         function setStatus(text, cls = "") {
             statusEl.textContent = text;
@@ -326,6 +372,32 @@
         }
 
         connectBtn.addEventListener("click", connect);
+
+        dashBtn.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            if (!isDashing) {
+                isDashing = true;
+                dashBtn.classList.add("active");
+                sendAction("dash_start");
+            }
+        });
+
+        const endDash = (e) => {
+            e.preventDefault();
+            if (isDashing) {
+                isDashing = false;
+                dashBtn.classList.remove("active");
+                sendAction("dash_end");
+            }
+        };
+        dashBtn.addEventListener("pointerup", endDash);
+        dashBtn.addEventListener("pointercancel", endDash);
+        dashBtn.addEventListener("pointerleave", endDash);
+
+        interactBtn.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            sendAction("interact");
+        });
 
         window.addEventListener("beforeunload", () => {
             stopSendLoop();

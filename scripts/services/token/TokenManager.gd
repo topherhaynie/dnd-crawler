@@ -65,6 +65,24 @@ func check_perception_proximity(player_positions: Array, player_perceptions: Arr
 	return service.check_perception_proximity(player_positions, player_perceptions)
 
 
+func check_autopause_proximity(positions: Array, player_ids: Array) -> Array:
+	if service == null:
+		return []
+	return service.check_autopause_proximity(positions, player_ids)
+
+
+func check_interact_proximity(pos: Vector2) -> Array:
+	if service == null:
+		return []
+	return service.check_interact_proximity(pos)
+
+
+func check_detection_proximity(positions: Array, player_ids: Array, perceptions: Array) -> Array:
+	if service == null:
+		return []
+	return service.check_detection_proximity(positions, player_ids, perceptions)
+
+
 func load_tokens(dicts: Array) -> void:
 	if service == null:
 		return

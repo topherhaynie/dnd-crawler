@@ -111,15 +111,16 @@ func get_token_by_id(id: String) -> TokenData:
 ## Returns Array of token IDs that were newly revealed.
 func check_perception_proximity(
 		player_positions: Array, player_perceptions: Array) -> Array:
-	const PERCEPTION_RANGE_PX: float = 192.0
 	var newly_revealed: Array = []
 	for raw in _tokens.values():
 		var data: TokenData = raw as TokenData
 		if data == null or data.is_visible_to_players or data.perception_dc < 0:
 			continue
+		if not data.auto_reveal:
+			continue
 		for i in range(player_positions.size()):
 			var pp: Vector2 = player_positions[i] as Vector2
-			if data.world_pos.distance_to(pp) > PERCEPTION_RANGE_PX:
+			if data.world_pos.distance_to(pp) > data.trigger_radius_px:
 				continue
 			var mod: int = 0
 			if i < player_perceptions.size():
@@ -131,3 +132,71 @@ func check_perception_proximity(
 				newly_revealed.append(data.id)
 				break
 	return newly_revealed
+
+
+# ---------------------------------------------------------------------------
+# Autopause proximity
+# ---------------------------------------------------------------------------
+
+func check_autopause_proximity(positions: Array, player_ids: Array) -> Array:
+	var triggered: Array = []
+	for raw in _tokens.values():
+		var data: TokenData = raw as TokenData
+		if data == null or not data.autopause:
+			continue
+		if data.autopause_max_triggers > 0 and data._trigger_count >= data.autopause_max_triggers:
+			continue
+		for i in range(positions.size()):
+			var pp: Vector2 = positions[i] as Vector2
+			if data.world_pos.distance_to(pp) > data.trigger_radius_px:
+				continue
+			var pid: String = str(player_ids[i]) if i < player_ids.size() else ""
+			if pid.is_empty() or triggered.has(pid):
+				continue
+			triggered.append(pid)
+			data._trigger_count += 1
+			if data.autopause_max_triggers > 0 and data._trigger_count >= data.autopause_max_triggers:
+				break
+	return triggered
+
+
+# ---------------------------------------------------------------------------
+# Interact proximity
+# ---------------------------------------------------------------------------
+
+func check_interact_proximity(pos: Vector2) -> Array:
+	var result: Array = []
+	for raw in _tokens.values():
+		var data: TokenData = raw as TokenData
+		if data == null or not data.pause_on_interact:
+			continue
+		if data.world_pos.distance_to(pos) <= data.trigger_radius_px:
+			result.append(data.id)
+	return result
+
+
+# ---------------------------------------------------------------------------
+# Detection proximity
+# ---------------------------------------------------------------------------
+
+func check_detection_proximity(positions: Array, _player_ids: Array, perceptions: Array) -> Array:
+	var detected_ids: Array = []
+	for raw in _tokens.values():
+		var data: TokenData = raw as TokenData
+		if data == null or data.is_visible_to_players or data.perception_dc < 0:
+			continue
+		for i in range(positions.size()):
+			var pp: Vector2 = positions[i] as Vector2
+			if data.world_pos.distance_to(pp) > data.trigger_radius_px:
+				continue
+			var mod: int = 0
+			if i < perceptions.size():
+				mod = int(perceptions[i])
+			# Player is in range — show detection indicator if not auto-revealed.
+			# Tokens with auto_reveal=true that meet DC are revealed (not detected);
+			# all others in range get the "!" indicator.
+			if not detected_ids.has(data.id):
+				if data.auto_reveal and mod >= data.perception_dc:
+					break # will be auto-revealed, skip detection
+				detected_ids.append(data.id)
+	return detected_ids
