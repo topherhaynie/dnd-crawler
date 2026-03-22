@@ -37,8 +37,8 @@ func _ready() -> void:
 
 func _map() -> MapData:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry != null and registry.map != null and registry.map.service != null:
-		var m: MapData = registry.map.service.get_map() as MapData
+	if registry != null and registry.map != null:
+		var m: MapData = registry.map.get_map()
 		if m != null:
 			return m
 	if _map_view != null:
@@ -268,9 +268,9 @@ func _apply_cached_fog_stamp() -> void:
 	if _map_view == null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.fog == null or registry.fog.service == null:
+	if registry == null or registry.fog == null:
 		return
-	var cached := registry.fog.service.get_fog_state()
+	var cached := registry.fog.get_fog_state()
 	if cached.is_empty():
 		return
 	_map_view.apply_fog_snapshot(cached)

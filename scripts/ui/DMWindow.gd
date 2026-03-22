@@ -1115,7 +1115,7 @@ func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 		fog_state_png = await _map_view.get_fog_state()
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if not fog_state_png.is_empty() and registry != null and registry.fog != null:
-		registry.fog.service.set_fog_state(fog_state_png)
+		registry.fog.apply_snapshot(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
 	if DEBUG_FOG_SNAPSHOT:
 		print("DMWindow: fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [
@@ -2600,11 +2600,11 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	var id: String = str(token_id)
 	# Persist the new position and refresh door/passthrough state.
 	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry_drag != null and registry_drag.token != null and registry_drag.token.service != null:
-		var data: TokenData = registry_drag.token.service.get_token_by_id(id)
+	if registry_drag != null and registry_drag.token != null:
+		var data: TokenData = registry_drag.token.get_token_by_id(id)
 		if data != null:
 			data.world_pos = new_world_pos
-			registry_drag.token.service.update_token(data)
+			registry_drag.token.update_token(data)
 			if _map_view != null:
 				_map_view.apply_token_passthrough_state(data)
 	# Broadcast updated token position to player displays.
@@ -2618,14 +2618,14 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:
 	_player_state_dirty = true
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var data: TokenData = registry.token.service.get_token_by_id(token_id)
+	var data: TokenData = registry.token.get_token_by_id(token_id)
 	if data == null:
 		return
 	data.width_px = new_width_px
 	data.height_px = new_height_px
-	registry.token.service.update_token(data)
+	registry.token.update_token(data)
 	if _map_view != null:
 		_map_view.apply_token_passthrough_state(data)
 	_broadcast_token_change(data, false)
@@ -2634,13 +2634,13 @@ func _on_token_resize_completed(token_id: String, new_width_px: float, new_heigh
 func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void:
 	_player_state_dirty = true
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var data: TokenData = registry.token.service.get_token_by_id(token_id)
+	var data: TokenData = registry.token.get_token_by_id(token_id)
 	if data == null:
 		return
 	data.rotation_deg = rotation_deg
-	registry.token.service.update_token(data)
+	registry.token.update_token(data)
 	_broadcast_token_change(data, false)
 
 
@@ -2667,7 +2667,7 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 	_token_context_menu.add_item("Toggle Visibility", 1)
 	# Show door open/close toggle for DOOR and SECRET_PASSAGE categories.
 	var registry_cm := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	var td: TokenData = registry_cm.token.service.get_token_by_id(id) if (registry_cm != null and registry_cm.token != null and registry_cm.token.service != null) else null
+	var td: TokenData = registry_cm.token.get_token_by_id(id) if (registry_cm != null and registry_cm.token != null) else null
 	if td != null and (td.category == TokenData.TokenCategory.DOOR or td.category == TokenData.TokenCategory.SECRET_PASSAGE):
 		_token_context_menu.add_separator()
 		var toggle_label: String
@@ -2683,29 +2683,29 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 
 func _on_token_context_menu_id(id: int) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var svc: ITokenService = registry.token.service
+	var tm: TokenManager = registry.token
 	match id:
 		0: # Edit
-			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
 				_open_token_editor(data)
 		1: # Toggle visibility
-			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
-				svc.set_token_visibility(_token_context_id, not data.is_visible_to_players)
+				tm.set_token_visibility(_token_context_id, not data.is_visible_to_players)
 				_on_token_visibility_changed(_token_context_id, data.is_visible_to_players)
 		2: # Delete
-			svc.remove_token(_token_context_id)
+			tm.remove_token(_token_context_id)
 			if _map_view != null:
 				_map_view.remove_token_sprite(_token_context_id)
 			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id})
 		3: # Toggle open/closed (DOOR / SECRET_PASSAGE)
-			var data: TokenData = svc.get_token_by_id(_token_context_id)
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
 				data.blocks_los = not data.blocks_los
-				svc.update_token(data)
+				tm.update_token(data)
 				if _map_view != null:
 					_map_view.apply_token_passthrough_state(data)
 				_broadcast_token_change(data, false)
@@ -2748,8 +2748,7 @@ func _open_token_editor(data: TokenData) -> void:
 		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		var is_new := (registry == null
 				or registry.token == null
-				or registry.token.service == null
-				or registry.token.service.get_token_by_id(data.id) == null)
+				or registry.token.get_token_by_id(data.id) == null)
 		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
 		## Store the new-token world_pos in meta so confirm can read it.
 		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
@@ -2947,11 +2946,11 @@ func _on_token_editor_confirmed() -> void:
 	var blos_val: bool = _token_blocks_los_check.button_pressed if _token_blocks_los_check != null else true
 
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var svc: ITokenService = registry.token.service
+	var tm: TokenManager = registry.token
 
-	var existing: TokenData = svc.get_token_by_id(_token_editor_id)
+	var existing: TokenData = tm.get_token_by_id(_token_editor_id)
 	var data: TokenData
 	if existing != null:
 		data = existing
@@ -2975,11 +2974,11 @@ func _on_token_editor_confirmed() -> void:
 	data.blocks_los = blos_val
 
 	if existing != null:
-		svc.update_token(data)
+		tm.update_token(data)
 		if _map_view != null:
 			_map_view.update_token_sprite(data)
 	else:
-		svc.add_token(data)
+		tm.add_token(data)
 		if _map_view != null:
 			_map_view.add_token_sprite(data, true)
 
@@ -2993,9 +2992,9 @@ func _on_token_editor_confirmed() -> void:
 func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
 	## Refresh sprite and broadcast.
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var data: TokenData = registry.token.service.get_token_by_id(id)
+	var data: TokenData = registry.token.get_token_by_id(id)
 	if data == null:
 		return
 	if _map_view != null:
@@ -3021,9 +3020,9 @@ func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 ## or after a map load that includes pre-existing tokens).
 func _broadcast_token_state() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	var visible: Array = registry.token.service.get_visible_tokens()
+	var visible: Array = registry.token.get_visible_tokens()
 	var dicts: Array = []
 	for raw in visible:
 		var td: TokenData = raw as TokenData
@@ -3037,7 +3036,7 @@ func _broadcast_token_state() -> void:
 ## _PERCEPTION_CHECK_INTERVAL seconds from _process.
 func _run_perception_check() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
 	# Gather player positions from live DM token nodes (same source MapView uses).
 	var positions: Array = []
@@ -3051,15 +3050,14 @@ func _run_perception_check() -> void:
 			positions.append(node.global_position)
 			# Look up passive perception from the profile service.
 			var pp: int = 10 ## default if profile not found
-			if registry.profile != null and registry.profile.service != null:
-				var prof: Variant = registry.profile.service.get_profile_by_id(str(pid))
+			if registry.profile != null:
+				var prof: Variant = registry.profile.get_profile_by_id(str(pid))
 				if prof is PlayerProfile:
 					pp = (prof as PlayerProfile).get_passive_perception()
 			perceptions.append(pp)
 	if positions.is_empty():
 		return
-	var svc: ITokenService = registry.token.service
-	var newly_revealed: Array = svc.check_perception_proximity(positions, perceptions)
+	var newly_revealed: Array = registry.token.check_perception_proximity(positions, perceptions)
 	for id in newly_revealed:
 		_on_token_visibility_changed(str(id), true)
 
@@ -3090,10 +3088,10 @@ func _on_profiles_export_path_selected(path: String) -> void:
 			return
 	# Use Persistence service for direct export when available.
 	var export_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if export_reg != null and export_reg.persistence != null and export_reg.persistence.service != null:
+	if export_reg != null and export_reg.persistence != null:
 		var payload := {"profiles": _profiles_to_array()}
-		if export_reg.persistence.service.save_game("profiles_export", payload) and export_reg.persistence.service.export_to_path("profiles_export", target_path):
-			export_reg.persistence.service.delete_save("profiles_export")
+		if export_reg.persistence.save_game("profiles_export", payload) and export_reg.persistence.export_to_path("profiles_export", target_path):
+			export_reg.persistence.delete_save("profiles_export")
 			_set_status("Exported %d profiles." % payload["profiles"].size())
 			return
 	# Fallback: write directly to the chosen path
@@ -3112,9 +3110,9 @@ func _on_profiles_import_path_selected(path: String) -> void:
 	var parsed: Variant = null
 	# If the selected path is under user:// and Persistence is available prefer it
 	var import_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if path.begins_with("user://") and import_reg != null and import_reg.persistence != null and import_reg.persistence.service != null:
+	if path.begins_with("user://") and import_reg != null and import_reg.persistence != null:
 		var save_name := path.get_file().get_basename()
-		var loaded: Dictionary = import_reg.persistence.service.load_game(save_name)
+		var loaded: Dictionary = import_reg.persistence.load_game(save_name)
 		if loaded.has("profiles"):
 			parsed = loaded["profiles"]
 		elif not loaded.is_empty():
@@ -3203,8 +3201,8 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 
 	var copy_err := _copy_file(src_path, img_dest_abs)
 	var new_map_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if new_map_reg != null and new_map_reg.persistence != null and new_map_reg.persistence.service != null:
-		copy_err = new_map_reg.persistence.service.copy_file(src_path, img_dest_abs) as Error
+	if new_map_reg != null and new_map_reg.persistence != null:
+		copy_err = new_map_reg.persistence.copy_file(src_path, img_dest_abs) as Error
 	if copy_err != OK:
 		push_error("DMWindow: failed to copy image to '%s' (err %d)" % [img_dest_abs, copy_err])
 		_set_status("Error: could not copy image.")
@@ -3357,9 +3355,9 @@ func _save_game_to_bundle(save_name: String) -> void:
 			_active_save_bundle_path = _saves_dir_abs().path_join(save_name + ".sav")
 			# Flush current token state into the EMBEDDED map.json inside the
 			# .sav bundle (not the original .map).
-			if ms != null and ms.service != null:
+			if ms != null:
 				var embedded_map_path: String = _active_save_bundle_path.path_join("map.map")
-				ms.service.save_map_to_bundle(embedded_map_path)
+				ms.save_to_bundle(embedded_map_path)
 			_set_status("Game saved: %s" % save_name)
 		else:
 			_set_status("Error: failed to save game.")
@@ -3426,12 +3424,11 @@ func _on_load_game_path_selected(path: String) -> void:
 				var ts: Variant = state_val.token_states
 				if ts is Dictionary and not (ts as Dictionary).is_empty():
 					var tok_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-					if tok_reg != null and tok_reg.token != null and tok_reg.token.service != null:
-						var tok_svc: ITokenService = tok_reg.token.service
+					if tok_reg != null and tok_reg.token != null:
 						for tid_var in (ts as Dictionary).keys():
 							var tstate: Variant = (ts as Dictionary)[tid_var]
 							if tstate is Dictionary:
-								tok_svc.set_token_visibility(
+								tok_reg.token.set_token_visibility(
 										str(tid_var),
 										bool((tstate as Dictionary).get("is_visible_to_players", false)))
 			# Resolve the active map bundle path for future Save Map writes.
@@ -3496,8 +3493,8 @@ func _save_map_as_path(bundle_path: String) -> void:
 	if new_img_abs != map.image_path:
 		var copy_err := _copy_file(map.image_path, new_img_abs)
 		var save_as_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-		if save_as_reg != null and save_as_reg.persistence != null and save_as_reg.persistence.service != null:
-			copy_err = save_as_reg.persistence.service.copy_file(map.image_path, new_img_abs) as Error
+		if save_as_reg != null and save_as_reg.persistence != null:
+			copy_err = save_as_reg.persistence.copy_file(map.image_path, new_img_abs) as Error
 		if copy_err != OK:
 			push_error("DMWindow: failed to copy image for save-as (err %d)" % copy_err)
 			_set_status("Error: could not duplicate image.")
@@ -3538,8 +3535,8 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	# player sprites into the same layer without being clobbered.
 	if _map_view != null:
 		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-		if reg != null and reg.token != null and reg.token.service != null:
-			var all_tokens: Array = reg.token.service.get_all_tokens()
+		if reg != null and reg.token != null:
+			var all_tokens: Array = reg.token.get_all_tokens()
 			var dicts: Array = []
 			for raw in all_tokens:
 				var td: TokenData = raw as TokenData

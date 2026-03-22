@@ -118,6 +118,18 @@ func hide_rect(a: Vector2, b: Vector2) -> void:
 	fog_stroke_applied.emit({"type": "rect", "a": a, "b": b, "reveal": false})
 
 
+func get_fog_state() -> PackedByteArray:
+	if service == null:
+		return PackedByteArray()
+	return service.get_fog_state()
+
+
+func get_fog_state_size() -> Vector2i:
+	if service == null:
+		return Vector2i.ZERO
+	return service.get_fog_state_size()
+
+
 func apply_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_px: int) -> void:
 	if model == null or model.history_image == null or service == null:
 		return

@@ -415,9 +415,9 @@ func sync_player_revealers(tokens: Array) -> void:
 		return
 	var seen_ids: Dictionary = {}
 	for raw_token in tokens:
-		if not raw_token is Node2D:
+		if not raw_token is PlayerSprite:
 			continue
-		var token := raw_token as Node2D
+		var token := raw_token as PlayerSprite
 		if not is_instance_valid(token):
 			continue
 
@@ -449,7 +449,7 @@ func _sync_or_create_vision_light(token_id: int) -> PointLight2D:
 	return light
 
 
-func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: Node2D) -> void:
+func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: PlayerSprite) -> void:
 	if src != null:
 		if light.texture != src.texture:
 			light.texture = src.texture
@@ -484,9 +484,7 @@ func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: Node
 	if light.texture == null:
 		light.texture = _get_or_create_radial_texture()
 
-	var reveal_world := token.global_position
-	if token.has_method("get_fog_reveal_position"):
-		reveal_world = token.call("get_fog_reveal_position") as Vector2
+	var reveal_world := token.get_fog_reveal_position()
 	# Map world position into fog-texture space.
 	var reveal_local: Vector2
 	if _viewport_local and _fog_world_rect.size.x > 0:
@@ -514,6 +512,16 @@ func _remove_stale_lights(seen_ids: Dictionary) -> void:
 
 
 # === Wall / Occluder Management ===
+
+
+# === DM Reveal Sources ===
+
+func set_dm_reveals(_sources: Array) -> void:
+	# Placeholder for DM-placed static reveal sources (from map.dm_reveal_objects).
+	# Each element is a {position: Vector2, radius: float} dict.
+	# Currently unused by the GPU pipeline; provided so typed call sites
+	# can invoke this without a has_method guard.
+	pass
 
 
 # === Wall / Occluder Management ===

@@ -71,6 +71,24 @@ class_name FogManager
 var service: IFogService = null
 ```
 
+## View / ViewModel Access Rule
+
+**Views** (scenes, windows, UI scripts such as `DMWindow.gd`, `PlayerWindow.gd`) and **view-models** must only call **manager** methods. They must never reach through to the underlying service directly.
+
+```gdscript
+# Correct — view calls the manager
+registry.fog.set_fog_enabled(true)
+
+# Wrong — view bypasses the manager and calls the service directly
+registry.fog.service.set_fog_enabled(true)
+```
+
+**Why:** The manager is the public API boundary for a subsystem. It is the appropriate place to add cross-cutting logic (validation, logging, state coordination). Bypassing it from the view layer breaks that boundary and creates hidden coupling.
+
+**Corollary:** Every capability that a view needs must be exposed as a method on the manager, not accessed via `manager.service`. If the manager is missing a method, add it there — do not work around the gap by reaching into `manager.service` from a view.
+
+**Corollary:** All core service functionality must be bound by its protocol (`IXxxService`). No method should exist on a concrete service without a corresponding stub in the protocol. This ensures managers can always depend on typed, protocol-guaranteed APIs rather than concrete implementations.
+
 ## ServiceRegistry
 
 `scripts/core/ServiceRegistry.gd` — a `Node` added to the scene root. Has typed manager properties for every subsystem:

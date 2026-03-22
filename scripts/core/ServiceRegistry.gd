@@ -4,7 +4,7 @@ class_name ServiceRegistry
 ## Service locator with typed manager properties.
 ##
 ## Access services via typed manager properties:
-##   get_node("/root/ServiceRegistry").fog.service.get_fog_state()
+##   get_node("/root/ServiceRegistry").fog.get_fog_state()
 ##
 ## Swap implementations at runtime:
 ##   registry.fog.service = DebugFogService.new()

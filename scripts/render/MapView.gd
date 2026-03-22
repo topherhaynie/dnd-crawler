@@ -252,8 +252,8 @@ func load_map(map: MapData) -> void:
 	_passthrough_rects.clear()
 	_door_wall_rects.clear()
 	var _preg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if _preg != null and _preg.token != null and _preg.token.service != null:
-		for raw_tok in _preg.token.service.get_all_tokens():
+	if _preg != null and _preg.token != null:
+		for raw_tok in _preg.token.get_all_tokens():
 			var td: TokenData = raw_tok as TokenData
 			if td == null:
 				continue
@@ -277,7 +277,7 @@ func load_map(map: MapData) -> void:
 			# exposing the full map on the player side before the DM snapshot arrives.
 			if not _fog_hidden_cells.is_empty():
 				_reg.fog.seed_from_hidden(maxi(1, map.fog_cell_px), _fog_hidden_cells)
-	if fog_overlay and fog_overlay.has_method("set_dm_reveals"):
+	if fog_overlay != null:
 		fog_overlay.set_dm_reveals(_build_dm_reveal_sources(map))
 
 	# Restore saved view, or default to showing the map top-left at the
@@ -624,10 +624,10 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 			continue
 		var rx: float = 24.0
 		var ry: float = 24.0
-		if node.has_method("get_token_width_px"):
-			rx = maxf(node.get_token_width_px() * 0.5, 16.0)
-		if node.has_method("get_token_height_px"):
-			ry = maxf(node.get_token_height_px() * 0.5, 16.0)
+		var ts := node as TokenSprite
+		if ts != null:
+			rx = maxf(ts.get_token_width_px() * 0.5, 16.0)
+			ry = maxf(ts.get_token_height_px() * 0.5, 16.0)
 		var local_pos: Vector2 = node.to_local(world_pos)
 		var ellipse_val: float = (local_pos.x / rx) * (local_pos.x / rx) + (local_pos.y / ry) * (local_pos.y / ry)
 		if ellipse_val <= 1.0:
@@ -669,10 +669,10 @@ func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
 			continue
 		var rx: float = 24.0
 		var ry: float = 24.0
-		if node.has_method("get_token_width_px"):
-			rx = node.get_token_width_px() * 0.5
-		if node.has_method("get_token_height_px"):
-			ry = node.get_token_height_px() * 0.5
+		var ts := node as TokenSprite
+		if ts != null:
+			rx = ts.get_token_width_px() * 0.5
+			ry = ts.get_token_height_px() * 0.5
 		var local_pos: Vector2 = node.to_local(world_pos)
 		# Rotation handle (above top bounding edge).
 		if local_pos.distance_to(Vector2(0.0, -ry - ROT_HANDLE_DIST_PX)) <= HANDLE_HIT_RADIUS_PX:
@@ -719,9 +719,9 @@ func _update_cursor(world_pos: Vector2) -> void:
 				_clear_token_hover()
 				_hovered_token_id = new_hover
 				if new_hover != null:
-					var hover_node: Node2D = _draggable_tokens.get(new_hover, null) as Node2D
-					if hover_node != null and is_instance_valid(hover_node) and hover_node.has_method("set_show_handles"):
-						hover_node.set_show_handles(true)
+					var hover_ts := _draggable_tokens.get(new_hover, null) as TokenSprite
+					if hover_ts != null and is_instance_valid(hover_ts):
+						hover_ts.set_show_handles(true)
 	if shape != _current_cursor_shape:
 		_current_cursor_shape = shape
 		DisplayServer.cursor_set_shape(shape)
@@ -768,9 +768,9 @@ func _cancel_token_resize() -> void:
 
 func _clear_token_hover() -> void:
 	if _hovered_token_id != null:
-		var old_node: Node2D = _draggable_tokens.get(_hovered_token_id, null) as Node2D
-		if old_node != null and is_instance_valid(old_node) and old_node.has_method("set_show_handles"):
-			old_node.set_show_handles(false)
+		var old_ts := _draggable_tokens.get(_hovered_token_id, null) as TokenSprite
+		if old_ts != null and is_instance_valid(old_ts):
+			old_ts.set_show_handles(false)
 		_hovered_token_id = null
 
 
@@ -780,9 +780,9 @@ func _on_token_drag_completed(tid: Variant, new_world_pos: Vector2) -> void:
 		return
 	var id: String = str(tid)
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.token == null or registry.token.service == null:
+	if registry == null or registry.token == null:
 		return
-	registry.token.service.move_token(id, new_world_pos)
+	registry.token.move_token(id, new_world_pos)
 
 
 func _ready() -> void:
@@ -1001,10 +1001,10 @@ func _unhandled_input(event: InputEvent) -> void:
 									_resize_token_handle_idx = hdl
 									_resize_start_width = 48.0
 									_resize_start_height = 48.0
-									if handle_node.has_method("get_token_width_px"):
-										_resize_start_width = handle_node.get_token_width_px()
-									if handle_node.has_method("get_token_height_px"):
-										_resize_start_height = handle_node.get_token_height_px()
+									var handle_ts := handle_node as TokenSprite
+									if handle_ts != null:
+										_resize_start_width = handle_ts.get_token_width_px()
+										_resize_start_height = handle_ts.get_token_height_px()
 									_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
 								_update_cursor(world_pos)
 								get_viewport().set_input_as_handled()
@@ -1053,11 +1053,10 @@ func _unhandled_input(event: InputEvent) -> void:
 					elif _resizing_token_id != null:
 						var final_w: float = _resize_start_width
 						var final_h: float = _resize_start_height
-						if _resize_token_node != null:
-							if _resize_token_node.has_method("get_token_width_px"):
-								final_w = _resize_token_node.get_token_width_px()
-							if _resize_token_node.has_method("get_token_height_px"):
-								final_h = _resize_token_node.get_token_height_px()
+						var resize_ts := _resize_token_node as TokenSprite
+						if resize_ts != null:
+							final_w = resize_ts.get_token_width_px()
+							final_h = resize_ts.get_token_height_px()
 						token_resize_completed.emit(str(_resizing_token_id), final_w, final_h)
 						_resizing_token_id = null
 						_resize_token_node = null
@@ -1122,8 +1121,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					new_h = clampf(absf(local_mouse.y) * 2.0, 24.0, MAX_SZ)
 				3, 7:
 					new_w = clampf(absf(local_mouse.x) * 2.0, 24.0, MAX_SZ)
-			if _resize_token_node.has_method("set_size_px"):
-				_resize_token_node.set_size_px(new_w, new_h)
+			var resize_ts := _resize_token_node as TokenSprite
+			if resize_ts != null:
+				resize_ts.set_size_px(new_w, new_h)
 			_update_cursor(motion_world_pos)
 			get_viewport().set_input_as_handled()
 			return
@@ -1182,7 +1182,7 @@ func _process(delta: float) -> void:
 			var screen_size := vp.get_visible_rect().size
 			fog_overlay.update_viewport_rect(camera.position, camera.zoom.x, screen_size, _map_rotation)
 
-	if fog_overlay and fog_overlay.has_method("sync_player_revealers"):
+	if fog_overlay != null:
 		# Only player tokens (PlayerSprite) should act as fog revealers.
 		# DM-placed TokenSprite nodes must never receive a vision light.
 		var revealers: Array = token_layer.get_children().filter(
@@ -1562,9 +1562,9 @@ func _apply_cached_fog_snapshot_if_compatible() -> bool:
 	if _map == null:
 		return false
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.fog == null or registry.fog.service == null:
+	if registry == null or registry.fog == null:
 		return false
-	var stamp_size := registry.fog.service.get_fog_state_size()
+	var stamp_size := registry.fog.get_fog_state_size()
 	if stamp_size == Vector2i.ZERO:
 		return false
 	# The fog model may be at a scaled resolution (FogSystem.MAX_FOG_DIM cap),
@@ -1709,7 +1709,7 @@ func _rebuild_wall_occluders(map: MapData) -> void:
 			wall_visual_layer.add_child(line)
 
 	_refresh_selected_wall_visuals()
-	if fog_overlay and fog_overlay.has_method("set_wall_polygons"):
+	if fog_overlay != null:
 		# Pass clipped polygon fragments to FogSystem.
 		var active_polys: Array = []
 		for poly in map.wall_polygons:
