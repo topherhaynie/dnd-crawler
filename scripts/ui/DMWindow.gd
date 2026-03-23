@@ -68,6 +68,7 @@ var _toolbar: Control = null ## PanelContainer palette — shown/hidden by View 
 var _select_btn: Button = null
 var _pan_btn: Button = null
 var _view_menu: PopupMenu = null ## kept for checkmark management
+var _edit_menu: PopupMenu = null ## kept for undo/redo label updates
 var _fog_tool_option: OptionButton = null
 var _fog_brush_spin: SpinBox = null
 var _fog_visible_check: CheckBox = null
@@ -237,6 +238,13 @@ func _ready() -> void:
 	call_deferred("_ensure_game_state_bindings")
 	# Defer input-action bindings so InputService is registered by bootstrap.
 	call_deferred("_ensure_input_bindings")
+	# Defer history bindings so HistoryService is registered by bootstrap.
+	call_deferred("_ensure_history_bindings")
+	# Release all undo/redo closures when this node is freed to avoid dangling refs.
+	tree_exiting.connect(func():
+		var _r := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _r != null and _r.history != null:
+			_r.history.clear())
 	_apply_ui_scale()
 	print("DMWindow: ready")
 
@@ -271,6 +279,39 @@ func _ensure_input_bindings() -> void:
 	var svc: IInputService = input.service
 	if not svc.is_connected("input_action_pressed", Callable(self , "_on_player_action")):
 		svc.input_action_pressed.connect(_on_player_action)
+
+
+func _ensure_history_bindings() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.history == null or registry.history.service == null:
+		call_deferred("_ensure_history_bindings")
+		return
+	# Signal subscription: IHistoryService extends Node; signals live on the Node
+	# instance. RefCounted manager cannot re-emit them — approved narrow exception.
+	var svc: IHistoryService = registry.history.service
+	if not svc.is_connected("history_changed", Callable(self, "_refresh_history_menu")):
+		svc.history_changed.connect(_refresh_history_menu)
+	_refresh_history_menu()
+
+
+func _refresh_history_menu() -> void:
+	if _edit_menu == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.history == null:
+		return
+	var can_undo := registry.history.can_undo()
+	var can_redo := registry.history.can_redo()
+	var undo_idx := _edit_menu.get_item_index(14)
+	var redo_idx := _edit_menu.get_item_index(15)
+	if undo_idx >= 0:
+		_edit_menu.set_item_disabled(undo_idx, not can_undo)
+		var undo_desc := registry.history.get_undo_description()
+		_edit_menu.set_item_text(undo_idx, "Undo" if undo_desc.is_empty() else "Undo: %s" % undo_desc)
+	if redo_idx >= 0:
+		_edit_menu.set_item_disabled(redo_idx, not can_redo)
+		var redo_desc := registry.history.get_redo_description()
+		_edit_menu.set_item_text(redo_idx, "Redo" if redo_desc.is_empty() else "Redo: %s" % redo_desc)
 
 
 func _network() -> NetworkManager:
@@ -419,6 +460,31 @@ func _notification(what: int) -> void:
 		call_deferred("_apply_ui_scale")
 
 
+func _shortcut_input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if not key_event.is_command_or_control_pressed():
+		return
+	if key_event.keycode == KEY_Z:
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry == null or registry.history == null:
+			return
+		if key_event.shift_pressed:
+			# Redo
+			var desc := registry.history.get_redo_description()
+			if registry.history.redo():
+				_set_status("Redo: %s" % desc)
+		else:
+			# Undo
+			var desc := registry.history.get_undo_description()
+			if registry.history.undo():
+				_set_status("Undo: %s" % desc)
+		get_viewport().set_input_as_handled()
+
+
 func _process(delta: float) -> void:
 	if _player_state_countdown > 0.0:
 		_player_state_countdown = maxf(0.0, _player_state_countdown - delta)
@@ -531,12 +597,19 @@ func _build_ui() -> void:
 	# Edit menu
 	var edit_menu := PopupMenu.new()
 	edit_menu.name = "Edit"
+	edit_menu.add_item("Undo", 14)
+	edit_menu.add_item("Redo", 15)
+	edit_menu.add_separator()
 	edit_menu.add_item("Calibrate Grid…", 10)
 	edit_menu.add_item("Set Scale Manually…", 11)
 	edit_menu.add_item("Set Grid Offset…", 12)
 	edit_menu.add_separator()
 	edit_menu.add_item("Player Profiles…", 13)
 	edit_menu.id_pressed.connect(_on_edit_menu_id)
+	_edit_menu = edit_menu
+	# Undo/Redo start disabled; enabled once commands are pushed.
+	edit_menu.set_item_disabled(edit_menu.get_item_index(14), true)
+	edit_menu.set_item_disabled(edit_menu.get_item_index(15), true)
 	menu_bar.add_child(edit_menu)
 
 	# View menu  (indices matter for set_item_checked)
@@ -1237,11 +1310,24 @@ func _on_display_fullscreen_changed(_peer_id: int, is_fullscreen: bool) -> void:
 
 func _on_viewport_indicator_moved(new_center: Vector2) -> void:
 	## Called when the DM drags the green box on the DM map.
+	var old_pos := _player_cam_pos
 	_player_cam_pos = new_center
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
 	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
 	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
+	if old_pos != new_center:
+		var registry_im := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry_im != null and registry_im.history != null:
+			registry_im.history.push_command(HistoryCommand.create("Player view moved",
+				func():
+					_player_cam_pos = old_pos
+					_update_viewport_indicator()
+					_broadcast_player_viewport(),
+				func():
+					_player_cam_pos = new_center
+					_update_viewport_indicator()
+					_broadcast_player_viewport()))
 
 
 func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
@@ -1249,6 +1335,9 @@ func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
 	## Both paths derive zoom from the new world-space size so the player always
 	## sees the area the indicator shows.  For windowed players the pixel window
 	## size is also updated and a window_resize message is sent.
+	var old_pos := _player_cam_pos
+	var old_zoom := _player_cam_zoom
+	var old_win_size := _player_window_size
 	var world_size := new_rect.size
 	if _player_is_fullscreen:
 		# Lock to player window aspect ratio — the OS window cannot resize.
@@ -1278,6 +1367,38 @@ func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
 	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
 	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
+	# Push undo command capturing before/after state.
+	var new_pos := _player_cam_pos
+	var new_zoom := _player_cam_zoom
+	var new_win_size := _player_window_size
+	var is_fs := _player_is_fullscreen
+	var registry_ir := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_ir != null and registry_ir.history != null:
+		registry_ir.history.push_command(HistoryCommand.create("Player view resized",
+			func():
+				_player_cam_pos = old_pos
+				_player_cam_zoom = old_zoom
+				if not is_fs:
+					_player_window_size = old_win_size
+					_nm_broadcast_to_displays({
+						"msg": "window_resize",
+						"width": int(old_win_size.x),
+						"height": int(old_win_size.y),
+					})
+				_update_viewport_indicator()
+				_broadcast_player_viewport(),
+			func():
+				_player_cam_pos = new_pos
+				_player_cam_zoom = new_zoom
+				if not is_fs:
+					_player_window_size = new_win_size
+					_nm_broadcast_to_displays({
+						"msg": "window_resize",
+						"width": int(new_win_size.x),
+						"height": int(new_win_size.y),
+					})
+				_update_viewport_indicator()
+				_broadcast_player_viewport()))
 
 
 func _lock_to_aspect(size: Vector2, reference: Vector2) -> Vector2:
@@ -1872,6 +1993,18 @@ func _on_file_menu_id(id: int) -> void:
 
 func _on_edit_menu_id(id: int) -> void:
 	match id:
+		14: # Undo
+			var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if registry != null and registry.history != null:
+				var desc := registry.history.get_undo_description()
+				if registry.history.undo():
+					_set_status("Undo: %s" % desc)
+		15: # Redo
+			var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if registry != null and registry.history != null:
+				var desc := registry.history.get_redo_description()
+				if registry.history.redo():
+					_set_status("Redo: %s" % desc)
 		10: _on_calibrate_pressed()
 		11: _on_manual_scale_pressed()
 		12: _on_set_offset_pressed()
@@ -2720,10 +2853,29 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	if registry_drag != null and registry_drag.token != null:
 		data = registry_drag.token.get_token_by_id(id)
 		if data != null:
+			var old_pos := data.world_pos
 			data.world_pos = new_world_pos
 			registry_drag.token.update_token(data)
 			if _map_view != null:
 				_map_view.apply_token_passthrough_state(data)
+			# Push undo command capturing before/after world positions.
+			if registry_drag.history != null and old_pos != new_world_pos:
+				var mv := _map_view
+				registry_drag.history.push_command(HistoryCommand.create("Token moved",
+					func():
+						var td: TokenData = registry_drag.token.get_token_by_id(id)
+						if td == null: return
+						td.world_pos = old_pos
+						registry_drag.token.update_token(td)
+						if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+						_broadcast_token_change(td, false),
+					func():
+						var td: TokenData = registry_drag.token.get_token_by_id(id)
+						if td == null: return
+						td.world_pos = new_world_pos
+						registry_drag.token.update_token(td)
+						if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+						_broadcast_token_change(td, false)))
 	# Broadcast updated token position to player displays.
 	_nm_broadcast_to_displays({
 		"msg": "token_moved",
@@ -2745,11 +2897,30 @@ func _on_token_resize_completed(token_id: String, new_width_px: float, new_heigh
 	var data: TokenData = registry.token.get_token_by_id(token_id)
 	if data == null:
 		return
+	var old_w := data.width_px
+	var old_h := data.height_px
 	data.width_px = new_width_px
 	data.height_px = new_height_px
 	registry.token.update_token(data)
 	if _map_view != null:
 		_map_view.apply_token_passthrough_state(data)
+	if registry.history != null and (old_w != new_width_px or old_h != new_height_px):
+		var mv := _map_view
+		registry.history.push_command(HistoryCommand.create("Token resized",
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.width_px = old_w; td.height_px = old_h
+				registry.token.update_token(td)
+				if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+				_broadcast_token_change(td, false),
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.width_px = new_width_px; td.height_px = new_height_px
+				registry.token.update_token(td)
+				if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
 
 
@@ -2761,8 +2932,26 @@ func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void
 	var data: TokenData = registry.token.get_token_by_id(token_id)
 	if data == null:
 		return
+	var old_rot := data.rotation_deg
 	data.rotation_deg = rotation_deg
 	registry.token.update_token(data)
+	if registry.history != null and old_rot != rotation_deg:
+		var mv := _map_view
+		registry.history.push_command(HistoryCommand.create("Token rotated",
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.rotation_deg = old_rot
+				registry.token.update_token(td)
+				if mv != null: mv.update_token_sprite(td)
+				_broadcast_token_change(td, false),
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.rotation_deg = rotation_deg
+				registry.token.update_token(td)
+				if mv != null: mv.update_token_sprite(td)
+				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
 
 
@@ -2773,8 +2962,23 @@ func _on_token_trigger_radius_changed(token_id: String, new_radius_px: float) ->
 	var data: TokenData = registry.token.get_token_by_id(token_id)
 	if data == null:
 		return
+	var old_radius := data.trigger_radius_px
 	data.trigger_radius_px = new_radius_px
 	registry.token.update_token(data)
+	if registry.history != null and not is_equal_approx(old_radius, new_radius_px):
+		registry.history.push_command(HistoryCommand.create("Token trigger radius",
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.trigger_radius_px = old_radius
+				registry.token.update_token(td)
+				_broadcast_token_change(td, false),
+			func():
+				var td: TokenData = registry.token.get_token_by_id(token_id)
+				if td == null: return
+				td.trigger_radius_px = new_radius_px
+				registry.token.update_token(td)
+				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
 
 
@@ -2952,6 +3156,9 @@ func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float
 	var data: TokenData = tm.get_token_by_id(token_id)
 	if data == null:
 		return
+	var old_paths := data.passage_paths.duplicate(true)
+	var old_width := data.passage_width_px
+	var old_blocks_los := data.blocks_los
 	data.passage_paths = paths
 	data.passage_width_px = width_px
 	# Auto-open the passage when corridors are painted.  The DM can always
@@ -2962,6 +3169,30 @@ func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float
 	if _map_view != null:
 		_map_view.update_token_sprite(data)
 		_map_view.apply_token_passthrough_state(data)
+	var registry_p := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_p != null and registry_p.history != null:
+		var new_paths := paths.duplicate(true)
+		var new_blos := data.blocks_los
+		var mv := _map_view
+		registry_p.history.push_command(HistoryCommand.create("Passage edited",
+			func():
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				td.passage_paths = old_paths.duplicate(true)
+				td.passage_width_px = old_width
+				td.blocks_los = old_blocks_los
+				tm.update_token(td)
+				if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+				_broadcast_token_change(td, false),
+			func():
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				td.passage_paths = new_paths.duplicate(true)
+				td.passage_width_px = width_px
+				td.blocks_los = new_blos
+				tm.update_token(td)
+				if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
 
 
@@ -3018,10 +3249,29 @@ func _on_token_context_menu_id(id: int) -> void:
 				tm.set_token_visibility(_token_context_id, not data.is_visible_to_players)
 				_on_token_visibility_changed(_token_context_id, data.is_visible_to_players)
 		2: # Delete
+			var del_data: TokenData = tm.get_token_by_id(_token_context_id)
+			var del_snapshot: TokenData = null
+			if del_data != null:
+				del_snapshot = TokenData.from_dict(del_data.to_dict())
 			tm.remove_token(_token_context_id)
 			if _map_view != null:
 				_map_view.remove_token_sprite(_token_context_id)
 			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id})
+			if del_snapshot != null:
+				var cid := _token_context_id
+				var mv := _map_view
+				var reg_del := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if reg_del != null and reg_del.history != null:
+					reg_del.history.push_command(HistoryCommand.create("Token deleted",
+						func():
+							var restored := TokenData.from_dict(del_snapshot.to_dict())
+							reg_del.token.add_token(restored)
+							if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
+							_broadcast_token_change(restored, true),
+						func():
+							reg_del.token.remove_token(cid)
+							if mv != null: mv.remove_token_sprite(cid)
+							_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid})))
 		3: # Toggle open/closed (DOOR / SECRET_PASSAGE)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
@@ -3343,6 +3593,9 @@ func _on_token_editor_confirmed() -> void:
 	var tm: TokenManager = registry.token
 
 	var existing: TokenData = tm.get_token_by_id(_token_editor_id)
+	# Capture before-state for edit undo (null when creating a new token).
+	var old_snapshot: TokenData = TokenData.from_dict(existing.to_dict()) if existing != null else null
+
 	var data: TokenData
 	if existing != null:
 		data = existing
@@ -3380,6 +3633,41 @@ func _on_token_editor_confirmed() -> void:
 
 	if _map_view != null:
 		_map_view.apply_token_passthrough_state(data)
+
+	# Push undo command.
+	if registry.history != null:
+		var new_snapshot: TokenData = TokenData.from_dict(data.to_dict())
+		var mv := _map_view
+		if old_snapshot != null:
+			# Edit existing token.
+			registry.history.push_command(HistoryCommand.create("Token edited",
+				func():
+					var td: TokenData = tm.get_token_by_id(old_snapshot.id)
+					if td == null: return
+					var restored := TokenData.from_dict(old_snapshot.to_dict())
+					tm.update_token(restored)
+					if mv != null: mv.update_token_sprite(restored); mv.apply_token_passthrough_state(restored)
+					_broadcast_token_change(restored, false),
+				func():
+					var td: TokenData = tm.get_token_by_id(new_snapshot.id)
+					if td == null: return
+					var reapplied := TokenData.from_dict(new_snapshot.to_dict())
+					tm.update_token(reapplied)
+					if mv != null: mv.update_token_sprite(reapplied); mv.apply_token_passthrough_state(reapplied)
+					_broadcast_token_change(reapplied, false)))
+		else:
+			# New token creation.
+			var new_id := new_snapshot.id
+			registry.history.push_command(HistoryCommand.create("Token added",
+				func():
+					tm.remove_token(new_id)
+					if mv != null: mv.remove_token_sprite(new_id)
+					_nm_broadcast_to_displays({"msg": "token_removed", "token_id": new_id}),
+				func():
+					var readd := TokenData.from_dict(new_snapshot.to_dict())
+					tm.add_token(readd)
+					if mv != null: mv.add_token_sprite(readd, true); mv.apply_token_passthrough_state(readd)
+					_broadcast_token_change(readd, true)))
 
 	# Broadcast to player displays.
 	_broadcast_token_change(data, existing == null)
@@ -3993,6 +4281,10 @@ func _save_map_as_path(bundle_path: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _apply_map(map: MapData, from_save: bool = false) -> void:
+	# Clear undo history whenever a new map is loaded — history must not span maps.
+	var _hreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _hreg != null and _hreg.history != null:
+		_hreg.history.clear()
 	if not from_save:
 		# Reset game state when opening a map directly (not via Load Game).
 		var gs := _game_state()

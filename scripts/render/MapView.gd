@@ -108,6 +108,9 @@ var _fog_hidden_cells: Dictionary = {}
 ## empty to avoid the O(width*height / cell²) allocation on large maps.
 ## Cleared on the first partial reveal / snapshot apply.
 var _fog_all_hidden: bool = false
+## Fog undo: state captured at the start of a brush/rect stroke.
+var _fog_undo_before: Dictionary = {}
+var _fog_stroke_in_progress: bool = false
 var _fog_rect_dragging: bool = false
 var _fog_rect_start: Vector2 = Vector2.ZERO
 var _fog_brush_cursor_ring: Line2D = null
@@ -148,6 +151,7 @@ var _selected_wall_index: int = -1
 var _wall_dragging_handle: int = -1
 ## var _wall_drag_start_mouse: Vector2 = Vector2.ZERO
 var _wall_drag_start_points: Array = []
+var _wall_drag_start_index: int = -1
 var _wall_selection_outline: Line2D = null
 var _wall_handle_nodes: Array = []
 
@@ -158,6 +162,7 @@ var _map_rotation: int = 0 ## Current map rotation in degrees (0, 90, 180, 270)
 
 ## Spawn point editing state
 var _dragging_spawn_index: int = -1
+var _dragging_spawn_start_pos: Vector2 = Vector2.ZERO
 var _selected_spawn_index: int = -1
 const SPAWN_MARKER_RADIUS: float = 14.0
 const SPAWN_MARKER_COLOR: Color = Color(0.2, 0.85, 0.4, 0.7)
@@ -470,10 +475,27 @@ func has_selected_wall() -> bool:
 func delete_selected_wall() -> bool:
 	if not has_selected_wall():
 		return false
+	var before_polys_dw: Array = _map.wall_polygons.duplicate(true)
 	_map.wall_polygons.remove_at(_selected_wall_index)
+	var after_polys_dw: Array = _map.wall_polygons.duplicate(true)
 	_set_selected_wall(-1)
 	_rebuild_wall_occluders(_map)
 	walls_changed.emit(_map)
+	var registry_dw := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_dw != null and registry_dw.history != null:
+		var map_ref_dw := _map
+		registry_dw.history.push_command(HistoryCommand.create("Wall deleted",
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_dw == null: return
+				map_ref_dw.wall_polygons = before_polys_dw.duplicate(true)
+				_rebuild_wall_occluders(map_ref_dw)
+				walls_changed.emit(map_ref_dw),
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_dw == null: return
+				map_ref_dw.wall_polygons = after_polys_dw.duplicate(true)
+				_set_selected_wall(-1)
+				_rebuild_wall_occluders(map_ref_dw)
+				walls_changed.emit(map_ref_dw)))
 	return true
 
 
@@ -1839,6 +1861,7 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 				if handle_idx >= 0:
 					_wall_dragging_handle = handle_idx
 					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
+					_wall_drag_start_index = _selected_wall_index
 					return true
 				# Any other click deselects the current wall first.
 				_set_selected_wall(-1)
@@ -1854,6 +1877,7 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 				if wall_idx >= 0:
 					_set_selected_wall(wall_idx)
 					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
+					_wall_drag_start_index = _selected_wall_index
 					return true
 				return false
 			# On mouse release: only consume the event if we actually performed a wall drag/move
@@ -1863,8 +1887,24 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 			if prev_handle >= 0:
 				handled_release = true
 			if not _wall_drag_start_points.is_empty():
+				var before_pts_wd: Array = _wall_drag_start_points.duplicate(true)
+				var after_pts_wd: Array = _get_wall_points(_selected_wall_index)
+				var drag_wall_idx: int = _wall_drag_start_index
 				walls_changed.emit(_map)
 				_wall_drag_start_points.clear()
+				_wall_drag_start_index = -1
+				var registry_wd := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if registry_wd != null and registry_wd.history != null and not before_pts_wd.is_empty() and not after_pts_wd.is_empty():
+					var map_ref_wd := _map
+					registry_wd.history.push_command(HistoryCommand.create("Wall moved",
+						func() -> void:
+							if not is_instance_valid(self) or map_ref_wd == null: return
+							_set_wall_points(drag_wall_idx, before_pts_wd)
+							walls_changed.emit(map_ref_wd),
+						func() -> void:
+							if not is_instance_valid(self) or map_ref_wd == null: return
+							_set_wall_points(drag_wall_idx, after_pts_wd)
+							walls_changed.emit(map_ref_wd)))
 				handled_release = true
 			if handled_release:
 				return true
@@ -1913,9 +1953,26 @@ func _apply_wall_polygon(points: Array) -> void:
 	for p in points:
 		if p is Vector2:
 			poly.append(p)
+	var before_polys_wp: Array = _map.wall_polygons.duplicate(true)
 	_map.wall_polygons.append(poly)
+	var after_polys_wp: Array = _map.wall_polygons.duplicate(true)
 	_rebuild_wall_occluders(_map)
 	walls_changed.emit(_map)
+	var registry_wp := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_wp != null and registry_wp.history != null:
+		var map_ref_wp := _map
+		registry_wp.history.push_command(HistoryCommand.create("Wall added",
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_wp == null: return
+				map_ref_wp.wall_polygons = before_polys_wp.duplicate(true)
+				_set_selected_wall(-1)
+				_rebuild_wall_occluders(map_ref_wp)
+				walls_changed.emit(map_ref_wp),
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_wp == null: return
+				map_ref_wp.wall_polygons = after_polys_wp.duplicate(true)
+				_rebuild_wall_occluders(map_ref_wp)
+				walls_changed.emit(map_ref_wp)))
 
 	# Removed unreachable/incorrect event handling and return statements from void function
 
@@ -1933,9 +1990,17 @@ func _handle_fog_input(event: InputEvent) -> bool:
 	if fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.HIDE_BRUSH:
 		if event is InputEventMouseButton:
 			var mb := event as InputEventMouseButton
-			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-				_apply_fog_brush(get_global_mouse_position(), is_reveal)
-				return true
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				if mb.pressed:
+					_fog_undo_before = _capture_fog_state()
+					_fog_stroke_in_progress = true
+					_apply_fog_brush(get_global_mouse_position(), is_reveal)
+					return true
+				else:
+					if _fog_stroke_in_progress:
+						_fog_stroke_in_progress = false
+						_push_fog_undo_command(_fog_undo_before, is_reveal)
+					return true
 		if event is InputEventMouseMotion:
 			var world_pos := get_global_mouse_position()
 			_update_fog_brush_cursor(world_pos)
@@ -1949,6 +2014,7 @@ func _handle_fog_input(event: InputEvent) -> bool:
 			var mb := event as InputEventMouseButton
 			if mb.button_index == MOUSE_BUTTON_LEFT:
 				if mb.pressed:
+					_fog_undo_before = _capture_fog_state()
 					_fog_rect_start = get_global_mouse_position()
 					_fog_rect_dragging = true
 					_update_fog_rect_preview(_fog_rect_start, _fog_rect_start, is_reveal)
@@ -1957,6 +2023,7 @@ func _handle_fog_input(event: InputEvent) -> bool:
 						_fog_rect_dragging = false
 						_clear_fog_rect_preview()
 						_apply_fog_rect(_fog_rect_start, get_global_mouse_position(), is_reveal)
+						_push_fog_undo_command(_fog_undo_before, is_reveal)
 				return true
 		if _fog_rect_dragging and event is InputEventMouseMotion:
 			_update_fog_rect_preview(_fog_rect_start, get_global_mouse_position(), is_reveal)
@@ -2046,6 +2113,60 @@ func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 	fog_changed.emit(_map)
 
 
+## Snapshot the current fog state into a transportable Dictionary.
+## Uses the _fog_all_hidden shortcut to avoid O(n) cell dictionary copy on
+## large maps that have never been partially revealed.
+func _capture_fog_state() -> Dictionary:
+	if _fog_all_hidden:
+		return {"all_hidden": true, "png": PackedByteArray(), "cells": {}}
+	var registry_cs := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var png := PackedByteArray()
+	if registry_cs != null and registry_cs.fog != null and registry_cs.fog.model != null:
+		var img: Image = registry_cs.fog.model.history_image
+		if img != null and not img.is_empty():
+			png = img.save_png_to_buffer()
+	return {"all_hidden": false, "png": png, "cells": _fog_hidden_cells.duplicate()}
+
+
+## Restore fog state from a snapshot Dictionary (used by undo/redo callables).
+func _restore_fog_state(snapshot: Dictionary, map_data: MapData) -> void:
+	var registry_rf := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_rf == null or registry_rf.fog == null:
+		return
+	if snapshot.get("all_hidden", false):
+		_fog_hidden_cells.clear()
+		_fog_all_hidden = true
+		registry_rf.fog.reset()
+	else:
+		var snap_cells: Variant = snapshot.get("cells", {})
+		_fog_hidden_cells = (snap_cells as Dictionary).duplicate() if snap_cells is Dictionary else {}
+		_fog_all_hidden = false
+		var png: PackedByteArray = snapshot.get("png", PackedByteArray())
+		if not png.is_empty():
+			registry_rf.fog.apply_snapshot(png)
+	fog_changed.emit(map_data)
+
+
+## Capture after-state and push a fog undo/redo command onto the history stack.
+func _push_fog_undo_command(before_snap: Dictionary, is_reveal: bool) -> void:
+	var registry_fp := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_fp == null or registry_fp.history == null:
+		return
+	var after_snap := _capture_fog_state()
+	# Skip if nothing changed (both all-hidden with no PNG to diff).
+	if before_snap.get("all_hidden", false) and after_snap.get("all_hidden", false):
+		return
+	var desc := "Fog revealed" if is_reveal else "Fog hidden"
+	var map_ref_fp := _map
+	registry_fp.history.push_command(HistoryCommand.create(desc,
+		func() -> void:
+			if not is_instance_valid(self) or map_ref_fp == null: return
+			_restore_fog_state(before_snap, map_ref_fp),
+		func() -> void:
+			if not is_instance_valid(self) or map_ref_fp == null: return
+			_restore_fog_state(after_snap, map_ref_fp)))
+
+
 func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 	# print("[DEBUG] _apply_wall_rect called: a=%s, b=%s" % [str(a), str(b)])
 	if _map == null:
@@ -2064,9 +2185,26 @@ func _apply_wall_rect(a: Vector2, b: Vector2) -> void:
 		Vector2(min_x, max_y),
 	]
 	# print("[DEBUG] Wall Rect: Created polygon=", poly)
+	var before_polys_wr: Array = _map.wall_polygons.duplicate(true)
 	_map.wall_polygons.append(poly)
+	var after_polys_wr: Array = _map.wall_polygons.duplicate(true)
 	_rebuild_wall_occluders(_map)
 	walls_changed.emit(_map)
+	var registry_wr := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_wr != null and registry_wr.history != null:
+		var map_ref_wr := _map
+		registry_wr.history.push_command(HistoryCommand.create("Wall added",
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_wr == null: return
+				map_ref_wr.wall_polygons = before_polys_wr.duplicate(true)
+				_set_selected_wall(-1)
+				_rebuild_wall_occluders(map_ref_wr)
+				walls_changed.emit(map_ref_wr),
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_wr == null: return
+				map_ref_wr.wall_polygons = after_polys_wr.duplicate(true)
+				_rebuild_wall_occluders(map_ref_wr)
+				walls_changed.emit(map_ref_wr)))
 
 
 func _load_fog_from_map(_map_data: MapData) -> void:
@@ -2649,21 +2787,53 @@ func add_spawn_point(world_pos: Vector2, label_text: String = "") -> void:
 	if _map == null:
 		return
 	var sp := {"x": world_pos.x, "y": world_pos.y, "label": label_text}
+	var before_sp_add: Array = _map.spawn_points.duplicate(true)
 	_map.spawn_points.append(sp)
+	var after_sp_add: Array = _map.spawn_points.duplicate(true)
 	_rebuild_spawn_markers(_map)
 	spawn_points_changed.emit(_map)
+	var registry_spa := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_spa != null and registry_spa.history != null:
+		var map_ref_spa := _map
+		registry_spa.history.push_command(HistoryCommand.create("Spawn added",
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_spa == null: return
+				map_ref_spa.spawn_points = before_sp_add.duplicate(true)
+				_rebuild_spawn_markers(map_ref_spa)
+				spawn_points_changed.emit(map_ref_spa),
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_spa == null: return
+				map_ref_spa.spawn_points = after_sp_add.duplicate(true)
+				_rebuild_spawn_markers(map_ref_spa)
+				spawn_points_changed.emit(map_ref_spa)))
 
 
 func remove_spawn_point(idx: int) -> void:
 	if _map == null or idx < 0 or idx >= _map.spawn_points.size():
 		return
+	var before_sp_rm: Array = _map.spawn_points.duplicate(true)
 	_map.spawn_points.remove_at(idx)
+	var after_sp_rm: Array = _map.spawn_points.duplicate(true)
 	if _selected_spawn_index == idx:
 		_selected_spawn_index = -1
 	elif _selected_spawn_index > idx:
 		_selected_spawn_index -= 1
 	_rebuild_spawn_markers(_map)
 	spawn_points_changed.emit(_map)
+	var registry_spr := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_spr != null and registry_spr.history != null:
+		var map_ref_spr := _map
+		registry_spr.history.push_command(HistoryCommand.create("Spawn deleted",
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_spr == null: return
+				map_ref_spr.spawn_points = before_sp_rm.duplicate(true)
+				_rebuild_spawn_markers(map_ref_spr)
+				spawn_points_changed.emit(map_ref_spr),
+			func() -> void:
+				if not is_instance_valid(self) or map_ref_spr == null: return
+				map_ref_spr.spawn_points = after_sp_rm.duplicate(true)
+				_rebuild_spawn_markers(map_ref_spr)
+				spawn_points_changed.emit(map_ref_spr)))
 
 
 func move_spawn_point(idx: int, world_pos: Vector2) -> void:
@@ -2694,6 +2864,7 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 				var hit := _hit_test_spawn_point(world_pos)
 				if hit >= 0:
 					_dragging_spawn_index = hit
+					_dragging_spawn_start_pos = world_pos
 					select_spawn_point(hit)
 					return true
 				elif active_tool == Tool.SPAWN_POINT:
@@ -2703,8 +2874,31 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 					return true
 			else:
 				if _dragging_spawn_index >= 0:
+					var drag_idx_end: int = _dragging_spawn_index
+					var before_drag_pt: Vector2 = _dragging_spawn_start_pos
+					var sp_end: Dictionary = _map.spawn_points[drag_idx_end]
+					var after_drag_pt := Vector2(float(sp_end.get("x", 0.0)), float(sp_end.get("y", 0.0)))
 					_dragging_spawn_index = -1
 					spawn_points_changed.emit(_map)
+					if before_drag_pt.distance_to(after_drag_pt) > 1.0:
+						var registry_spd := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+						if registry_spd != null and registry_spd.history != null:
+							var map_ref_spd := _map
+							registry_spd.history.push_command(HistoryCommand.create("Spawn moved",
+								func() -> void:
+									if not is_instance_valid(self) or map_ref_spd == null: return
+									if drag_idx_end >= 0 and drag_idx_end < map_ref_spd.spawn_points.size():
+										map_ref_spd.spawn_points[drag_idx_end]["x"] = before_drag_pt.x
+										map_ref_spd.spawn_points[drag_idx_end]["y"] = before_drag_pt.y
+										_rebuild_spawn_markers(map_ref_spd)
+										spawn_points_changed.emit(map_ref_spd),
+								func() -> void:
+									if not is_instance_valid(self) or map_ref_spd == null: return
+									if drag_idx_end >= 0 and drag_idx_end < map_ref_spd.spawn_points.size():
+										map_ref_spd.spawn_points[drag_idx_end]["x"] = after_drag_pt.x
+										map_ref_spd.spawn_points[drag_idx_end]["y"] = after_drag_pt.y
+										_rebuild_spawn_markers(map_ref_spd)
+										spawn_points_changed.emit(map_ref_spd)))
 					return true
 		elif btn.button_index == MOUSE_BUTTON_RIGHT and btn.pressed:
 			var hit := _hit_test_spawn_point(world_pos)

@@ -21,6 +21,7 @@ var profile: ProfileManager = null
 var persistence: PersistenceManager = null
 var input: InputManager = null
 var token: TokenManager = null
+var history: HistoryManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.
