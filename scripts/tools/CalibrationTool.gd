@@ -20,6 +20,9 @@ const LINE_COLOR: Color = Color(1.0, 0.85, 0.0, 0.9) ## bright yellow
 const DOT_RADIUS: float = 6.0
 const LINE_WIDTH: float = 2.5
 const LABEL_OFFSET: Vector2 = Vector2(12, -16)
+## Must be above all MapView render layers. MapView.RenderLayer.FOG+2 (=8) is the
+## highest used (token_layer in DM mode), so we sit one step above everything.
+const OVERLAY_Z_INDEX: int = 9
 
 var _map: MapData = null
 var _active: bool = false
@@ -29,6 +32,10 @@ var _end: Vector2 = Vector2.ZERO
 
 # Dialog reference set by DMWindow so it can be shown from this script
 var confirm_dialog: ConfirmationDialog = null
+
+
+func _ready() -> void:
+	z_index = OVERLAY_Z_INDEX
 
 
 func activate(map: MapData) -> void:
