@@ -294,7 +294,7 @@ func _ensure_history_bindings() -> void:
 	# Signal subscription: IHistoryService extends Node; signals live on the Node
 	# instance. RefCounted manager cannot re-emit them — approved narrow exception.
 	var svc: IHistoryService = registry.history.service
-	if not svc.is_connected("history_changed", Callable(self , "_refresh_history_menu")):
+	if not svc.is_connected("history_changed", Callable(self, "_refresh_history_menu")):
 		svc.history_changed.connect(_refresh_history_menu)
 	_refresh_history_menu()
 
@@ -1038,6 +1038,7 @@ func _build_ui() -> void:
 
 	_cal_tool.confirm_dialog = _cal_dialog
 	_cal_tool.calibration_done.connect(_on_calibration_done)
+	_cal_tool.calibration_cancelled.connect(_on_calibration_cancelled)
 
 	# ── Manual scale dialog ──────────────────────────────────────────────────
 	_manual_scale_dialog = ConfirmationDialog.new()
@@ -2132,6 +2133,10 @@ func _on_calibrate_pressed() -> void:
 
 func _on_calibration_confirmed() -> void:
 	_cal_tool.apply_measurement(_feet_spin.value)
+
+
+func _on_calibration_cancelled() -> void:
+	_set_status("Calibration cancelled.")
 
 
 func _on_calibration_done(map: MapData) -> void:

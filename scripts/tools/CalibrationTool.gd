@@ -15,6 +15,7 @@ extends Node2D
 # ---------------------------------------------------------------------------
 
 signal calibration_done(map: MapData) ## Emitted after the DM confirms the measurement
+signal calibration_cancelled ## Emitted when the DM dismisses the dialog without confirming
 
 const LINE_COLOR: Color = Color(1.0, 0.85, 0.0, 0.9) ## bright yellow
 const DOT_RADIUS: float = 6.0
@@ -128,7 +129,8 @@ func _on_confirmed() -> void:
 func _on_canceled() -> void:
 	_start = Vector2.ZERO
 	_end = Vector2.ZERO
-	queue_redraw()
+	deactivate()
+	calibration_cancelled.emit()
 
 
 func apply_measurement(feet: float) -> void:
