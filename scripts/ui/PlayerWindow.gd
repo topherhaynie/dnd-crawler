@@ -93,6 +93,16 @@ func on_state(data: Dictionary) -> void:
 		"player_bind":
 			_bound_player_id = str(data.get("player_id", ""))
 			print("PlayerWindow: bound to player_id=%s" % _bound_player_id)
+		"measurement_state":
+			_handle_measurement_state(data.get("measurements", []) as Array)
+		"measurement_added":
+			_handle_measurement_added(data.get("measurement", {}) as Dictionary)
+		"measurement_removed":
+			_handle_measurement_removed(str(data.get("measurement_id", "")))
+		"measurement_moved":
+			_handle_measurement_moved(data)
+		"measurement_updated":
+			_handle_measurement_added(data.get("measurement", {}) as Dictionary)
 		_:
 			pass
 
@@ -128,6 +138,13 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 	_apply_pending_fog_packets()
 	_clear_tokens()
 	_apply_token_size_from_map(map)
+	# Initialise the measurement overlay scale and shapes from the map bundle.
+	if _map_view != null and _map_view.measurement_overlay != null:
+		var px_per_5ft: float = map.cell_px \
+				if map.grid_type == MapData.GridType.SQUARE \
+				else map.hex_size * 2.0
+		_map_view.measurement_overlay.set_scale_px(px_per_5ft)
+		_map_view.measurement_overlay.load_measurements(map.measurements)
 	print("PlayerWindow: map loaded — '%s'" % map.map_name)
 
 
@@ -426,3 +443,42 @@ func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
 		td.height_px = matched_sprite.get_token_height_px()
 		td.blocks_los = matched_sprite.get_token_blocks_los()
 		_map_view.apply_token_passthrough_state(td)
+
+
+# ---------------------------------------------------------------------------
+# Measurement message handlers (player receive side)
+# ---------------------------------------------------------------------------
+
+func _handle_measurement_state(dicts: Array) -> void:
+	if _map_view == null or _map_view.measurement_overlay == null:
+		return
+	_map_view.measurement_overlay.load_measurements(dicts)
+
+
+func _handle_measurement_added(d: Dictionary) -> void:
+	if _map_view == null or _map_view.measurement_overlay == null or d.is_empty():
+		return
+	var md: MeasurementData = MeasurementData.from_dict(d)
+	_map_view.measurement_overlay.add_or_update(md)
+
+
+func _handle_measurement_removed(id: String) -> void:
+	if _map_view == null or _map_view.measurement_overlay == null or id.is_empty():
+		return
+	_map_view.measurement_overlay.remove_shape(id)
+
+
+func _handle_measurement_moved(data: Dictionary) -> void:
+	if _map_view == null or _map_view.measurement_overlay == null:
+		return
+	var id: String = str(data.get("measurement_id", ""))
+	if id.is_empty():
+		return
+	var ws: Dictionary = data.get("world_start", {"x": 0.0, "y": 0.0}) as Dictionary
+	var we: Dictionary = data.get("world_end", {"x": 0.0, "y": 0.0}) as Dictionary
+	var overlay: MeasurementOverlay = _map_view.measurement_overlay
+	var existing_md: MeasurementData = overlay._measurements.get(id, null) as MeasurementData
+	if existing_md != null:
+		existing_md.world_start = Vector2(float(ws.get("x", 0.0)), float(ws.get("y", 0.0)))
+		existing_md.world_end = Vector2(float(we.get("x", 0.0)), float(we.get("y", 0.0)))
+		overlay.add_or_update(existing_md)

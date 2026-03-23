@@ -36,6 +36,9 @@ func _ready() -> void:
 	var history_svc := HistoryService.new()
 	history_svc.name = "HistoryService"
 
+	var measurement_svc := MeasurementService.new()
+	measurement_svc.name = "MeasurementService"
+
 	# --- Build registry and wire managers ---
 	var registry := ServiceRegistry.new()
 	registry.name = "ServiceRegistry"
@@ -85,6 +88,10 @@ func _ready() -> void:
 	history_mgr.service = history_svc
 	registry.history = history_mgr
 
+	var measurement_mgr := MeasurementManager.new()
+	measurement_mgr.service = measurement_svc
+	registry.measurement = measurement_mgr
+
 	# --- Add to scene tree (deferred to avoid ready-order races) ---
 	var root := get_tree().root
 	root.call_deferred("add_child", registry)
@@ -97,5 +104,6 @@ func _ready() -> void:
 	root.call_deferred("add_child", input_svc)
 	root.call_deferred("add_child", token_svc)
 	root.call_deferred("add_child", history_svc)
+	root.call_deferred("add_child", measurement_svc)
 
 	print("ServiceBootstrap: all services registered")

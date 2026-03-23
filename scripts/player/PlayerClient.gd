@@ -200,6 +200,9 @@ func _handle_packet(raw: String) -> void:
 		"token_moved":
 			# Lightweight position update for a live token
 			state_received.emit(data)
+		"measurement_state", "measurement_added", "measurement_removed", \
+		"measurement_moved", "measurement_updated":
+			state_received.emit(data)
 		"state":
 			# Full render-state snapshot (Phase 4 will flesh this out)
 			state_received.emit(data)

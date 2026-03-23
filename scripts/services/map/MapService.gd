@@ -33,6 +33,8 @@ func load_map(map: Object) -> void:
 	_current_map = map
 	# Sync token state from the bundle into the TokenService.
 	_sync_tokens_from_map(map)
+	# Sync measurement state from the bundle into the MeasurementService.
+	_sync_measurements_from_map(map)
 	emit_signal("map_loaded", _current_map)
 
 func update_map(map: Object) -> void:
@@ -52,6 +54,8 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 		return false
 	# Flush current token state back into the map model before serialising.
 	_flush_tokens_to_map(_current_map)
+	# Flush current measurement state back into the map model before serialising.
+	_flush_measurements_to_map(_current_map)
 	var json_path := bundle_path.path_join("map.json")
 	var fa := FileAccess.open(json_path, FileAccess.WRITE)
 	if fa == null:
@@ -98,3 +102,33 @@ func _flush_tokens_to_map(map: Object) -> void:
 		if td != null:
 			serialised.append(td.to_dict())
 	(map as MapData).tokens = serialised
+
+
+# ---------------------------------------------------------------------------
+# Measurement sync helpers
+# ---------------------------------------------------------------------------
+
+## Load MeasurementData dicts from the map bundle into the MeasurementService (if present).
+func _sync_measurements_from_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null or registry.measurement.service == null:
+		return
+	registry.measurement.service.load_measurements((map as MapData).measurements)
+
+
+## Serialise current MeasurementService state back into the map model for persistence.
+func _flush_measurements_to_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null or registry.measurement.service == null:
+		return
+	var all_measurements: Array = registry.measurement.service.get_all_measurements()
+	var serialised: Array = []
+	for raw in all_measurements:
+		var md: MeasurementData = raw as MeasurementData
+		if md != null:
+			serialised.append(md.to_dict())
+	(map as MapData).measurements = serialised

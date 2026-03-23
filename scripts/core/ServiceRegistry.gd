@@ -22,6 +22,7 @@ var persistence: PersistenceManager = null
 var input: InputManager = null
 var token: TokenManager = null
 var history: HistoryManager = null
+var measurement: MeasurementManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.

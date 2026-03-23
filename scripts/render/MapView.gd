@@ -40,6 +40,11 @@ enum Tool {
 	WALL,
 	SPAWN_POINT,
 	PLACE_TOKEN,
+	MEASURE_LINE,
+	MEASURE_CIRCLE,
+	MEASURE_CONE,
+	MEASURE_SQUARE,
+	MEASURE_RECT,
 }
 
 const ZOOM_MIN: float = 0.1
@@ -184,6 +189,11 @@ func _set_active_tool(tool: Tool) -> void:
 	_fog_rect_dragging = false
 	_wall_dragging_handle = -1
 	_set_selected_wall(-1)
+	# Clear measurement drag state
+	_meas_dragging = false
+	_meas_move_dragging = false
+	if measurement_overlay != null:
+		measurement_overlay.remove_shape(_meas_preview_id)
 	if typeof(_wall_drag_start_points) == TYPE_ARRAY:
 		_wall_drag_start_points.clear()
 	_reset_cursor()
@@ -199,6 +209,14 @@ signal fog_changed(map: MapData)
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
 signal spawn_points_changed(map: MapData)
+@warning_ignore("unused_signal")
+signal measurement_draw_completed(data: MeasurementData)
+@warning_ignore("unused_signal")
+signal measurement_delete_requested(id: String)
+@warning_ignore("unused_signal")
+signal measurement_move_completed(id: String, new_start: Vector2, new_end: Vector2)
+@warning_ignore("unused_signal")
+signal measurement_edit_completed(data: MeasurementData, old_start: Vector2, old_end: Vector2)
 signal token_drag_started(token_id: Variant)
 signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
 signal token_resize_completed(token_id: String, new_width_px: float, new_height_px: float)
@@ -243,6 +261,28 @@ var _trigger_radius_drag_node: Node2D = null
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
+
+## MeasurementOverlay — drawn above fog/tokens at z_index 10.
+var measurement_overlay: MeasurementOverlay = null
+
+## Measurement tool drag state
+var _meas_dragging: bool = false
+var _meas_start: Vector2 = Vector2.ZERO
+var _meas_end: Vector2 = Vector2.ZERO
+var _meas_preview_id: String = "__preview__"
+## Id of the selected measurement shape (for move/delete in SELECT mode)
+var _selected_meas_id: String = ""
+## Drag-to-move state for existing measurement shapes
+var _meas_move_dragging: bool = false
+var _meas_move_offset_start: Vector2 = Vector2.ZERO
+var _meas_move_offset_end: Vector2 = Vector2.ZERO
+## Endpoint-edit drag state (re-drag start or end of a placed shape)
+var _meas_edit_dragging: bool = false
+## "start" or "end" — which endpoint is being dragged
+var _meas_edit_which: String = ""
+var _meas_edit_id: String = ""
+var _meas_edit_old_start: Vector2 = Vector2.ZERO
+var _meas_edit_old_end: Vector2 = Vector2.ZERO
 
 ## Temporary opaque-black cover shown on the player side during map load.
 ## Prevents the map from flashing visible before the fog shader's GPU pipeline
@@ -334,6 +374,33 @@ func load_map(map: MapData) -> void:
 	# do not rotate the camera here (DM view is never rotated).
 
 	print("MapView: loaded map '%s'" % map.map_name)
+	# Sync measurement overlay scale with map calibration.
+	if measurement_overlay != null:
+		measurement_overlay.set_scale_px(_pixels_per_5ft(map))
+		_reload_measurement_overlay()
+
+
+func _pixels_per_5ft(map: MapData) -> float:
+	if map == null:
+		return 64.0
+	if map.grid_type == MapData.GridType.SQUARE:
+		return map.cell_px
+	return map.hex_size * 2.0
+
+
+func _reload_measurement_overlay() -> void:
+	if measurement_overlay == null or _map == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.measurement != null:
+		var dicts: Array = []
+		for raw in registry.measurement.get_all():
+			var md: MeasurementData = raw as MeasurementData
+			if md != null:
+				dicts.append(md.to_dict())
+		measurement_overlay.load_measurements(dicts)
+	else:
+		measurement_overlay.load_measurements(_map.measurements)
 
 
 func get_map() -> MapData:
@@ -1352,6 +1419,11 @@ func _ready() -> void:
 	_indicator_overlay.name = "IndicatorOverlay"
 	_indicator_overlay.camera = camera
 	add_child(_indicator_overlay)
+	# Measurement overlay sits above all map content (z_index 10).
+	measurement_overlay = MeasurementOverlay.new()
+	measurement_overlay.name = "MeasurementOverlay"
+	measurement_overlay.z_index = RenderLayer.FOG + 3
+	add_child(measurement_overlay)
 	_apply_layer_order()
 	apply_render_profile(RenderProfile.DM if is_dm_view else RenderProfile.PLAYER)
 	# Connect token drag completion to update the service model.
@@ -1481,6 +1553,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _handle_fog_wall_input(event):
 		get_viewport().set_input_as_handled()
 		return
+	if _handle_measurement_input(event):
+		get_viewport().set_input_as_handled()
+		return
 
 	# --- Spawn point tool input -------------------------------------------
 	if (active_tool == Tool.SPAWN_POINT or active_tool == Tool.SELECT) and _handle_spawn_point_input(event):
@@ -1495,6 +1570,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 			if delete_selected_wall():
+				get_viewport().set_input_as_handled()
+				return
+			# Delete selected measurement in SELECT mode
+			if active_tool == Tool.SELECT and _selected_meas_id != "":
+				measurement_delete_requested.emit(_selected_meas_id)
+				_selected_meas_id = ""
 				get_viewport().set_input_as_handled()
 				return
 
@@ -1596,7 +1677,7 @@ func _unhandled_input(event: InputEvent) -> void:
 								_resize_anchor_world = corners[(handle_idx + 2) % 4]
 								get_viewport().set_input_as_handled()
 								return
-					if _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
+					if not _is_measure_tool_active() and _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
 						_dragging_indicator = true
 						get_viewport().set_input_as_handled()
 					elif active_tool == Tool.PAN:
@@ -1787,6 +1868,281 @@ func _zoom_camera(step: float, pivot_screen: Vector2) -> void:
 	var pivot_world := camera.position + (pivot_screen - half_vp) / old_zoom
 	camera.zoom = Vector2.ONE * new_zoom
 	camera.position = pivot_world - (pivot_screen - half_vp) / new_zoom
+
+
+func _is_measure_tool_active() -> bool:
+	return active_tool == Tool.MEASURE_LINE or active_tool == Tool.MEASURE_CIRCLE \
+		or active_tool == Tool.MEASURE_CONE or active_tool == Tool.MEASURE_SQUARE \
+		or active_tool == Tool.MEASURE_RECT
+
+
+func _active_measure_shape_type() -> int:
+	match active_tool:
+		Tool.MEASURE_LINE: return MeasurementData.ShapeType.LINE
+		Tool.MEASURE_CIRCLE: return MeasurementData.ShapeType.CIRCLE
+		Tool.MEASURE_CONE: return MeasurementData.ShapeType.CONE
+		Tool.MEASURE_SQUARE: return MeasurementData.ShapeType.SQUARE
+		Tool.MEASURE_RECT: return MeasurementData.ShapeType.RECTANGLE
+	return MeasurementData.ShapeType.LINE
+
+
+## Returns the perpendicular half-width (in world px) for RECTANGLE shapes.
+## For non-rectangle tools this value is ignored (extra_value defaults to 0).
+## Defaults to one 5-ft cell (one grid square wide on each side of the axis).
+func _meas_rect_half_width() -> float:
+	if active_tool != Tool.MEASURE_RECT:
+		return 0.0
+	return _pixels_per_5ft(_map)
+
+
+## Snap a world position so the distance from _meas_start rounds to the
+## nearest whole foot.
+func _snap_meas_to_ft(raw_pos: Vector2) -> Vector2:
+	return _snap_meas_to_ft_from(raw_pos, _meas_start)
+
+
+## Snap a world position so the distance from `anchor` rounds to the nearest
+## whole foot.  Direction is preserved; only the magnitude changes.
+func _snap_meas_to_ft_from(raw_pos: Vector2, anchor: Vector2) -> Vector2:
+	var px_per_ft: float = _pixels_per_5ft(_map) / 5.0
+	if px_per_ft < 0.01:
+		return raw_pos
+	var delta: Vector2 = raw_pos - anchor
+	var dist_px: float = delta.length()
+	if dist_px < 0.01:
+		return raw_pos
+	var ft: float = dist_px / px_per_ft
+	var snapped_ft: float = roundf(ft)
+	if snapped_ft < 1.0:
+		snapped_ft = 1.0
+	var snapped_px: float = snapped_ft * px_per_ft
+	return anchor + delta.normalized() * snapped_px
+
+
+func _handle_measurement_input(event: InputEvent) -> bool:
+	if measurement_overlay == null or not is_dm_view:
+		return false
+
+	# --- Draw mode: any active measure tool --------------------------------
+	if _is_measure_tool_active():
+		if event is InputEventMouseButton:
+			var btn := event as InputEventMouseButton
+			if btn.button_index != MOUSE_BUTTON_LEFT:
+				return false
+			if btn.pressed:
+				# If clicking on an existing shape, edit or move instead of drawing
+				var world_pos := get_global_mouse_position()
+				# Priority 1: endpoint edit (tighter snap)
+				var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
+				var ep_which: String = ep[0] as String
+				var ep_id: String = ep[1] as String
+				if ep_which != "":
+					var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+					if registry != null and registry.measurement != null:
+						var md: MeasurementData = registry.measurement.get_by_id(ep_id)
+						if md != null:
+							_meas_edit_dragging = true
+							_meas_edit_which = ep_which
+							_meas_edit_id = ep_id
+							_meas_edit_old_start = md.world_start
+							_meas_edit_old_end = md.world_end
+							_selected_meas_id = ep_id
+							measurement_overlay.set_selected(ep_id)
+							return true
+				# Priority 2: body pick → move
+				var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
+				if picked_id != "":
+					_selected_meas_id = picked_id
+					measurement_overlay.set_selected(picked_id)
+					var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+					if registry != null and registry.measurement != null:
+						var md: MeasurementData = registry.measurement.get_by_id(picked_id)
+						if md != null:
+							_meas_move_dragging = true
+							_meas_move_offset_start = md.world_start - world_pos
+							_meas_move_offset_end = md.world_end - world_pos
+					return true
+				# Priority 3: draw new shape on empty space
+				_meas_dragging = true
+				_meas_start = world_pos
+				_meas_end = _meas_start
+				var preview := MeasurementData.create(
+					_active_measure_shape_type(), _meas_start, _meas_end,
+					_meas_rect_half_width())
+				preview.id = _meas_preview_id
+				measurement_overlay.add_or_update(preview)
+				return true
+			else:
+				if _meas_edit_dragging:
+					_meas_edit_dragging = false
+					var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+					if registry != null and registry.measurement != null:
+						var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
+						if md != null:
+							var edited := MeasurementData.from_dict(md.to_dict())
+							var final_pos := get_global_mouse_position()
+							if _meas_edit_which == "start":
+								edited.world_start = _snap_meas_to_ft_from(
+									final_pos, edited.world_end)
+							else:
+								edited.world_end = _snap_meas_to_ft(final_pos)
+							measurement_edit_completed.emit(edited,
+								_meas_edit_old_start, _meas_edit_old_end)
+					return true
+				if _meas_move_dragging:
+					_meas_move_dragging = false
+					if _selected_meas_id != "":
+						var move_world := get_global_mouse_position()
+						var new_s := move_world + _meas_move_offset_start
+						var new_e := move_world + _meas_move_offset_end
+						measurement_move_completed.emit(_selected_meas_id, new_s, new_e)
+					return true
+				if _meas_dragging:
+					_meas_dragging = false
+					measurement_overlay.remove_shape(_meas_preview_id)
+					if _meas_start.distance_to(_meas_end) > 4.0:
+						var final_data := MeasurementData.create(
+							_active_measure_shape_type(), _meas_start, _meas_end,
+							_meas_rect_half_width())
+						measurement_draw_completed.emit(final_data)
+				return true
+		elif event is InputEventMouseMotion:
+			if _meas_edit_dragging:
+				var world_pos := get_global_mouse_position()
+				var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if registry != null and registry.measurement != null:
+					var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
+					if md != null:
+						var preview := MeasurementData.from_dict(md.to_dict())
+						if _meas_edit_which == "start":
+							preview.world_start = _snap_meas_to_ft_from(
+								world_pos, preview.world_end)
+						else:
+							preview.world_end = _snap_meas_to_ft(world_pos)
+						measurement_overlay.add_or_update(preview)
+				return true
+			if _meas_move_dragging:
+				var world_pos := get_global_mouse_position()
+				var new_s := world_pos + _meas_move_offset_start
+				var new_e := world_pos + _meas_move_offset_end
+				var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if registry != null and registry.measurement != null:
+					var md: MeasurementData = registry.measurement.get_by_id(_selected_meas_id)
+					if md != null:
+						var preview := MeasurementData.from_dict(md.to_dict())
+						preview.world_start = new_s
+						preview.world_end = new_e
+						measurement_overlay.add_or_update(preview)
+				return true
+			if _meas_dragging:
+				_meas_end = _snap_meas_to_ft(get_global_mouse_position())
+				var preview := MeasurementData.create(
+					_active_measure_shape_type(), _meas_start, _meas_end,
+					_meas_rect_half_width())
+				preview.id = _meas_preview_id
+				measurement_overlay.add_or_update(preview)
+				return true
+		return false
+
+	# --- Select mode: click to select, edit endpoint, or drag to move ---
+	if active_tool == Tool.SELECT:
+		if event is InputEventMouseButton:
+			var btn := event as InputEventMouseButton
+			if btn.button_index == MOUSE_BUTTON_LEFT:
+				var world_pos := get_global_mouse_position()
+				if btn.pressed:
+					# Priority 1: endpoint edit (tighter snap than body pick)
+					var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
+					var ep_which: String = ep[0] as String
+					var ep_id: String = ep[1] as String
+					if ep_which != "":
+						var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+						if registry != null and registry.measurement != null:
+							var md: MeasurementData = registry.measurement.get_by_id(ep_id)
+							if md != null:
+								_meas_edit_dragging = true
+								_meas_edit_which = ep_which
+								_meas_edit_id = ep_id
+								_meas_edit_old_start = md.world_start
+								_meas_edit_old_end = md.world_end
+								_selected_meas_id = ep_id
+								measurement_overlay.set_selected(ep_id)
+								return true
+					# Priority 2: body pick → start whole-shape move
+					var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
+					if picked_id != "":
+						_selected_meas_id = picked_id
+						measurement_overlay.set_selected(picked_id)
+						var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+						if registry != null and registry.measurement != null:
+							var md: MeasurementData = registry.measurement.get_by_id(picked_id)
+							if md != null:
+								_meas_move_dragging = true
+								_meas_move_offset_start = md.world_start - world_pos
+								_meas_move_offset_end = md.world_end - world_pos
+						return true
+					else:
+						# Click on empty space clears selection
+						if _selected_meas_id != "":
+							_selected_meas_id = ""
+							measurement_overlay.set_selected("")
+						return false
+				else:
+					# --- Button release: finish edit or move ---
+					if _meas_edit_dragging:
+						_meas_edit_dragging = false
+						var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+						if registry != null and registry.measurement != null:
+							var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
+							if md != null:
+								var edited := MeasurementData.from_dict(md.to_dict())
+								var final_pos := get_global_mouse_position()
+								if _meas_edit_which == "start":
+									edited.world_start = _snap_meas_to_ft_from(
+										final_pos, edited.world_end)
+								else:
+									edited.world_end = _snap_meas_to_ft(
+										final_pos)
+								measurement_edit_completed.emit(edited,
+									_meas_edit_old_start, _meas_edit_old_end)
+						return true
+					if _meas_move_dragging:
+						_meas_move_dragging = false
+						if _selected_meas_id != "":
+							var move_world := get_global_mouse_position()
+							var new_s := move_world + _meas_move_offset_start
+							var new_e := move_world + _meas_move_offset_end
+							measurement_move_completed.emit(_selected_meas_id, new_s, new_e)
+						return true
+		elif event is InputEventMouseMotion:
+			if _meas_edit_dragging:
+				var world_pos := get_global_mouse_position()
+				var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if registry != null and registry.measurement != null:
+					var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
+					if md != null:
+						var preview := MeasurementData.from_dict(md.to_dict())
+						if _meas_edit_which == "start":
+							preview.world_start = _snap_meas_to_ft_from(
+								world_pos, preview.world_end)
+						else:
+							preview.world_end = _snap_meas_to_ft(world_pos)
+						measurement_overlay.add_or_update(preview)
+				return true
+			if _meas_move_dragging:
+				var world_pos := get_global_mouse_position()
+				var new_s := world_pos + _meas_move_offset_start
+				var new_e := world_pos + _meas_move_offset_end
+				var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				if registry != null and registry.measurement != null:
+					var md: MeasurementData = registry.measurement.get_by_id(_selected_meas_id)
+					if md != null:
+						var preview := MeasurementData.from_dict(md.to_dict())
+						preview.world_start = new_s
+						preview.world_end = new_e
+						measurement_overlay.add_or_update(preview)
+				return true
+	return false
 
 
 func _handle_fog_wall_input(event: InputEvent) -> bool:

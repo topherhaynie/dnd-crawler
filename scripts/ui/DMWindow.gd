@@ -180,6 +180,14 @@ var _profiles_root: Control = null
 var _profile_color_btn: ColorPickerButton = null
 ## Legacy autoload reference removed — use registry-first `_network()` helper
 
+# ── Measurement panel ────────────────────────────────────────────────────────
+## Standalone floating window for measurement tools.
+var _measure_panel: Window = null
+## ButtonGroup shared by all 5 measure-tool buttons.
+var _measure_tool_group: ButtonGroup = null
+## ItemList showing all active measurement shapes (label + × delete button).
+var _measure_shape_list: ItemList = null
+
 # ── Player freeze panel ─────────────────────────────────────────────────────
 var _freeze_panel: Control = null
 var _freeze_panel_window: Window = null
@@ -294,7 +302,7 @@ func _ensure_history_bindings() -> void:
 	# Signal subscription: IHistoryService extends Node; signals live on the Node
 	# instance. RefCounted manager cannot re-emit them — approved narrow exception.
 	var svc: IHistoryService = registry.history.service
-	if not svc.is_connected("history_changed", Callable(self, "_refresh_history_menu")):
+	if not svc.is_connected("history_changed", Callable(self , "_refresh_history_menu")):
 		svc.history_changed.connect(_refresh_history_menu)
 	_refresh_history_menu()
 
@@ -553,6 +561,7 @@ func _build_ui() -> void:
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
 	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
+	_wire_measure_signals()
 	_backend = BackendRuntimeScript.new() as BackendRuntime
 	_backend.name = "BackendRuntime"
 	add_child(_backend)
@@ -639,6 +648,8 @@ func _build_ui() -> void:
 	_view_menu.add_item("Reset View", 22)
 	_view_menu.add_separator()
 	_view_menu.add_item("Sync Fog Now", 24)
+	_view_menu.add_separator()
+	_view_menu.add_item("Measurement Tools…", 26)
 	_view_menu.add_separator()
 	_view_menu.add_item("▶ Launch Player Window", 23)
 	_view_menu.id_pressed.connect(_on_view_menu_id)
@@ -1249,6 +1260,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_broadcast_player_viewport()
 	_broadcast_player_state()
 	_broadcast_token_state()
+	_broadcast_measurement_state()
 
 	# Retry if no ack and peer is still connected.
 	var retry_timer := get_tree().create_timer(1.0)
@@ -2039,6 +2051,8 @@ func _on_view_menu_id(id: int) -> void:
 				_map_view._reset_camera()
 		24: # Manual fog resync
 			_manual_fog_sync_now()
+		26: # Open measurement tools panel
+			_open_measure_panel()
 		23: # Launch player display process
 			_launch_player_process()
 
@@ -3724,6 +3738,390 @@ func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 
 ## Broadcast the full visible-token snapshot (called on initial client connect
 ## or after a map load that includes pre-existing tokens).
+func _broadcast_measurement_state() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var all_m: Array = registry.measurement.get_all()
+	var dicts: Array = []
+	for raw in all_m:
+		var md: MeasurementData = raw as MeasurementData
+		if md != null:
+			dicts.append(md.to_dict())
+	_nm_broadcast_to_displays({"msg": "measurement_state", "measurements": dicts})
+
+
+func _on_measurement_draw_completed(data: MeasurementData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var snapshot: Dictionary = data.to_dict()
+	var id: String = data.id
+	_meas_apply_add(data)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Add measurement",
+			func() -> void: _meas_apply_remove(id),
+			func() -> void: _meas_apply_add(MeasurementData.from_dict(snapshot)))
+		registry.history.push_command(cmd)
+
+
+func _on_measurement_delete_requested(id: String) -> void:
+	if id.is_empty():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var existing: MeasurementData = registry.measurement.get_by_id(id)
+	if existing == null:
+		return
+	var snapshot: Dictionary = existing.to_dict()
+	_meas_apply_remove(id)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Delete measurement",
+			func() -> void: _meas_apply_add(MeasurementData.from_dict(snapshot)),
+			func() -> void: _meas_apply_remove(id))
+		registry.history.push_command(cmd)
+
+
+func _on_measurement_move_completed(id: String, new_start: Vector2, new_end: Vector2) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var existing: MeasurementData = registry.measurement.get_by_id(id)
+	if existing == null:
+		return
+	var old_start: Vector2 = existing.world_start
+	var old_end: Vector2 = existing.world_end
+	_meas_apply_move(id, new_start, new_end)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Move measurement",
+			func() -> void: _meas_apply_move(id, old_start, old_end),
+			func() -> void: _meas_apply_move(id, new_start, new_end))
+		registry.history.push_command(cmd)
+
+
+func _on_measurement_edit_completed(data: MeasurementData, old_start: Vector2, old_end: Vector2) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var new_snapshot: Dictionary = data.to_dict()
+	_meas_apply_update(data)
+	if registry.history != null:
+		var old_data: MeasurementData = MeasurementData.from_dict(new_snapshot)
+		old_data.world_start = old_start
+		old_data.world_end = old_end
+		var old_snapshot: Dictionary = old_data.to_dict()
+		var cmd := HistoryCommand.create("Edit measurement",
+			func() -> void: _meas_apply_update(MeasurementData.from_dict(old_snapshot)),
+			func() -> void: _meas_apply_update(MeasurementData.from_dict(new_snapshot)))
+		registry.history.push_command(cmd)
+
+
+func _mark_map_dirty() -> void:
+	## Flush measurements back into MapData so the next save includes them.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.map == null:
+		return
+	var map: MapData = registry.map.get_map() as MapData
+	if map == null:
+		return
+	var all_m: Array = []
+	if registry.measurement != null:
+		for raw in registry.measurement.get_all():
+			var md: MeasurementData = raw as MeasurementData
+			if md != null:
+				all_m.append(md.to_dict())
+	map.measurements = all_m
+
+
+# ---------------------------------------------------------------------------
+# Measurement undo/redo apply helpers
+# ---------------------------------------------------------------------------
+
+func _meas_apply_add(data: MeasurementData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	registry.measurement.add(data)
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.add_or_update(data)
+	_nm_broadcast_to_displays({"msg": "measurement_added", "measurement": data.to_dict()})
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+func _meas_apply_remove(id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	registry.measurement.remove(id)
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.remove_shape(id)
+	_nm_broadcast_to_displays({"msg": "measurement_removed", "measurement_id": id})
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+func _meas_apply_move(id: String, new_start: Vector2, new_end: Vector2) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	registry.measurement.move(id, new_start, new_end)
+	if _map_view != null and _map_view.measurement_overlay != null:
+		var md: MeasurementData = registry.measurement.get_by_id(id)
+		if md != null:
+			_map_view.measurement_overlay.add_or_update(md)
+	_nm_broadcast_to_displays({
+		"msg": "measurement_moved",
+		"measurement_id": id,
+		"world_start": {"x": new_start.x, "y": new_start.y},
+		"world_end": {"x": new_end.x, "y": new_end.y},
+	})
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+func _meas_apply_update(data: MeasurementData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	registry.measurement.update(data)
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.add_or_update(data)
+	_nm_broadcast_to_displays({"msg": "measurement_updated", "measurement": data.to_dict()})
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+func _meas_apply_clear() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	registry.measurement.clear()
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.clear()
+	_nm_broadcast_to_displays({"msg": "measurement_state", "measurements": []})
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+func _meas_apply_restore(snapshots: Array) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	for raw in snapshots:
+		var d: Dictionary = raw as Dictionary
+		if d.is_empty():
+			continue
+		var md: MeasurementData = MeasurementData.from_dict(d)
+		registry.measurement.add(md)
+		if _map_view != null and _map_view.measurement_overlay != null:
+			_map_view.measurement_overlay.add_or_update(md)
+	_broadcast_measurement_state()
+	_refresh_measure_shape_list()
+	_mark_map_dirty()
+
+
+# ---------------------------------------------------------------------------
+# Measurement panel
+# ---------------------------------------------------------------------------
+
+func _open_measure_panel() -> void:
+	if _measure_panel != null and is_instance_valid(_measure_panel):
+		_measure_panel.grab_focus()
+		return
+	_measure_panel = Window.new()
+	_measure_panel.title = "Measurement Tools"
+	var s: float = _ui_scale()
+	var w: int = roundi(300.0 * s)
+	var h: int = roundi(480.0 * s)
+	_measure_panel.min_size = Vector2i(w, h)
+	_measure_panel.close_requested.connect(func() -> void:
+		if _measure_panel != null: _measure_panel.hide())
+	add_child(_measure_panel)
+	_build_measure_panel_contents()
+	_measure_panel.popup_centered(Vector2i(w, h))
+
+
+func _build_measure_panel_contents() -> void:
+	if _measure_panel == null:
+		return
+	var root := VBoxContainer.new()
+	var margin := MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 8)
+	margin.add_child(root)
+	_measure_panel.add_child(margin)
+
+	# Tool buttons
+	var title_lbl := Label.new()
+	title_lbl.text = "Draw Tool"
+	title_lbl.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
+	root.add_child(title_lbl)
+
+	_measure_tool_group = ButtonGroup.new()
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 4)
+	root.add_child(btn_row)
+
+	const TOOL_DEFS: Array = [
+		["╌", "Line", "measure_line"],
+		["◯", "Circle (radius)", "measure_circle"],
+		["◁", "Cone (D&D 5e)", "measure_cone"],
+		["□", "Square (rotatable)", "measure_square"],
+		["▭", "Rectangle", "measure_rect"],
+	]
+	for def in TOOL_DEFS:
+		var lbl: String = str(def[0])
+		var tt: String = str(def[1])
+		var key: String = str(def[2])
+		var btn := Button.new()
+		btn.text = lbl
+		btn.tooltip_text = tt
+		btn.toggle_mode = true
+		btn.button_group = _measure_tool_group
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(34.0 * _ui_scale()))
+		btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+		var k := key # capture
+		btn.pressed.connect(func(): _on_measure_tool_btn_pressed(k))
+		btn_row.add_child(btn)
+
+	root.add_child(HSeparator.new())
+
+	# Active shapes list
+	var shapes_lbl := Label.new()
+	shapes_lbl.text = "Active shapes"
+	shapes_lbl.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
+	root.add_child(shapes_lbl)
+
+	_measure_shape_list = ItemList.new()
+	_measure_shape_list.custom_minimum_size = Vector2(0, 140)
+	_measure_shape_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_measure_shape_list.focus_mode = Control.FOCUS_NONE
+	_measure_shape_list.item_selected.connect(_on_measure_shape_selected)
+	root.add_child(_measure_shape_list)
+	_refresh_measure_shape_list()
+
+	# Action buttons row
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 6)
+	root.add_child(action_row)
+
+	var del_btn := Button.new()
+	del_btn.text = "Delete Selected"
+	del_btn.focus_mode = Control.FOCUS_NONE
+	del_btn.pressed.connect(_on_measure_delete_selected_pressed)
+	action_row.add_child(del_btn)
+
+	var clear_btn := Button.new()
+	clear_btn.text = "Clear All"
+	clear_btn.focus_mode = Control.FOCUS_NONE
+	clear_btn.pressed.connect(_on_measure_clear_all_pressed)
+	action_row.add_child(clear_btn)
+
+
+## Wire measure signals from MapView (called after MapView is ready).
+func _wire_measure_signals() -> void:
+	if _map_view == null:
+		return
+	if not _map_view.is_connected("measurement_draw_completed",
+			Callable(self , "_on_measurement_draw_completed")):
+		_map_view.measurement_draw_completed.connect(_on_measurement_draw_completed)
+	if not _map_view.is_connected("measurement_delete_requested",
+			Callable(self , "_on_measurement_delete_requested")):
+		_map_view.measurement_delete_requested.connect(_on_measurement_delete_requested)
+	if not _map_view.is_connected("measurement_move_completed",
+			Callable(self , "_on_measurement_move_completed")):
+		_map_view.measurement_move_completed.connect(_on_measurement_move_completed)
+	if not _map_view.is_connected("measurement_edit_completed",
+			Callable(self , "_on_measurement_edit_completed")):
+		_map_view.measurement_edit_completed.connect(_on_measurement_edit_completed)
+
+
+func _on_measure_tool_btn_pressed(key: String) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_fog_tool(0, 64.0)
+	match key:
+		"measure_line":
+			_map_view._set_active_tool(_map_view.Tool.MEASURE_LINE)
+			_set_status("Measure: Line — click and drag to draw")
+		"measure_circle":
+			_map_view._set_active_tool(_map_view.Tool.MEASURE_CIRCLE)
+			_set_status("Measure: Circle — drag from centre to edge")
+		"measure_cone":
+			_map_view._set_active_tool(_map_view.Tool.MEASURE_CONE)
+			_set_status("Measure: Cone (D&D 5e RAW) — drag apex to length")
+		"measure_square":
+			_map_view._set_active_tool(_map_view.Tool.MEASURE_SQUARE)
+			_set_status("Measure: Square — drag to set size and rotation")
+		"measure_rect":
+			_map_view._set_active_tool(_map_view.Tool.MEASURE_RECT)
+			_set_status("Measure: Rectangle — drag to set length, width = half length")
+
+
+func _on_measure_clear_all_pressed() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var all_m: Array = registry.measurement.get_all()
+	if all_m.is_empty():
+		return
+	var snapshots: Array = []
+	for raw in all_m:
+		var md: MeasurementData = raw as MeasurementData
+		if md != null:
+			snapshots.append(md.to_dict())
+	_meas_apply_clear()
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Clear all measurements",
+			func() -> void: _meas_apply_restore(snapshots),
+			func() -> void: _meas_apply_clear())
+		registry.history.push_command(cmd)
+
+
+func _on_measure_shape_selected(idx: int) -> void:
+	if _measure_shape_list == null:
+		return
+	var shape_id: String = str(_measure_shape_list.get_item_metadata(idx))
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.set_selected(shape_id)
+
+
+func _on_measure_delete_selected_pressed() -> void:
+	if _measure_shape_list == null:
+		return
+	var selected_items: PackedInt32Array = _measure_shape_list.get_selected_items()
+	if selected_items.is_empty():
+		return
+	var shape_id: String = str(_measure_shape_list.get_item_metadata(selected_items[0]))
+	if shape_id.is_empty():
+		return
+	_on_measurement_delete_requested(shape_id)
+
+
+func _refresh_measure_shape_list() -> void:
+	if _measure_shape_list == null or not is_instance_valid(_measure_shape_list):
+		return
+	_measure_shape_list.clear()
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	const SHAPE_NAMES: Array = ["Line", "Circle", "Cone", "Square", "Rect"]
+	for raw in registry.measurement.get_all():
+		var md: MeasurementData = raw as MeasurementData
+		if md == null:
+			continue
+		var dist_px: float = md.world_start.distance_to(md.world_end)
+		var px_per_5ft: float = _pixels_per_5ft_current()
+		var ft: int = roundi(dist_px / (px_per_5ft / 5.0))
+		var shape_name: String = SHAPE_NAMES[clamp(md.shape_type, 0, SHAPE_NAMES.size() - 1)]
+		var item_text: String = "%s: %d ft" % [shape_name, ft]
+		var idx: int = _measure_shape_list.add_item(item_text)
+		_measure_shape_list.set_item_metadata(idx, md.id)
+
+
 func _broadcast_token_state() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null:
