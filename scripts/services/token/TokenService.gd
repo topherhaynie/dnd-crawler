@@ -146,9 +146,15 @@ func check_autopause_proximity(positions: Array, player_ids: Array) -> Array:
 			continue
 		if data.autopause_max_triggers > 0 and data._trigger_count >= data.autopause_max_triggers:
 			continue
+		# When autopause_on_collision is set, use the token's own body radius
+		# instead of the larger trigger_radius_px.  This means the player must
+		# actually step onto the token (e.g. a trap) to trigger the pause.
+		var radius: float = data.trigger_radius_px
+		if data.autopause_on_collision:
+			radius = maxf(data.width_px, data.height_px) * 0.5
 		for i in range(positions.size()):
 			var pp: Vector2 = positions[i] as Vector2
-			if data.world_pos.distance_to(pp) > data.trigger_radius_px:
+			if data.world_pos.distance_to(pp) > radius:
 				continue
 			var pid: String = str(player_ids[i]) if i < player_ids.size() else ""
 			if pid.is_empty() or triggered.has(pid):

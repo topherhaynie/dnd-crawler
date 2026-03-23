@@ -61,6 +61,11 @@ var trigger_radius_px: float = 96.0
 ## Maximum number of times an autopause trigger fires for this token.
 ## 0 = unlimited. Decremented at runtime by TokenService.
 var autopause_max_triggers: int = 0
+## When true, autopause only fires when a player overlaps the token’s body
+## (collision) rather than when they enter trigger_radius_px.  This lets
+## perception checks still use the larger radius while autopause requires
+## actually stepping onto the token.  Defaults true for TRAP tokens.
+var autopause_on_collision: bool = false
 ## Runtime-only autopause trigger count. NOT serialised.
 @warning_ignore("unused_private_class_variable")
 var _trigger_count: int = 0
@@ -134,6 +139,7 @@ func to_dict() -> Dictionary:
 		"blocks_los": blocks_los,
 		"trigger_radius_px": trigger_radius_px,
 		"autopause_max_triggers": autopause_max_triggers,
+		"autopause_on_collision": autopause_on_collision,
 		"passage_paths": _serialize_passage_paths(),
 		"passage_width_px": passage_width_px,
 	}
@@ -163,6 +169,7 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.blocks_los = bool(d.get("blocks_los", true))
 	t.trigger_radius_px = float(d.get("trigger_radius_px", 96.0))
 	t.autopause_max_triggers = int(d.get("autopause_max_triggers", 0))
+	t.autopause_on_collision = bool(d.get("autopause_on_collision", false))
 	t.passage_width_px = float(d.get("passage_width_px", 48.0))
 	t.passage_paths = _deserialize_passage_paths(d)
 	return t

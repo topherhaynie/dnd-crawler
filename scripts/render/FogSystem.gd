@@ -128,6 +128,11 @@ func _on_fog_model_changed() -> void:
 	if _history_gpu_ready:
 		if _viewport_local and _fog_world_rect.size.x > 0:
 			_crop_and_seed_from_model_history()
+		elif _viewport_local:
+			# Rect not yet established — update_viewport_rect() will seed from
+			# the CPU model once the camera position is known.  Seeding at the
+			# base resolution here would be immediately discarded by the resize.
+			return
 		else:
 			_seed_gpu_history_from_image(model.history_image)
 	_queue_los_full_bake()
@@ -208,6 +213,11 @@ func _process(_delta: float) -> void:
 	if _history_seed_pending:
 		_history_seed_pending = false
 		_apply_shader_uniforms()
+		# Seed viewport(s) just queued UPDATE_ONCE — they haven't rendered yet.
+		# Defer the bake by one frame so the seed texture is ready before the
+		# merge shader reads from it.
+		_los_bake_pending = true
+		return
 	# Paint-deferred: the paint viewport queued an UPDATE_ONCE this frame but
 	# hasn't rendered yet (rendering follows _process). Mark the LOS bake pending
 	# and return — the bake will fire next frame with a fresh paint texture.
@@ -361,6 +371,11 @@ func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2
 	var clamped := padded.intersection(map_rect)
 	if clamped.size.x < 1.0 or clamped.size.y < 1.0:
 		return
+	# Write back the current GPU history into the CPU model before changing
+	# the viewport rect.  This preserves LOS-accumulated reveals that only
+	# exist on the GPU so the next _crop_and_seed_from_model_history() picks
+	# them up from the model instead of losing them.
+	_writeback_gpu_history_to_model()
 	_fog_world_rect = clamped
 	_fog_size = Vector2i(maxi(1, int(clamped.size.x)), maxi(1, int(clamped.size.y)))
 	_fog_scale = 1.0
@@ -372,6 +387,61 @@ func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2
 	if DEBUG_FOG_TELEMETRY:
 		print("FogSystem: viewport_rect updated (rect=%s fog_size=%s)" % [
 			str(_fog_world_rect), str(_fog_size)])
+
+
+func _writeback_gpu_history_to_model() -> void:
+	## Read the active GPU history texture and merge it back into the CPU
+	## model's history_image.  This captures LOS-accumulated reveals that
+	## only exist on the GPU so they survive viewport-local rect changes.
+	if not _history_gpu_ready or _fog_world_rect.size.x <= 0:
+		return
+	var model := _fog_model()
+	if model == null or model.history_image == null or model.history_image.is_empty():
+		return
+	var gpu_tex := _get_active_history_texture()
+	if gpu_tex == null:
+		return
+	var gpu_img := gpu_tex.get_image()
+	if gpu_img == null or gpu_img.is_empty():
+		return
+	gpu_img.convert(Image.FORMAT_L8)
+	var dest := model.history_image
+	var dw := dest.get_width()
+	var dh := dest.get_height()
+	if dw < 1 or dh < 1:
+		return
+	# Map the current _fog_world_rect to pixel coords in the dest image.
+	var scale_x := float(dw) / _map_size.x
+	var scale_y := float(dh) / _map_size.y
+	var dst_x := clampi(roundi(_fog_world_rect.position.x * scale_x), 0, dw - 1)
+	var dst_y := clampi(roundi(_fog_world_rect.position.y * scale_y), 0, dh - 1)
+	var dst_w := clampi(roundi(_fog_world_rect.size.x * scale_x), 1, dw - dst_x)
+	var dst_h := clampi(roundi(_fog_world_rect.size.y * scale_y), 1, dh - dst_y)
+	# Down-scale GPU image to match the destination region size.
+	if gpu_img.get_width() != dst_w or gpu_img.get_height() != dst_h:
+		gpu_img.resize(dst_w, dst_h, Image.INTERPOLATE_BILINEAR)
+	# Merge using byte-level max() — never darken already-revealed pixels.
+	var gpu_data := gpu_img.get_data()
+	var cpu_crop := dest.get_region(Rect2i(dst_x, dst_y, dst_w, dst_h))
+	if cpu_crop == null or cpu_crop.is_empty():
+		dest.blit_rect(gpu_img, Rect2i(0, 0, dst_w, dst_h), Vector2i(dst_x, dst_y))
+		return
+	var cpu_data := cpu_crop.get_data()
+	var count := mini(gpu_data.size(), cpu_data.size())
+	var merged := PackedByteArray()
+	merged.resize(count)
+	var any_change := false
+	for i in range(count):
+		var g := gpu_data[i]
+		var c := cpu_data[i]
+		if g > c:
+			merged[i] = g
+			any_change = true
+		else:
+			merged[i] = c
+	if any_change:
+		var merged_img := Image.create_from_data(dst_w, dst_h, false, Image.FORMAT_L8, merged)
+		dest.blit_rect(merged_img, Rect2i(0, 0, dst_w, dst_h), Vector2i(dst_x, dst_y))
 
 
 func _crop_and_seed_from_model_history() -> void:

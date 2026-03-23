@@ -117,6 +117,7 @@ var _token_category_option: OptionButton = null
 var _token_visible_check: CheckBox = null
 var _token_perception_spin: SpinBox = null
 var _token_autopause_check: CheckBox = null
+var _token_autopause_collision_check: CheckBox = null
 var _token_pause_interact_check: CheckBox = null
 var _token_auto_reveal_check: CheckBox = null
 var _token_trigger_spin: SpinBox = null
@@ -206,7 +207,7 @@ const _FOG_DELTA_MAX_CELLS: int = 1200
 const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
 const DEBUG_FOG_SNAPSHOT: bool = false
 const DEBUG_FOG_TELEMETRY: bool = false
-const _PERCEPTION_CHECK_INTERVAL: float = 2.0
+const _PERCEPTION_CHECK_INTERVAL: float = 0.25
 var _perception_timer: float = 0.0
 var _broadcast_dirty: bool = false
 var _broadcast_countdown: float = 0.0
@@ -1239,6 +1240,8 @@ func _on_viewport_indicator_moved(new_center: Vector2) -> void:
 	_player_cam_pos = new_center
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
+	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
+	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 
 
 func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
@@ -1273,6 +1276,8 @@ func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
 	_broadcast_player_viewport()
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
+	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
+	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 
 
 func _lock_to_aspect(size: Vector2, reference: Vector2) -> Vector2:
@@ -3055,6 +3060,8 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_autopause_check.button_pressed = data.autopause
 	if _token_autopause_max_spin != null:
 		_token_autopause_max_spin.value = float(data.autopause_max_triggers)
+	if _token_autopause_collision_check != null:
+		_token_autopause_collision_check.button_pressed = data.autopause_on_collision
 	if _token_pause_interact_check != null:
 		_token_pause_interact_check.button_pressed = data.pause_on_interact
 	if _token_shape_option != null:
@@ -3225,6 +3232,17 @@ func _build_token_editor_dialog() -> void:
 	ap_row.add_child(_token_autopause_check)
 	vbox.add_child(ap_row)
 
+	# Autopause on collision only (e.g. traps)
+	var ac_row := HBoxContainer.new()
+	var ac_label := Label.new()
+	ac_label.text = "Collision only:"
+	ac_label.custom_minimum_size = Vector2(120, 0)
+	ac_row.add_child(ac_label)
+	_token_autopause_collision_check = CheckBox.new()
+	_token_autopause_collision_check.tooltip_text = "Only trigger autopause when a player walks onto the token (not at trigger radius)"
+	ac_row.add_child(_token_autopause_collision_check)
+	vbox.add_child(ac_row)
+
 	# Max Autopause Triggers
 	var mt_row := HBoxContainer.new()
 	var mt_label := Label.new()
@@ -3295,6 +3313,9 @@ func _on_token_category_changed(idx: int) -> void:
 	var is_door_type: bool = cat == TokenData.TokenCategory.DOOR or cat == TokenData.TokenCategory.SECRET_PASSAGE
 	if _token_blocks_los_row != null:
 		_token_blocks_los_row.visible = is_door_type
+	# Default collision-only autopause for traps.
+	if _token_autopause_collision_check != null and cat == TokenData.TokenCategory.TRAP:
+		_token_autopause_collision_check.button_pressed = true
 
 
 func _on_token_editor_confirmed() -> void:
@@ -3304,6 +3325,7 @@ func _on_token_editor_confirmed() -> void:
 	var perc_dc: int = int(_token_perception_spin.value) if _token_perception_spin != null else -1
 	var do_auto_reveal: bool = _token_auto_reveal_check.button_pressed if _token_auto_reveal_check != null else false
 	var do_ap: bool = _token_autopause_check.button_pressed if _token_autopause_check != null else false
+	var do_ap_collision: bool = _token_autopause_collision_check.button_pressed if _token_autopause_collision_check != null else false
 	var max_triggers: int = int(_token_autopause_max_spin.value) if _token_autopause_max_spin != null else 0
 	var trigger_feet: float = _token_trigger_spin.value if _token_trigger_spin != null else 30.0
 	var trigger_px: float = trigger_feet / 5.0 * _pixels_per_5ft_current()
@@ -3337,6 +3359,7 @@ func _on_token_editor_confirmed() -> void:
 	data.auto_reveal = do_auto_reveal
 	data.autopause = do_ap
 	data.autopause_max_triggers = max_triggers
+	data.autopause_on_collision = do_ap_collision
 	data.trigger_radius_px = trigger_px
 	data.pause_on_interact = do_pi
 	data.notes = notes_text
