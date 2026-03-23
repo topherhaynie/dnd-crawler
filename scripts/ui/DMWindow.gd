@@ -35,6 +35,11 @@ var _cal_tool: Node = null ## CalibrationTool instance
 var _file_dialog: FileDialog = null
 var _cal_dialog: ConfirmationDialog = null
 var _manual_scale_dialog: ConfirmationDialog = null
+## Content-root VBoxContainers for each small dialog — scaled in _apply_ui_scale().
+var _cal_dialog_root: Control = null
+var _manual_scale_dialog_root: Control = null
+var _offset_dialog_root: Control = null
+var _token_editor_dialog_root: Control = null
 
 var _feet_spin: SpinBox = null ## calibration: feet input
 var _offset_x_spin: SpinBox = null ## calibration: grid offset X
@@ -289,7 +294,7 @@ func _ensure_history_bindings() -> void:
 	# Signal subscription: IHistoryService extends Node; signals live on the Node
 	# instance. RefCounted manager cannot re-emit them — approved narrow exception.
 	var svc: IHistoryService = registry.history.service
-	if not svc.is_connected("history_changed", Callable(self, "_refresh_history_menu")):
+	if not svc.is_connected("history_changed", Callable(self , "_refresh_history_menu")):
 		svc.history_changed.connect(_refresh_history_menu)
 	_refresh_history_menu()
 
@@ -976,6 +981,7 @@ func _build_ui() -> void:
 
 	var cal_vbox := VBoxContainer.new()
 	cal_vbox.add_theme_constant_override("separation", 8)
+	_cal_dialog_root = cal_vbox
 
 	var feet_label := Label.new()
 	feet_label.text = "Distance spanned (feet):"
@@ -1040,6 +1046,7 @@ func _build_ui() -> void:
 
 	var ms_vbox := VBoxContainer.new()
 	ms_vbox.add_theme_constant_override("separation", 8)
+	_manual_scale_dialog_root = ms_vbox
 
 	var ms_grid := GridContainer.new()
 	ms_grid.columns = 2
@@ -1120,6 +1127,7 @@ func _build_ui() -> void:
 
 	var solo_vbox := VBoxContainer.new()
 	solo_vbox.add_theme_constant_override("separation", 8)
+	_offset_dialog_root = solo_vbox
 
 	var solo_hint := Label.new()
 	solo_hint.text = "Nudge the grid origin to align it to map tiles:"
@@ -2152,7 +2160,7 @@ func _on_manual_scale_pressed() -> void:
 		_:
 			_scale_px_spin.value = map.hex_size * 2.0
 	_scale_ft_spin.value = 5.0
-	_manual_scale_dialog.popup_centered(Vector2i(360, 160))
+	_manual_scale_dialog.popup_centered(Vector2i(roundi(360 * _ui_scale()), roundi(180 * _ui_scale())))
 
 
 func _on_manual_scale_confirmed() -> void:
@@ -2185,7 +2193,7 @@ func _on_set_offset_pressed() -> void:
 		return
 	_solo_offset_x_spin.value = map.grid_offset.x
 	_solo_offset_y_spin.value = map.grid_offset.y
-	_offset_dialog.popup_centered(Vector2i(320, 160))
+	_offset_dialog.popup_centered(Vector2i(roundi(320 * _ui_scale()), roundi(200 * _ui_scale())))
 
 
 func _on_offset_confirmed() -> void:
@@ -3286,6 +3294,7 @@ func _open_token_editor(data: TokenData) -> void:
 	_token_editor_id = data.id
 	if _token_editor_dialog == null:
 		_build_token_editor_dialog()
+		_apply_ui_scale()
 	# Populate fields from data.
 	if _token_label_edit != null:
 		_token_label_edit.text = data.label
@@ -3332,7 +3341,7 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
 		## Store the new-token world_pos in meta so confirm can read it.
 		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
-		_token_editor_dialog.popup_centered(Vector2i(420, 620))
+		_token_editor_dialog.popup_centered(Vector2i(roundi(440 * _ui_scale()), roundi(640 * _ui_scale())))
 
 
 func _build_token_editor_dialog() -> void:
@@ -3344,6 +3353,7 @@ func _build_token_editor_dialog() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
+	_token_editor_dialog_root = vbox
 	_token_editor_dialog.add_child(vbox)
 
 	# Label
@@ -4754,6 +4764,35 @@ func _apply_ui_scale() -> void:
 			close_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
 	if _profiles_root:
 		_profiles_root.scale = Vector2(scale, scale)
+
+	# ── Small-dialog content & button scaling ────────────────────────────────
+	if _cal_dialog_root:
+		_cal_dialog_root.scale = Vector2(scale, scale)
+		_cal_dialog.min_size = Vector2i(roundi(340 * scale), roundi(280 * scale))
+		_scale_dialog_btn(_cal_dialog.get_ok_button(), scale)
+		_scale_dialog_btn(_cal_dialog.get_cancel_button(), scale)
+	if _manual_scale_dialog_root:
+		_manual_scale_dialog_root.scale = Vector2(scale, scale)
+		_manual_scale_dialog.min_size = Vector2i(roundi(360 * scale), roundi(180 * scale))
+		_scale_dialog_btn(_manual_scale_dialog.get_ok_button(), scale)
+		_scale_dialog_btn(_manual_scale_dialog.get_cancel_button(), scale)
+	if _offset_dialog_root:
+		_offset_dialog_root.scale = Vector2(scale, scale)
+		_offset_dialog.min_size = Vector2i(roundi(320 * scale), roundi(200 * scale))
+		_scale_dialog_btn(_offset_dialog.get_ok_button(), scale)
+		_scale_dialog_btn(_offset_dialog.get_cancel_button(), scale)
+	if _token_editor_dialog_root:
+		_token_editor_dialog_root.scale = Vector2(scale, scale)
+		_token_editor_dialog.min_size = Vector2i(roundi(440 * scale), roundi(640 * scale))
+		_scale_dialog_btn(_token_editor_dialog.get_ok_button(), scale)
+		_scale_dialog_btn(_token_editor_dialog.get_cancel_button(), scale)
+
+
+func _scale_dialog_btn(btn: BaseButton, scale: float) -> void:
+	if btn == null:
+		return
+	btn.custom_minimum_size = Vector2(roundi(110.0 * scale), roundi(34.0 * scale))
+	btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
 
 
 func _ui_scale() -> float:
