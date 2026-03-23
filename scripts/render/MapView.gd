@@ -209,6 +209,7 @@ signal fog_changed(map: MapData)
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
 signal spawn_points_changed(map: MapData)
+signal spawn_point_selected(idx: int)
 @warning_ignore("unused_signal")
 signal measurement_draw_completed(data: MeasurementData)
 @warning_ignore("unused_signal")
@@ -1296,7 +1297,7 @@ func _update_cursor(world_pos: Vector2) -> void:
 		shape = DisplayServer.CURSOR_MOVE
 	elif _resizing_indicator:
 		shape = DisplayServer.CURSOR_DRAG
-	elif active_tool == Tool.SELECT:
+	elif active_tool == Tool.SELECT or active_tool == Tool.PLACE_TOKEN:
 		var handle_result: Dictionary = _hit_test_token_handle(world_pos)
 		var token_hit: Variant = null
 		if handle_result.is_empty():
@@ -1616,9 +1617,55 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_LEFT:
 				if btn_event.pressed:
-					# Place Token tool — emit world position and consume event.
+					# Place Token tool — handle hit (resize/rotate) takes
+					# priority, then body hit (select/drag), then place new.
 					if active_tool == Tool.PLACE_TOKEN:
-						token_place_requested.emit(get_global_mouse_position())
+						var pt_world := get_global_mouse_position()
+						# Handle hit-test first (resize / rotate / trigger-radius).
+						var pt_handle: Dictionary = _hit_test_token_handle(pt_world)
+						if not pt_handle.is_empty():
+							var htid: Variant = pt_handle.get("token_id", null)
+							var hdl: int = int(pt_handle.get("handle", -1))
+							var handle_node: Node2D = _draggable_tokens.get(htid, null) as Node2D
+							if handle_node != null and is_instance_valid(handle_node):
+								if hdl == 8:
+									_rotating_token_id = htid
+									_rotate_token_node = handle_node
+									_rotate_start_angle = handle_node.rotation
+									_rotate_start_mouse_angle = atan2(
+											pt_world.y - handle_node.global_position.y,
+											pt_world.x - handle_node.global_position.x)
+								elif hdl == 9:
+									_trigger_radius_dragging_id = htid
+									_trigger_radius_drag_node = handle_node
+								else:
+									_resizing_token_id = htid
+									_resize_token_node = handle_node
+									_resize_token_handle_idx = hdl
+									_resize_start_width = 48.0
+									_resize_start_height = 48.0
+									var handle_ts := handle_node as TokenSprite
+									if handle_ts != null:
+										_resize_start_width = handle_ts.get_token_width_px()
+										_resize_start_height = handle_ts.get_token_height_px()
+									_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
+								_update_cursor(pt_world)
+								get_viewport().set_input_as_handled()
+								return
+						# Body hit-test — select / drag existing token.
+						var pt_hit: Variant = _hit_test_tokens(pt_world)
+						if pt_hit != null:
+							var pt_node: Node2D = _draggable_tokens.get(pt_hit, null) as Node2D
+							if pt_node != null and is_instance_valid(pt_node):
+								token_selected.emit(str(pt_hit))
+								_dragging_token_id = pt_hit
+								_dragging_token_node = pt_node
+								_dragging_token_offset = pt_node.global_position - pt_world
+								token_drag_started.emit(pt_hit)
+								_update_cursor(pt_world)
+								get_viewport().set_input_as_handled()
+								return
+						token_place_requested.emit(pt_world)
 						get_viewport().set_input_as_handled()
 						return
 					# Token interaction — handle hit (resize/rotate) takes priority over body move.
@@ -1741,7 +1788,7 @@ func _unhandled_input(event: InputEvent) -> void:
 						_panning = false
 						get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_RIGHT:
-				if btn_event.pressed and active_tool == Tool.SELECT:
+				if btn_event.pressed and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_TOKEN):
 					var world_pos_r := get_global_mouse_position()
 					var hit_id_r: Variant = _hit_test_tokens(world_pos_r)
 					if hit_id_r != null:
@@ -3057,17 +3104,31 @@ func _rebuild_spawn_markers(map: MapData) -> void:
 		var sp: Dictionary = map.spawn_points[i]
 		var pos := Vector2(float(sp.get("x", 0.0)), float(sp.get("y", 0.0)))
 		var label_text: String = str(sp.get("label", ""))
-		_create_spawn_marker(pos, label_text, i)
+		var profile_id: String = str(sp.get("profile_id", ""))
+		_create_spawn_marker(pos, label_text, i, profile_id)
 
 
-func _create_spawn_marker(pos: Vector2, label_text: String, idx: int) -> Node2D:
+func _create_spawn_marker(pos: Vector2, label_text: String, idx: int, profile_id: String = "") -> Node2D:
 	var marker := Node2D.new()
 	marker.name = "Spawn_%d" % idx
 	marker.position = pos
 	marker.set_meta("spawn_index", idx)
 
-	# Circle
-	var circle := _make_spawn_circle(idx == _selected_spawn_index)
+	# Resolve profile color and display name when a profile is assigned.
+	var marker_color: Color = SPAWN_MARKER_COLOR
+	var profile_name: String = ""
+	if not profile_id.is_empty():
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry != null and registry.profile != null:
+			var profile: Variant = registry.profile.get_profile_by_id(profile_id)
+			if profile != null and profile is PlayerProfile:
+				var pp := profile as PlayerProfile
+				marker_color = pp.indicator_color
+				profile_name = pp.player_name
+
+	# Circle — use profile color when assigned, otherwise default green.
+	var is_selected: bool = idx == _selected_spawn_index
+	var circle := _make_spawn_circle(is_selected, marker_color)
 	circle.name = "Circle"
 	marker.add_child(circle)
 
@@ -3076,8 +3137,9 @@ func _create_spawn_marker(pos: Vector2, label_text: String, idx: int) -> Node2D:
 	icon.name = "Icon"
 	marker.add_child(icon)
 
-	# Label
-	if not label_text.is_empty():
+	# Build display label: profile name takes priority, then user label.
+	var display_label: String = profile_name if not profile_name.is_empty() else label_text
+	if not display_label.is_empty():
 		var lbl := Label.new()
 		lbl.name = "Label"
 		lbl.text = label_text
@@ -3092,8 +3154,8 @@ func _create_spawn_marker(pos: Vector2, label_text: String, idx: int) -> Node2D:
 	return marker
 
 
-func _make_spawn_circle(selected: bool) -> Polygon2D:
-	var color := SPAWN_MARKER_SELECTED_COLOR if selected else SPAWN_MARKER_COLOR
+func _make_spawn_circle(selected: bool, base_color: Color = SPAWN_MARKER_COLOR) -> Polygon2D:
+	var color := SPAWN_MARKER_SELECTED_COLOR if selected else base_color
 	var pts := PackedVector2Array()
 	var segments: int = 24
 	for i in range(segments):
@@ -3196,15 +3258,18 @@ func move_spawn_point(idx: int, world_pos: Vector2) -> void:
 		return
 	_map.spawn_points[idx]["x"] = world_pos.x
 	_map.spawn_points[idx]["y"] = world_pos.y
-	# Update marker position directly without full rebuild
+	# Update marker position directly without full rebuild.
+	# Do NOT emit spawn_points_changed here — it fires every mouse-motion
+	# frame during drag and spams the status bar.  The drag-end handler in
+	# _handle_spawn_point_input emits the signal once on mouse-up.
 	if spawn_point_layer and idx < spawn_point_layer.get_child_count():
 		spawn_point_layer.get_child(idx).position = world_pos
-	spawn_points_changed.emit(_map)
 
 
 func select_spawn_point(idx: int) -> void:
 	_selected_spawn_index = idx
 	_rebuild_spawn_markers(_map)
+	spawn_point_selected.emit(idx)
 
 
 func _handle_spawn_point_input(event: InputEvent) -> bool:

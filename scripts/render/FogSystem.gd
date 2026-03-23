@@ -24,9 +24,10 @@ const MAX_DIRTY_REGIONS: int = 12
 ## The fog overlay is rendered at world size and UV-mapped, so visual quality
 ## degrades gracefully while VRAM stays bounded.
 const MAX_FOG_DIM: int = 2048
-## World-space padding around the player's visible area for viewport-local
-## fog SubViewports.  Prevents re-seeding on small camera movements.
-const VIEWPORT_MARGIN_PX: float = 256.0
+## Maximum world-space padding around the player's visible area for
+## viewport-local fog SubViewports.  Scaled down for small maps so the
+## viewport covers the entire map and avoids constant re-seeding.
+const VIEWPORT_MARGIN_PX_MAX: float = 256.0
 
 # === State ===
 
@@ -83,12 +84,16 @@ var _radial_texture: Texture2D = null
 # --- Light tracking ---
 var _live_light_by_token_id: Dictionary = {}
 var _live_light_state_by_token_id: Dictionary = {}
+var _live_light_config_by_token_id: Dictionary = {}
 var _fallback_black_texture: ImageTexture = null
 var _debug_los_bakes_frame: int = 0
 var _debug_last_metrics_msec: int = 0
 var _los_bake_pending: bool = true
 var _last_los_bake_msec: int = 0
 var _los_dirty_regions: Array = []
+## Set after a LOS bake has occurred — cleared after _writeback_gpu_history_to_model()
+## so we only do the expensive GPU→CPU readback when the GPU history has actually changed.
+var _gpu_history_dirty: bool = false
 
 
 # === Registry Helpers ===
@@ -344,10 +349,21 @@ func apply_history_seed_delta(revealed_cells: Array, hidden_cells: Array, cell_p
 # === Viewport-Local Fog ===
 
 
+func _viewport_margin_px() -> float:
+	## Adaptive margin: use up to 256 px, but cap at 25% of the smallest map
+	## dimension.  For small maps this makes the fog viewport cover the entire
+	## map, eliminating viewport-rect thrashing and expensive re-seeds.
+	return minf(VIEWPORT_MARGIN_PX_MAX, minf(_map_size.x, _map_size.y) * 0.25)
+
+
 func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2, rotation_deg: int = 0) -> void:
 	## Called every frame by the player MapView.  Re-positions and re-sizes
 	## the fog SubViewports when the camera moves beyond the current margin.
 	if not _viewport_local or not _fog_enabled:
+		return
+	# If the fog rect already covers the entire map, no rect change is possible.
+	var map_rect := Rect2(Vector2.ZERO, _map_size)
+	if _fog_world_rect.size.x > 0 and _fog_world_rect.encloses(map_rect):
 		return
 	# Compute world-space visible rect, accounting for camera rotation.
 	# When the camera is rotated, the axis-aligned bounding box of the
@@ -365,9 +381,8 @@ func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2
 	if _fog_world_rect.size.x > 0 and _fog_world_rect.encloses(visible_rect):
 		return
 	# Pad and clamp to map bounds.
-	var margin_world := VIEWPORT_MARGIN_PX / maxf(zoom, 0.01)
+	var margin_world := _viewport_margin_px() / maxf(zoom, 0.01)
 	var padded := visible_rect.grow(margin_world)
-	var map_rect := Rect2(Vector2.ZERO, _map_size)
 	var clamped := padded.intersection(map_rect)
 	if clamped.size.x < 1.0 or clamped.size.y < 1.0:
 		return
@@ -375,10 +390,12 @@ func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2
 	# the viewport rect.  This preserves LOS-accumulated reveals that only
 	# exist on the GPU so the next _crop_and_seed_from_model_history() picks
 	# them up from the model instead of losing them.
-	_writeback_gpu_history_to_model()
+	if _gpu_history_dirty:
+		_writeback_gpu_history_to_model()
 	_fog_world_rect = clamped
 	_fog_size = Vector2i(maxi(1, int(clamped.size.x)), maxi(1, int(clamped.size.y)))
 	_fog_scale = 1.0
+	_live_light_config_by_token_id.clear()
 	_resize_buffers_and_nodes()
 	_apply_shader_uniforms()
 	_crop_and_seed_from_model_history()
@@ -442,6 +459,7 @@ func _writeback_gpu_history_to_model() -> void:
 	if any_change:
 		var merged_img := Image.create_from_data(dst_w, dst_h, false, Image.FORMAT_L8, merged)
 		dest.blit_rect(merged_img, Rect2i(0, 0, dst_w, dst_h), Vector2i(dst_x, dst_y))
+	_gpu_history_dirty = false
 
 
 func _crop_and_seed_from_model_history() -> void:
@@ -496,7 +514,27 @@ func sync_player_revealers(tokens: Array) -> void:
 
 		var light := _sync_or_create_vision_light(token_id)
 		var src := token.get_node_or_null("PointLight2D") as PointLight2D
-		_configure_vision_light(light, src, token)
+
+		# Fast-path: skip full _configure_vision_light when nothing changed.
+		var reveal_world := token.get_fog_reveal_position()
+		var reveal_local: Vector2
+		if _viewport_local and _fog_world_rect.size.x > 0:
+			reveal_local = reveal_world - _fog_world_rect.position
+		else:
+			reveal_local = reveal_world * _fog_scale
+		var src_energy: float = src.energy if src != null else -1.0
+		var prev_cfg: Dictionary = _live_light_config_by_token_id.get(token_id, {}) as Dictionary
+		var cfg_changed: bool = prev_cfg.is_empty() \
+			or light.position.distance_to(reveal_local) > 0.5 \
+			or absf(light.rotation - token.rotation) > 0.001 \
+			or absf(prev_cfg.get("energy", -999.0) as float - src_energy) > 0.001
+		if cfg_changed:
+			_configure_vision_light(light, src, token)
+			_live_light_config_by_token_id[token_id] = {
+				"position": reveal_local,
+				"energy": src_energy,
+				"rotation": token.rotation,
+			}
 
 		var radius_px := _estimate_light_radius_px(light, src)
 		_mark_light_movement_dirty(token_id, light.position, radius_px)
@@ -579,6 +617,7 @@ func _remove_stale_lights(seen_ids: Dictionary) -> void:
 			(stale as Node).queue_free()
 		_live_light_by_token_id.erase(token_id)
 		_live_light_state_by_token_id.erase(token_id)
+		_live_light_config_by_token_id.erase(token_id)
 
 
 # === Wall / Occluder Management ===
@@ -878,6 +917,7 @@ func _bake_live_los_into_history() -> void:
 		_history_swap_pending = true
 		_history_pending_target_index = dst_idx
 		_los_bake_pending = false
+		_gpu_history_dirty = true
 		_los_dirty_regions.clear()
 		_last_los_bake_msec = Time.get_ticks_msec()
 		if DEBUG_FOG_TELEMETRY:

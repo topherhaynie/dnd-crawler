@@ -272,24 +272,48 @@ func _ensure_spawn_positions() -> void:
 	# Build spawn point list from MapData (if any).
 	var spawn_pts: Array = map.spawn_points if map.spawn_points.size() > 0 else []
 
-	var idx := 0
+	# First pass: build a map of profile_id → spawn point for explicit bindings.
+	var bound_profiles: Dictionary = {}
+	var bound_spawns: Dictionary = {}
+	for sp_idx in range(spawn_pts.size()):
+		var sp: Dictionary = spawn_pts[sp_idx] as Dictionary
+		var pid: String = str(sp.get("profile_id", ""))
+		if not pid.is_empty():
+			bound_profiles[pid] = sp
+			bound_spawns[sp_idx] = true
+
+	# Collect unbound spawn points for round-robin fallback.
+	var unbound_spawns: Array = []
+	for sp_idx in range(spawn_pts.size()):
+		if not bound_spawns.has(sp_idx):
+			unbound_spawns.append(spawn_pts[sp_idx])
+
+	var rr_idx := 0
 	for profile in gs.list_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
 		var current: Vector2 = gs.player_positions.get(p.id, Vector2.ZERO)
 		if current == Vector2.ZERO and not has_active_save:
-			# Assign to a spawn point (round-robin) or fall back to centre grid
-			if spawn_pts.size() > 0:
-				var sp: Dictionary = spawn_pts[idx % spawn_pts.size()] as Dictionary
+			# Check for explicit profile_id binding first.
+			if bound_profiles.has(p.id):
+				var sp: Dictionary = bound_profiles[p.id] as Dictionary
 				gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+			elif unbound_spawns.size() > 0:
+				var sp: Dictionary = unbound_spawns[rr_idx % unbound_spawns.size()] as Dictionary
+				gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+				rr_idx += 1
+			elif spawn_pts.size() > 0:
+				var sp: Dictionary = spawn_pts[rr_idx % spawn_pts.size()] as Dictionary
+				gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+				rr_idx += 1
 			else:
-				gs.player_positions[p.id] = origin + Vector2((idx % 4) * 40.0, floor(float(idx) / 4.0) * 40.0)
+				gs.player_positions[p.id] = origin + Vector2((rr_idx % 4) * 40.0, floor(float(rr_idx) / 4.0) * 40.0)
+				rr_idx += 1
 		_ensure_token(p)
 		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
 		if token and is_instance_valid(token):
 			token.global_position = gs.player_positions[p.id]
-		idx += 1
 	_spawn_initialized = true
 
 

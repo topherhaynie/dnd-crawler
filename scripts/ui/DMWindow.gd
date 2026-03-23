@@ -81,6 +81,8 @@ var _fog_btn: Button = null ## palette fog toggle button
 var _wall_mode_option: OptionButton = null ## context panel wall mode selector
 var _wall_tool_dropdown: OptionButton = null ## palette wall mode selector (kept for handler)
 var _context_panel: VBoxContainer = null ## dynamic tool-options area below button grid
+var _spawn_profile_option: OptionButton = null ## spawn context panel profile selector
+var _spawn_auto_assign_btn: Button = null ## spawn context panel auto-assign button
 var _palette_window: Window = null ## non-null when palette is undocked
 var _palette_floating: bool = false
 var _undock_btn: Button = null
@@ -552,6 +554,7 @@ func _build_ui() -> void:
 	_map_view.fog_delta.connect(_on_map_fog_delta)
 	_map_view.walls_changed.connect(_on_map_walls_changed)
 	_map_view.spawn_points_changed.connect(_on_map_spawn_points_changed)
+	_map_view.spawn_point_selected.connect(_on_spawn_point_selected)
 	_map_view.token_drag_started.connect(_on_token_drag_started)
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
 	_map_view.token_resize_completed.connect(_on_token_resize_completed)
@@ -873,7 +876,7 @@ func _build_ui() -> void:
 	_token_btn.toggle_mode = true
 	_token_btn.button_group = tool_group
 	_token_btn.focus_mode = Control.FOCUS_NONE
-	_token_btn.tooltip_text = "Place Token — click map to drop a token; right-click a token to edit/delete"
+	_token_btn.tooltip_text = "Token tool — click to place, click existing to select, right-click to edit"
 	_token_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
 	_token_btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
 	_token_btn.pressed.connect(func(): _on_palette_tool_activated("token"))
@@ -1525,7 +1528,7 @@ func _make_toolbar_btn(label: String, tip: String) -> Button:
 # ---------------------------------------------------------------------------
 
 ## Clears and repopulates _context_panel for the given tool key.
-## Keys: "select", "pan", "fog", "wall"
+## Keys: "select", "pan", "fog", "wall", "spawn_point", "token"
 func _refresh_context_panel(tool_key: String) -> void:
 	if _context_panel == null:
 		return
@@ -1544,6 +1547,13 @@ func _refresh_context_panel(tool_key: String) -> void:
 			# Wall mode selector
 			if _wall_mode_option != null:
 				_context_panel.add_child(_wall_mode_option)
+		"spawn_point":
+			_build_spawn_context_widgets()
+			if _spawn_profile_option != null:
+				_context_panel.add_child(_spawn_profile_option)
+			if _spawn_auto_assign_btn != null:
+				_context_panel.add_child(_spawn_auto_assign_btn)
+			_refresh_spawn_profile_option()
 		_:
 			# Select / Pan / default — show grid type
 			if _grid_option != null:
@@ -1597,7 +1607,7 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 		"token":
 			_map_view.set_fog_tool(0, 64.0)
 			_map_view._set_active_tool(_map_view.Tool.PLACE_TOKEN)
-			_set_status("Place Token — click map to drop a new token")
+			_set_status("Token tool — click to place, click existing to select, right-click to edit")
 
 
 # ---------------------------------------------------------------------------
@@ -2870,13 +2880,20 @@ func _on_token_drag_started(token_id: Variant) -> void:
 
 
 func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
+	var id: String = str(token_id)
+	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	# Capture old player-character position before end_token_drag updates it.
+	var old_char_pos: Vector2 = Vector2.ZERO
+	var is_player_char: bool = false
+	if registry_drag != null and registry_drag.game_state != null:
+		is_player_char = registry_drag.game_state.player_positions.has(token_id)
+		if is_player_char:
+			old_char_pos = registry_drag.game_state.get_position(token_id)
 	if _backend != null:
 		_backend.end_token_drag(token_id, new_world_pos)
 	_player_state_dirty = true
-	var id: String = str(token_id)
 	# Persist the new position and refresh door/passthrough state.
 	var data: TokenData = null
-	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry_drag != null and registry_drag.token != null:
 		data = registry_drag.token.get_token_by_id(id)
 		if data != null:
@@ -2894,15 +2911,33 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 						if td == null: return
 						td.world_pos = old_pos
 						registry_drag.token.update_token(td)
-						if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+						if mv != null:
+							mv.update_token_sprite(td)
+							mv.apply_token_passthrough_state(td)
 						_broadcast_token_change(td, false),
 					func():
 						var td: TokenData = registry_drag.token.get_token_by_id(id)
 						if td == null: return
 						td.world_pos = new_world_pos
 						registry_drag.token.update_token(td)
-						if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
+						if mv != null:
+							mv.update_token_sprite(td)
+							mv.apply_token_passthrough_state(td)
 						_broadcast_token_change(td, false)))
+		elif is_player_char and registry_drag.history != null and old_char_pos.distance_to(new_world_pos) > 1.0:
+			# Player character drag — not in TokenService, undo via BackendRuntime.
+			var backend_ref := _backend
+			registry_drag.history.push_command(HistoryCommand.create("Character moved",
+				func():
+					if backend_ref != null:
+						backend_ref.end_token_drag(token_id, old_char_pos)
+					_nm_broadcast_to_displays({"msg": "token_moved", "token_id": id,
+						"world_pos": {"x": old_char_pos.x, "y": old_char_pos.y}}),
+				func():
+					if backend_ref != null:
+						backend_ref.end_token_drag(token_id, new_world_pos)
+					_nm_broadcast_to_displays({"msg": "token_moved", "token_id": id,
+						"world_pos": {"x": new_world_pos.x, "y": new_world_pos.y}})))
 	# Broadcast updated token position to player displays.
 	_nm_broadcast_to_displays({
 		"msg": "token_moved",
@@ -3240,6 +3275,7 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 		_token_context_menu = PopupMenu.new()
 		_token_context_menu.id_pressed.connect(_on_token_context_menu_id)
 		add_child(_token_context_menu)
+	_apply_token_context_menu_theme()
 	_token_context_menu.clear()
 	_token_context_menu.add_item("Edit Token…", 0)
 	_token_context_menu.add_separator()
@@ -3382,7 +3418,7 @@ func _build_token_editor_dialog() -> void:
 	lbl_label.custom_minimum_size = Vector2(120, 0)
 	lbl_row.add_child(lbl_label)
 	_token_label_edit = LineEdit.new()
-	_token_label_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_label_edit.custom_imum_size = Vector2(200, 0)
 	_token_label_edit.placeholder_text = "e.g. Iron Door"
 	lbl_row.add_child(_token_label_edit)
 	vbox.add_child(lbl_row)
@@ -3394,7 +3430,7 @@ func _build_token_editor_dialog() -> void:
 	cat_label.custom_minimum_size = Vector2(120, 0)
 	cat_row.add_child(cat_label)
 	_token_category_option = OptionButton.new()
-	_token_category_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_category_option.custom_minimum_size = Vector2(200, 0)
 	for cat_val in range(8):
 		_token_category_option.add_item(TokenData.category_name(cat_val), cat_val)
 	cat_row.add_child(_token_category_option)
@@ -3555,7 +3591,7 @@ func _build_token_editor_dialog() -> void:
 	shape_label.custom_minimum_size = Vector2(120, 0)
 	shape_row.add_child(shape_label)
 	_token_shape_option = OptionButton.new()
-	_token_shape_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_shape_option.custom_minimum_size = Vector2(200, 0)
 	_token_shape_option.add_item("Ellipse", TokenData.TokenShape.ELLIPSE)
 	_token_shape_option.add_item("Rectangle", TokenData.TokenShape.RECTANGLE)
 	shape_row.add_child(_token_shape_option)
@@ -3585,6 +3621,15 @@ func _build_token_editor_dialog() -> void:
 	_token_notes_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_token_notes_edit.placeholder_text = "DM notes (not shown to players)"
 	vbox.add_child(_token_notes_edit)
+
+
+func _apply_token_context_menu_theme() -> void:
+	if _token_context_menu == null:
+		return
+	var scale := _ui_scale()
+	_token_context_menu.add_theme_font_size_override("font_size", roundi(16.0 * scale))
+	_token_context_menu.add_theme_constant_override("v_separation", roundi(6 * scale))
+	_token_context_menu.add_theme_constant_override("h_separation", roundi(12 * scale))
 
 
 func _on_token_category_changed(idx: int) -> void:
@@ -4875,6 +4920,103 @@ func _on_map_walls_changed(map: MapData) -> void:
 
 func _on_map_spawn_points_changed(_map_data: MapData) -> void:
 	_set_status("Spawn points updated. Save map to persist.")
+	_refresh_spawn_profile_option()
+
+
+func _on_spawn_point_selected(_idx: int) -> void:
+	_refresh_spawn_profile_option()
+
+
+# ---------------------------------------------------------------------------
+# Spawn context panel — profile assignment
+# ---------------------------------------------------------------------------
+
+func _build_spawn_context_widgets() -> void:
+	if _spawn_profile_option != null:
+		return
+	_spawn_profile_option = OptionButton.new()
+	_spawn_profile_option.focus_mode = Control.FOCUS_NONE
+	_spawn_profile_option.tooltip_text = "Assign a player profile to the selected spawn point"
+	_spawn_profile_option.item_selected.connect(_on_spawn_profile_selected)
+
+	_spawn_auto_assign_btn = Button.new()
+	_spawn_auto_assign_btn.text = "Auto-assign"
+	_spawn_auto_assign_btn.focus_mode = Control.FOCUS_NONE
+	_spawn_auto_assign_btn.tooltip_text = "Round-robin assign all profiles to spawn points"
+	_spawn_auto_assign_btn.pressed.connect(_on_spawn_auto_assign)
+
+
+func _refresh_spawn_profile_option() -> void:
+	if _spawn_profile_option == null:
+		return
+	_spawn_profile_option.clear()
+	_spawn_profile_option.add_item("— None —", 0)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.profile == null:
+		_spawn_profile_option.disabled = true
+		return
+	var profiles: Array = registry.profile.get_profiles()
+	for i in range(profiles.size()):
+		var p: Variant = profiles[i]
+		if p is PlayerProfile:
+			var pp := p as PlayerProfile
+			_spawn_profile_option.add_item(pp.player_name, i + 1)
+			_spawn_profile_option.set_item_metadata(_spawn_profile_option.item_count - 1, pp.id)
+	# Select the current assignment for the selected spawn point.
+	var sel_idx: int = _map_view._selected_spawn_index if _map_view != null else -1
+	if sel_idx >= 0 and _map_view._map != null and sel_idx < _map_view._map.spawn_points.size():
+		var sp: Dictionary = _map_view._map.spawn_points[sel_idx]
+		var assigned_id: String = str(sp.get("profile_id", ""))
+		if assigned_id.is_empty():
+			_spawn_profile_option.selected = 0
+		else:
+			for item_idx in range(_spawn_profile_option.item_count):
+				var meta: Variant = _spawn_profile_option.get_item_metadata(item_idx)
+				if meta is String and meta == assigned_id:
+					_spawn_profile_option.selected = item_idx
+					break
+	else:
+		_spawn_profile_option.selected = 0
+	_spawn_profile_option.disabled = sel_idx < 0
+
+
+func _on_spawn_profile_selected(item_idx: int) -> void:
+	if _map_view == null or _map_view._map == null:
+		return
+	var sel := _map_view._selected_spawn_index
+	if sel < 0 or sel >= _map_view._map.spawn_points.size():
+		return
+	var profile_id: String = ""
+	if item_idx > 0:
+		var meta: Variant = _spawn_profile_option.get_item_metadata(item_idx)
+		if meta is String:
+			profile_id = meta
+	_map_view._map.spawn_points[sel]["profile_id"] = profile_id
+	_map_view._rebuild_spawn_markers(_map_view._map)
+	_map_view.spawn_points_changed.emit(_map_view._map)
+
+
+func _on_spawn_auto_assign() -> void:
+	if _map_view == null or _map_view._map == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.profile == null:
+		return
+	var profiles: Array = registry.profile.get_profiles()
+	var spawns: Array = _map_view._map.spawn_points
+	if spawns.is_empty() or profiles.is_empty():
+		return
+	for i in range(spawns.size()):
+		if i < profiles.size():
+			var p: Variant = profiles[i]
+			if p is PlayerProfile:
+				(spawns[i] as Dictionary)["profile_id"] = (p as PlayerProfile).id
+		else:
+			(spawns[i] as Dictionary)["profile_id"] = ""
+	_map_view._rebuild_spawn_markers(_map_view._map)
+	_map_view.spawn_points_changed.emit(_map_view._map)
+	_refresh_spawn_profile_option()
+	_set_status("Profiles auto-assigned to spawn points.")
 
 
 func _broadcast_fog_state() -> void:
@@ -5189,6 +5331,7 @@ func _apply_ui_scale() -> void:
 		_token_editor_dialog.min_size = Vector2i(roundi(440 * scale), roundi(640 * scale))
 		_scale_dialog_btn(_token_editor_dialog.get_ok_button(), scale)
 		_scale_dialog_btn(_token_editor_dialog.get_cancel_button(), scale)
+	_apply_token_context_menu_theme()
 
 
 func _scale_dialog_btn(btn: BaseButton, scale: float) -> void:
