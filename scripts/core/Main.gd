@@ -59,7 +59,7 @@ func _is_player_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 func _start_dm_mode() -> void:
-	get_tree().root.title = "Omni-Crawl — DM"
+	get_tree().root.title = "The Vault — DM"
 	var gs := _game_state()
 	if gs == null:
 		call_deferred("_deferred_register_window")
@@ -104,7 +104,7 @@ func _deferred_register_window() -> void:
 # ---------------------------------------------------------------------------
 
 func _start_player_mode() -> void:
-	get_tree().root.title = "Omni-Crawl — Players"
+	get_tree().root.title = "The Vault — Players"
 	# Offset from centre so both windows are visible side-by-side on start
 	var screen_size := DisplayServer.screen_get_size()
 	var win_size := Vector2i(

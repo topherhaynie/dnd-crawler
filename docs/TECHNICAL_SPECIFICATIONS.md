@@ -1,4 +1,4 @@
-# Technical Architecture: Omni-Crawl
+# Technical Architecture: The Vault
 **Engine:** Godot 4.x (Standard)  
 **Primary Language:** GDScript (Python-like syntax)  
 **IDE:** VS Code + Godot Tools + GitHub Copilot  

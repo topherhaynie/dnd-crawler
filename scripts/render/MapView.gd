@@ -1128,8 +1128,17 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 		return null
 	if candidates.size() == 1:
 		return candidates[0]["id"]
-	# Sort by distance ascending
-	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["dist"] < b["dist"])
+	# Player tokens take priority over map tokens when overlapping.
+	# Sort by: player-token first, then distance ascending.
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var a_node: Node2D = _draggable_tokens.get(a["id"], null) as Node2D
+		var b_node: Node2D = _draggable_tokens.get(b["id"], null) as Node2D
+		var a_player: bool = a_node is PlayerSprite
+		var b_player: bool = b_node is PlayerSprite
+		if a_player != b_player:
+			return a_player
+		return a["dist"] < b["dist"]
+	)
 	var best: Dictionary = candidates[0]
 	# Check for tiebreak: if top candidates are within threshold, use recency
 	var tied: Array = []

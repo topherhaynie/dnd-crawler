@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 
 public partial class HttpServer : Node
 {
@@ -24,9 +25,12 @@ public partial class HttpServer : Node
 		try
 		{
 			_listener = new HttpListener();
-			// Listen on localhost and wildcard so other devices can reach the server when allowed.
+			// Listen on localhost. On Windows also add the wildcard prefix so LAN
+			// clients can reach the server; the http://+:port/ syntax is a Windows
+			// URL ACL reservation and throws HttpListenerException on macOS/Linux.
 			_listener.Prefixes.Add($"http://localhost:{HTTP_PORT}/");
-			_listener.Prefixes.Add($"http://+:{HTTP_PORT}/");
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				_listener.Prefixes.Add($"http://+:{HTTP_PORT}/");
 			_listener.Start();
 			_running = true;
 			_listenerThread = new Thread(ListenerLoop) { IsBackground = true };
@@ -86,7 +90,10 @@ public partial class HttpServer : Node
 
 			if (path == "/mobile_client/index.html")
 			{
-				var localPath = Path.Combine(Directory.GetCurrentDirectory(), "assets/mobile_client/index.html");
+				// AppContext.BaseDirectory is stable in both editor and packaged exports
+				// on all platforms. Directory.GetCurrentDirectory() is unreliable
+				// inside a macOS .app bundle (cwd is typically "/").
+				var localPath = Path.Combine(AppContext.BaseDirectory, "assets/mobile_client/index.html");
 				if (!File.Exists(localPath))
 				{
 					res.StatusCode = 404;

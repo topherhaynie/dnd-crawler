@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run Omni-Crawl",
+            "name": "Run The Vault",
             "type": "godot",
             "request": "launch",
             "project": "${workspaceFolder}",

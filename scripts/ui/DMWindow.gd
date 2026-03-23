@@ -1004,7 +1004,7 @@ func _build_ui() -> void:
 	_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_open_map_dialog.title = "Open Map Bundle"
-	_open_map_dialog.add_filter("*.map ; OmniCrawl Map Bundle")
+	_open_map_dialog.add_filter("*.map ; The Vault Map Bundle")
 	_open_map_dialog.file_selected.connect(_on_map_bundle_selected)
 	_open_map_dialog.dir_selected.connect(_on_map_bundle_selected)
 	add_child(_open_map_dialog)
@@ -1015,7 +1015,7 @@ func _build_ui() -> void:
 	_save_as_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
 	_save_as_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_save_as_dialog.title = "Save Map As"
-	_save_as_dialog.add_filter("*.map ; OmniCrawl Map")
+	_save_as_dialog.add_filter("*.map ; The Vault Map")
 	_save_as_dialog.file_selected.connect(_on_save_as_path_selected)
 	add_child(_save_as_dialog)
 
@@ -1025,7 +1025,7 @@ func _build_ui() -> void:
 	_save_game_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
 	_save_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_save_game_dialog.title = "Save Game As"
-	_save_game_dialog.add_filter("*.sav ; OmniCrawl Save")
+	_save_game_dialog.add_filter("*.sav ; The Vault Save")
 	_save_game_dialog.file_selected.connect(_on_save_game_path_selected)
 	add_child(_save_game_dialog)
 
@@ -1035,7 +1035,7 @@ func _build_ui() -> void:
 	_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_load_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_load_game_dialog.title = "Load Game"
-	_load_game_dialog.add_filter("*.sav ; OmniCrawl Save")
+	_load_game_dialog.add_filter("*.sav ; The Vault Save")
 	_load_game_dialog.file_selected.connect(_on_load_game_path_selected)
 	_load_game_dialog.dir_selected.connect(_on_load_game_path_selected)
 	add_child(_load_game_dialog)

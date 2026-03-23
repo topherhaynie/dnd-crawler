@@ -1,10 +1,11 @@
-# AGENTS — Omni-Crawl Codebase Guide
+# AGENTS — The Vault Codebase Guide
 
 This file is a quick navigation and workflow guide for future coding agents.
 
 ## Scope
 - Engine: Godot 4.5
 - Language: GDScript
+- Studio: EverstoneKeep
 - Architecture: SOA (Service-Oriented Architecture) with dual-process runtime
   - DM host process (authoritative game state, fog, input)
   - Player display process (render-only client)
@@ -54,7 +55,7 @@ Never use `get_service(String)` in new code — always use the typed manager pro
 - Runtime map storage root (dev): `user://data/maps/`
 - Profile storage file: `user://data/profiles.json`
   - macOS dev path:
-    - `~/Library/Application Support/Godot/app_userdata/DnD Crawler/data/profiles.json`
+    - `~/Library/Application Support/Godot/app_userdata/The Vault/data/profiles.json`
 
 ## Profile System
 - Profile resource class: [scripts/services/profile/models/PlayerProfile.gd](scripts/services/profile/models/PlayerProfile.gd)

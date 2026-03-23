@@ -1,6 +1,6 @@
 ﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2012
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnD Crawler", "DnD Crawler.csproj", "{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "The Vault", "The Vault.csproj", "{9AEBFCB1-6EA1-4D16-B322-508AD687DA4D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

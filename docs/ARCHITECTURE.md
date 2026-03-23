@@ -1,4 +1,4 @@
-# Architecture: Omni-Crawl VTT
+# Architecture: The Vault VTT
 
 **Engine:** Godot 4.5  
 **Language:** GDScript  
@@ -149,7 +149,7 @@ All messages are JSON objects encoded as UTF-8. See `docs/protocols.md` for full
 - **Map bundle** (`*.map/`): directory package containing `map.json` + `image.<ext>`. Defines map structure, grid type, calibration, and wall geometry.
 - **Session state** (`*.sav/`): runtime state that references a map bundle. Not the same as a map bundle.
 - **Profiles** (`user://data/profiles.json`): persistent player profiles managed by `ProfileService`.
-- **Dev path** (macOS): `~/Library/Application Support/Godot/app_userdata/DnD Crawler/data/`
+- **Dev path** (macOS): `~/Library/Application Support/Godot/app_userdata/The Vault/data/`
 
 ---
 
