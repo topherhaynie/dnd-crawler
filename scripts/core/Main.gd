@@ -19,6 +19,9 @@ extends Node
 
 const DMWindowScene: PackedScene = preload("res://scenes/DMWindow.tscn")
 const PlayerMainScene: PackedScene = preload("res://scenes/PlayerMain.tscn")
+const SPLASH_ICON: Texture2D = preload("res://assets/icon.png")
+
+var _splash: CanvasLayer = null
 
 
 func _game_state() -> GameStateManager:
@@ -36,10 +39,13 @@ func _network_manager() -> INetworkService:
 
 
 func _ready() -> void:
+	_show_splash()
 	if _is_player_mode():
 		_start_player_mode()
 	else:
 		_start_dm_mode()
+	# Remove splash after one frame so the scene tree is visible underneath.
+	call_deferred("_fade_splash")
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +123,48 @@ func _start_player_mode() -> void:
 	DisplayServer.window_set_position(center_pos + Vector2i(80, 80))
 	add_child(PlayerMainScene.instantiate())
 	print("Main: running as Player display client")
+
+
+# ---------------------------------------------------------------------------
+# Splash overlay
+# ---------------------------------------------------------------------------
+
+func _show_splash() -> void:
+	_splash = CanvasLayer.new()
+	_splash.layer = 100
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.1, 0.1, 0.12, 1.0)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_splash.add_child(bg)
+
+	var icon := TextureRect.new()
+	icon.texture = SPLASH_ICON
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.set_anchors_preset(Control.PRESET_CENTER)
+	icon.custom_minimum_size = Vector2(256, 256)
+	icon.offset_left = -128
+	icon.offset_top = -128
+	icon.offset_right = 128
+	icon.offset_bottom = 128
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_splash.add_child(icon)
+
+	add_child(_splash)
+
+
+func _fade_splash() -> void:
+	if _splash == null:
+		return
+	var tween: Tween = create_tween()
+	# Brief pause then fade over 0.4s
+	tween.tween_interval(0.3)
+	for child: Node in _splash.get_children():
+		if child is CanvasItem:
+			tween.parallel().tween_property(child, "modulate:a", 0.0, 0.4)
+	tween.tween_callback(_splash.queue_free)
+	tween.tween_callback(func() -> void: _splash = null)
 
 
 # ---------------------------------------------------------------------------

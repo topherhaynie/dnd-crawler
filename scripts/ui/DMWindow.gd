@@ -830,12 +830,18 @@ func _build_ui() -> void:
 	add_child(_manual_scale_dialog)
 
 	# ── Open Map dialog — select a .map bundle (directory package) ──────────────
+	# Production: OPEN_FILE + *.map filter.  Info.plist UTType declares
+	# com.apple.package + public.data so .map dirs appear as opaque files.
+	# Dev: OPEN_ANY + *.map filter so .map dirs are selectable as folders.
 	_open_map_dialog = FileDialog.new()
 	_open_map_dialog.use_native_dialog = true
-	_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_open_map_dialog.title = "Open Map Bundle"
-	_open_map_dialog.add_filter("*.map ; The Vault Map Bundle")
+	if OS.has_feature("standalone"):
+		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	else:
+		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
+	_open_map_dialog.add_filter("*.map ; The Vault Map")
 	_open_map_dialog.file_selected.connect(_on_map_bundle_selected)
 	_open_map_dialog.dir_selected.connect(_on_map_bundle_selected)
 	add_child(_open_map_dialog)
@@ -861,11 +867,16 @@ func _build_ui() -> void:
 	add_child(_save_game_dialog)
 
 	# ── Load Game dialog — select a .sav bundle ────────────────────────────────
+	# Production: OPEN_FILE + *.sav filter → .sav packages appear as opaque files.
+	# Dev: OPEN_ANY + *.sav filter → .sav dirs are selectable as folders.
 	_load_game_dialog = FileDialog.new()
 	_load_game_dialog.use_native_dialog = true
-	_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_load_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_load_game_dialog.title = "Load Game"
+	if OS.has_feature("standalone"):
+		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	else:
+		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_load_game_dialog.add_filter("*.sav ; The Vault Save")
 	_load_game_dialog.file_selected.connect(_on_load_game_path_selected)
 	_load_game_dialog.dir_selected.connect(_on_load_game_path_selected)
@@ -4334,7 +4345,7 @@ func _on_load_game_pressed() -> void:
 func _on_load_game_path_selected(path: String) -> void:
 	## Called when the user picks a .sav bundle from the Load Game dialog.
 	var bundle_path := path
-	# Walk up to the nearest .sav directory if the user selected a child file.
+	# Walk up to the nearest .sav directory if needed.
 	while not bundle_path.is_empty() and not bundle_path.ends_with(".sav"):
 		var parent := bundle_path.get_base_dir()
 		if parent == bundle_path:
@@ -4851,17 +4862,11 @@ func _normalise_bundle_path(path: String) -> String:
 
 
 func _resolve_bundle_path(path: String) -> String:
-	## Handles all native-dialog return variants:
-	## - direct ".map" directory/package
-	## - "map.json" file inside bundle
-	## - any file/folder nested under a bundle
+	## Resolves a native-dialog return path to the nearest .map bundle.
 	if path.is_empty():
 		return ""
 
 	var raw := path
-	if raw.get_file().to_lower() == "map.json":
-		raw = raw.get_base_dir()
-
 	if raw.to_lower().ends_with(".map"):
 		return raw
 
@@ -4873,12 +4878,6 @@ func _resolve_bundle_path(path: String) -> String:
 		if parent == current:
 			break
 		current = parent
-
-	# Fallback: if user selected a plain folder containing map.json, allow it.
-	if DirAccess.dir_exists_absolute(raw):
-		var maybe_json := raw.path_join("map.json")
-		if FileAccess.file_exists(maybe_json):
-			return raw
 
 	return ""
 
