@@ -9,5 +9,8 @@
 # Release zips (uploaded to GitHub Releases instead)
 /releases/
 
+# Build and release scripts
+/release.sh
+
 # Export presets may contain signing credentials
 # export_presets.cfg

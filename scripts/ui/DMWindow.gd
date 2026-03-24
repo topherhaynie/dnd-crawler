@@ -24,6 +24,8 @@ const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 const GameSaveDataScript = preload("res://scripts/services/game_state/models/GameSaveData.gd")
 const ToolPaletteScript = preload("res://scripts/ui/ToolPalette.gd")
+const NetworkUtilsScript = preload("res://scripts/utils/NetworkUtils.gd")
+const QRCodeScript = preload("res://scripts/utils/QRCode.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SAVE_DIR := "user://data/saves/"
@@ -190,6 +192,11 @@ var _freeze_row_buttons: Dictionary = {} ## {player_id: CheckButton}
 var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which locks came from autopause
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
+
+# ── Share player link dialog ────────────────────────────────────────────────
+var _share_dialog: AcceptDialog = null
+var _share_qr_rect: TextureRect = null
+var _share_url_label: Label = null
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -660,6 +667,13 @@ func _build_ui() -> void:
 	_view_menu.add_item("▶ Launch Player Window", 23)
 	_view_menu.id_pressed.connect(_on_view_menu_id)
 	menu_bar.add_child(_view_menu)
+
+	# Session menu
+	var session_menu := PopupMenu.new()
+	session_menu.name = "Session"
+	session_menu.add_item("Share Player Link…", 30)
+	session_menu.id_pressed.connect(_on_session_menu_id)
+	menu_bar.add_child(session_menu)
 
 	# ── Content row: map spacer ─────────────────────────────────────────────
 	var content_row := HBoxContainer.new()
@@ -1775,6 +1789,11 @@ func _on_edit_menu_id(id: int) -> void:
 		11: _on_manual_scale_pressed()
 		12: _on_set_offset_pressed()
 		13: _open_profiles_editor()
+
+
+func _on_session_menu_id(id: int) -> void:
+	match id:
+		30: _show_share_player_link()
 
 
 func _on_view_menu_id(id: int) -> void:
@@ -5086,3 +5105,66 @@ func _ui_scale() -> float:
 	var vp := get_viewport().get_visible_rect().size
 	var viewport_scale := clampf(minf(vp.x / 1920.0, vp.y / 1080.0), 1.0, 1.6)
 	return maxf(dpi_scale, viewport_scale)
+
+
+# ---------------------------------------------------------------------------
+# Share Player Link (Session menu)
+# ---------------------------------------------------------------------------
+
+const _SHARE_BASE_URL: String = "https://everstonekeep.com/the-vault/play/"
+const _WS_PORT: int = 9090
+
+func _build_share_url() -> String:
+	var ip: String = NetworkUtilsScript.get_best_lan_ip()
+	return "%s?host=%s&port=%d" % [_SHARE_BASE_URL, ip, _WS_PORT]
+
+
+func _show_share_player_link() -> void:
+	var url: String = _build_share_url()
+
+	if _share_dialog != null:
+		# Refresh QR and URL in case IP changed
+		_share_url_label.text = url
+		var refresh_img: Image = QRCodeScript.generate(url, 8)
+		_share_qr_rect.texture = ImageTexture.create_from_image(refresh_img)
+		_share_dialog.popup_centered()
+		return
+
+	_share_dialog = AcceptDialog.new()
+	_share_dialog.title = "Share Player Link"
+	_share_dialog.min_size = Vector2i(420, 0)
+	_share_dialog.ok_button_text = "Close"
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+
+	# QR code
+	var qr_img: Image = QRCodeScript.generate(url, 8)
+	var qr_tex: ImageTexture = ImageTexture.create_from_image(qr_img)
+	_share_qr_rect = TextureRect.new()
+	_share_qr_rect.texture = qr_tex
+	_share_qr_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_share_qr_rect.custom_minimum_size = Vector2(320, 320)
+	_share_qr_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	vbox.add_child(_share_qr_rect)
+
+	# URL label
+	_share_url_label = Label.new()
+	_share_url_label.text = url
+	_share_url_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_share_url_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_share_url_label.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(_share_url_label)
+
+	# Copy URL button
+	var copy_btn := Button.new()
+	copy_btn.text = "Copy URL"
+	copy_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	copy_btn.pressed.connect(func() -> void:
+		DisplayServer.clipboard_set(url)
+		_set_status("Player link copied to clipboard"))
+	vbox.add_child(copy_btn)
+
+	_share_dialog.add_child(vbox)
+	add_child(_share_dialog)
+	_share_dialog.popup_centered()
