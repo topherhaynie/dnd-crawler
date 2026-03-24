@@ -6,5 +6,8 @@
 # Export builds
 /build/
 
+# Release zips (uploaded to GitHub Releases instead)
+/releases/
+
 # Export presets may contain signing credentials
 # export_presets.cfg
