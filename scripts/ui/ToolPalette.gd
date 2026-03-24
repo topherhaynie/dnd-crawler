@@ -254,6 +254,7 @@ func _build() -> void:
 	_wall_popup = PopupMenu.new()
 	_wall_popup.add_item("▭ Rectangle", 0)
 	_wall_popup.add_item("▲ Polygon", 1)
+	_wall_popup.add_item("⚡ Auto", 2)
 	_wall_popup.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	_wall_popup.id_pressed.connect(_on_wall_popup_selected)
 	add_child(_wall_popup)
@@ -569,8 +570,8 @@ func _fire_player_view_action() -> void:
 
 # ── Wall stack ───────────────────────────────────────────────────────────────
 
-var _wall_labels: Array[String] = ["▭", "▲"]
-var _wall_tips: Array[String] = ["Wall tool — Rectangle", "Wall tool — Polygon"]
+var _wall_labels: Array[String] = ["▭", "▲", "⚡"]
+var _wall_tips: Array[String] = ["Wall tool — Rectangle", "Wall tool — Polygon", "Wall tool — Auto-detect"]
 var _wall_current: int = 0
 
 func _activate_wall_tool() -> void:
@@ -586,7 +587,14 @@ func _on_wall_popup_selected(id: int) -> void:
 	_wall_stack_btn.tooltip_text = _wall_tips[id]
 	# Activate the wall tool with the new mode
 	_wall_stack_btn.button_pressed = true
-	_activate_wall_tool()
+	if id == 2:
+		# Auto mode: signal the wall mode but don't activate draw tool
+		_active_tool_key = "wall"
+		tool_activated.emit("wall")
+		wall_mode_changed.emit(2)
+		hide_flyout()
+	else:
+		_activate_wall_tool()
 
 
 # ---------------------------------------------------------------------------

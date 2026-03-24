@@ -53,6 +53,10 @@ var _offset_dialog: ConfirmationDialog = null
 var _solo_offset_x_spin: SpinBox = null
 var _solo_offset_y_spin: SpinBox = null
 
+## AutoWall dialog and state
+var _autowall_dialog: AutoWallDialog = null
+var _autowall_eyedropper_active: bool = false
+
 ## New Map / Open Map workflow
 var _open_map_dialog: FileDialog = null
 var _save_as_dialog: FileDialog = null ## native Save panel for naming/renaming maps
@@ -79,27 +83,17 @@ var _palette_floating: bool = false
 
 # Handler for wall tool dropdown selection
 func _on_wall_tool_selected(index: int) -> void:
-	# 0 = Rectangle, 1 = Polygon
-	# print("[DEBUG] Wall tool dropdown selected: index=", index)
+	# 0 = Rectangle, 1 = Polygon, 2 = Auto-detect
 	if _map_view == null:
-		# print("[DEBUG] _on_wall_tool_selected: _map_view is null")
 		return
 	if index == 0:
-		# print("[DEBUG] Activating Wall Rect tool in MapView")
-		# _map_view.active_tool = _map_view.Tool.WALL
-		# _map_view.wall_subtool = "rect"
 		_map_view.set_wall_rect_mode(true)
-		# print("[DEBUG] MapView state after dropdown: active_tool=", _map_view.active_tool, "wall_subtool=", _map_view.wall_subtool)
-
-		# _map_view.set_wall_polygon_mode(false)
 		_set_status("Wall Rect: drag on map to place wall occluder rectangle")
 	elif index == 1:
-		# print("[DEBUG] Activating Wall Polygon tool in MapView")
-		# _map_view.active_tool = _map_view.Tool.WALL
-		# _map_view.wall_subtool = "polygon"
-		# _map_view.set_wall_rect_mode(false)
 		_map_view.set_wall_polygon_mode(true)
-		# print("[DEBUG] MapView state after dropdown: active_tool=", _map_view.active_tool, "wall_subtool=", _map_view.wall_subtool)
+		_set_status("Wall Polygon: click to add points, double-click/right-click/Escape to finish")
+	elif index == 2:
+		_open_autowall_dialog()
 
 		_set_status("Wall Polygon: click to add points, double-click/right-click/Escape to finish")
 
@@ -1968,6 +1962,86 @@ func _on_offset_confirmed() -> void:
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_set_status("Grid offset: (%.0f, %.0f)" % [map.grid_offset.x, map.grid_offset.y])
+
+
+# ---------------------------------------------------------------------------
+# AutoWall dialog
+# ---------------------------------------------------------------------------
+
+func _open_autowall_dialog() -> void:
+	if _map_view == null or _map_view.get_map_image() == null:
+		_set_status("Load a map image first.")
+		return
+	if _autowall_dialog == null:
+		_autowall_dialog = AutoWallDialog.new()
+		_autowall_dialog.preview_requested.connect(_on_autowall_preview)
+		_autowall_dialog.preview_cleared.connect(_on_autowall_preview_cleared)
+		_autowall_dialog.walls_applied.connect(_on_autowall_applied)
+		_autowall_dialog.eyedropper_requested.connect(_on_autowall_eyedropper)
+		add_child(_autowall_dialog)
+	_autowall_dialog.popup_centered(Vector2i(roundi(380 * _ui_scale()), roundi(420 * _ui_scale())))
+	_set_status("AutoWall: configure detection, then Preview")
+
+
+func _on_autowall_preview(config: Variant) -> void:
+	if _map_view == null:
+		return
+	var img: Image = _map_view.get_map_image()
+	if img == null:
+		if _autowall_dialog != null:
+			_autowall_dialog.show_trace_result([])
+		return
+	var tracer := AutoWallTracer.new()
+	var cfg: Dictionary = config as Dictionary if config is Dictionary else {}
+	# Set a sensible min_area based on map cell size
+	var map: MapData = _map()
+	if map != null and not cfg.has("min_area"):
+		var cell: float = map.cell_px if map.cell_px > 0.0 else 64.0
+		cfg["min_area"] = cell * cell * 4.0
+	var polygons: Array = tracer.trace(img, cfg)
+	_map_view.show_autowall_preview(polygons)
+	if _autowall_dialog != null:
+		_autowall_dialog.show_trace_result(polygons)
+	_set_status("AutoWall preview: %d segments detected" % polygons.size())
+
+
+func _on_autowall_preview_cleared() -> void:
+	if _map_view != null:
+		_map_view.clear_autowall_preview()
+
+
+func _on_autowall_applied(polygons: Array, replace: bool) -> void:
+	if _map_view == null:
+		return
+	_map_view.clear_autowall_preview()
+	_map_view.apply_autowall_polygons(polygons, replace)
+	var action: String = "replaced" if replace else "added"
+	_set_status("AutoWall: %s %d wall segments" % [action, polygons.size()])
+
+
+func _on_autowall_eyedropper() -> void:
+	# Minimize dialog to let user click on the map, then sample the pixel
+	_autowall_eyedropper_active = true
+	_set_status("Click on the map to sample a background color...")
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not _autowall_eyedropper_active:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			_autowall_eyedropper_active = false
+			var img: Image = _map_view.get_map_image() if _map_view != null else null
+			if img != null:
+				var world_pos: Vector2 = _map_view.get_global_mouse_position()
+				var px: int = clampi(roundi(world_pos.x), 0, img.get_width() - 1)
+				var py: int = clampi(roundi(world_pos.y), 0, img.get_height() - 1)
+				var sampled: Color = img.get_pixel(px, py)
+				if _autowall_dialog != null:
+					_autowall_dialog.set_sampled_color(sampled)
+				_set_status("Sampled color: %s" % sampled)
+			get_viewport().set_input_as_handled()
 
 
 # ---------------------------------------------------------------------------

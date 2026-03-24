@@ -2381,6 +2381,87 @@ func _apply_wall_polygon(points: Array) -> void:
 
 
 # ---------------------------------------------------------------------------
+# AutoWall — bulk apply, preview, and image access
+# ---------------------------------------------------------------------------
+
+var _autowall_preview_layer: Node2D = null
+
+## Return the loaded map Image (RGBA8) or null if no map is loaded.
+func get_map_image() -> Image:
+	if map_image == null or map_image.texture == null:
+		return null
+	return map_image.texture.get_image()
+
+
+## Bulk-append (or replace) auto-detected wall polygons with a single undo step.
+func apply_autowall_polygons(polygons: Array, replace: bool) -> void:
+	if _map == null or polygons.is_empty():
+		return
+	var before_polys: Array = _map.wall_polygons.duplicate(true)
+	if replace:
+		_map.wall_polygons.clear()
+	for poly: Variant in polygons:
+		var pts: PackedVector2Array = poly as PackedVector2Array
+		if pts == null or pts.size() < 3:
+			continue
+		var arr: Array = []
+		for p: Vector2 in pts:
+			arr.append(p)
+		_map.wall_polygons.append(arr)
+	var after_polys: Array = _map.wall_polygons.duplicate(true)
+	_set_selected_wall(-1)
+	_rebuild_wall_occluders(_map)
+	walls_changed.emit(_map)
+	var registry_aw := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_aw != null and registry_aw.history != null:
+		var map_ref_aw := _map
+		var desc: String = "AutoWall (%d segments)" % polygons.size()
+		registry_aw.history.push_command(HistoryCommand.create(desc,
+			func() -> void:
+				if not is_instance_valid(self ) or map_ref_aw == null: return
+				map_ref_aw.wall_polygons = before_polys.duplicate(true)
+				_set_selected_wall(-1)
+				_rebuild_wall_occluders(map_ref_aw)
+				walls_changed.emit(map_ref_aw),
+			func() -> void:
+				if not is_instance_valid(self ) or map_ref_aw == null: return
+				map_ref_aw.wall_polygons = after_polys.duplicate(true)
+				_rebuild_wall_occluders(map_ref_aw)
+				walls_changed.emit(map_ref_aw)))
+
+
+## Show green preview outlines for auto-detected walls (non-destructive).
+func show_autowall_preview(polygons: Array) -> void:
+	clear_autowall_preview()
+	if polygons.is_empty():
+		return
+	_autowall_preview_layer = Node2D.new()
+	_autowall_preview_layer.z_index = 5
+	add_child(_autowall_preview_layer)
+	for poly: Variant in polygons:
+		var pts: PackedVector2Array = poly as PackedVector2Array
+		if pts == null or pts.size() < 3:
+			continue
+		var fill := Polygon2D.new()
+		fill.polygon = pts
+		fill.color = Color(0.2, 0.9, 0.3, 0.12)
+		_autowall_preview_layer.add_child(fill)
+		var line := Line2D.new()
+		line.points = pts
+		line.closed = true
+		line.width = 2.0
+		line.default_color = Color(0.2, 0.9, 0.3, 0.85)
+		_autowall_preview_layer.add_child(line)
+
+
+## Remove the autowall preview overlay.
+func clear_autowall_preview() -> void:
+	if _autowall_preview_layer != null and is_instance_valid(_autowall_preview_layer):
+		_autowall_preview_layer.queue_free()
+	_autowall_preview_layer = null
+
+
+# ---------------------------------------------------------------------------
 # Fog tool input dispatch
 # ---------------------------------------------------------------------------
 
