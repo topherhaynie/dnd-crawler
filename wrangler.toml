@@ -1,3 +1,5 @@
-name = "the-vault-web"
+name = "the-vault"
 assets = { directory = "./web" }
 compatibility_date = "2026-03-24"
+workers_dev = false
+preview_urls = false
