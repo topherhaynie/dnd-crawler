@@ -511,6 +511,11 @@ func set_fog_overlay_enabled(enabled: bool) -> void:
 		fog_overlay.set_fog_overlay_enabled(enabled)
 
 
+func set_flashlights_only(enabled: bool) -> void:
+	if fog_overlay != null:
+		fog_overlay.set_flashlights_only(enabled)
+
+
 func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
 	fog_tool = tool_id
 	fog_brush_radius_px = maxf(8.0, brush_radius_px)

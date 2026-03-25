@@ -38,6 +38,10 @@ var _fog_enabled: bool = false
 ## the GPU pipeline (LOS baking, stroke handling, history recording) continues
 ## to run.  Only affects the DM view — player display always shows fog.
 var _dm_display_visible: bool = true
+## When true, live LOS gain is zeroed so searchlights do not accumulate into
+## history.  DM brush reveals still work.  The display shader shows live
+## cones + brush history only.
+var _flashlights_only: bool = false
 ## Ratio between fog-texture pixels and world (map) pixels.  Computed in
 ## configure() as  min(1.0, MAX_FOG_DIM / max(map_w, map_h)).
 var _fog_scale: float = 1.0
@@ -139,6 +143,13 @@ func _on_fog_model_changed() -> void:
 	if _history_gpu_ready:
 		_seed_gpu_history_from_image(model.history_image)
 	_queue_los_full_bake()
+
+
+func _on_flashlights_only_changed(enabled: bool) -> void:
+	if _flashlights_only == enabled:
+		return
+	_flashlights_only = enabled
+	_apply_shader_uniforms()
 
 
 func _on_fog_stroke_applied(stroke: Dictionary) -> void:
@@ -255,6 +266,8 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			mgr.fog_changed.connect(_on_fog_model_changed)
 		if not mgr.fog_stroke_applied.is_connected(_on_fog_stroke_applied):
 			mgr.fog_stroke_applied.connect(_on_fog_stroke_applied)
+		if not mgr.flashlights_only_changed.is_connected(_on_flashlights_only_changed):
+			mgr.flashlights_only_changed.connect(_on_flashlights_only_changed)
 		mgr.set_fog_scale(base_fog_scale)
 		mgr.configure(base_fog_size, _is_dm, _fog_enabled)
 	if DEBUG_FOG_TELEMETRY:
@@ -267,6 +280,10 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			str(_viewport_local),
 		])
 
+func is_flashlights_only() -> bool:
+	return _flashlights_only
+
+
 ## Lightweight DM-side visibility toggle.  Sets the fog overlay alpha to 0
 ## (fully transparent) so the DM can see the map unobstructed, while the GPU
 ## pipeline (LOS baking, stroke handling, history recording) continues to run.
@@ -276,6 +293,16 @@ func set_display_enabled(enabled: bool) -> void:
 		return
 	_dm_display_visible = enabled
 	_apply_shader_uniforms()
+
+
+func set_flashlights_only(enabled: bool) -> void:
+	if _flashlights_only == enabled:
+		return
+	_flashlights_only = enabled
+	_apply_shader_uniforms()
+	var mgr := _fog_manager()
+	if mgr != null:
+		mgr.set_flashlights_only(enabled)
 
 
 func set_fog_overlay_enabled(enabled: bool) -> void:
@@ -835,10 +862,11 @@ func _bake_live_los_into_history() -> void:
 		if mat == null:
 			return
 
+		var bake_gain: float = 0.0 if _flashlights_only else LOS_BAKE_GAIN
 		mat.set_shader_parameter("seed_mode", false)
 		mat.set_shader_parameter("prev_history_tex", src_vp.get_texture())
 		mat.set_shader_parameter("live_lights_tex", _live_lights_viewport.get_texture())
-		mat.set_shader_parameter("los_bake_gain", LOS_BAKE_GAIN)
+		mat.set_shader_parameter("los_bake_gain", bake_gain)
 		if _paint_merge_pending and _paint_viewport != null:
 			mat.set_shader_parameter("has_paint_tex", true)
 			mat.set_shader_parameter("paint_tex", _paint_viewport.get_texture())
@@ -959,6 +987,7 @@ func _apply_shader_uniforms() -> void:
 	var dm_alpha: float = DM_HISTORY_ALPHA_SCALE if _dm_display_visible or not _is_dm else 0.0
 	mat.set_shader_parameter("dm_history_alpha_scale", dm_alpha)
 	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
+	mat.set_shader_parameter("flashlights_only", _flashlights_only)
 	mat.set_shader_parameter("fog_overlay_enabled", _fog_overlay_enabled)
 	if _fog_overlay_texture != null:
 		mat.set_shader_parameter("fog_overlay_tex", _fog_overlay_texture)

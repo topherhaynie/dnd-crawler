@@ -21,6 +21,7 @@ signal spawn_profile_selected(item_idx: int)
 signal spawn_auto_assign_requested()
 signal play_mode_toggled(active: bool)
 signal dm_fog_visible_toggled(enabled: bool)
+signal flashlights_only_toggled(enabled: bool)
 
 # ── Public references (DMWindow reads these for state queries) ───────────────
 var select_btn: Button = null
@@ -241,6 +242,16 @@ func _build() -> void:
 	fog_visible_check.add_theme_font_size_override("font_size", roundi(8.0 * s))
 	fog_visible_check.toggled.connect(func(enabled: bool) -> void: dm_fog_visible_toggled.emit(enabled))
 	palette_vbox.add_child(fog_visible_check)
+
+	var flashlights_check := CheckBox.new()
+	flashlights_check.text = "⚡"
+	flashlights_check.button_pressed = false
+	flashlights_check.focus_mode = Control.FOCUS_NONE
+	flashlights_check.tooltip_text = "Flashlights only — disable LOS history, show only live vision cones"
+	flashlights_check.custom_minimum_size = Vector2(0, roundi(_BTN_SIZE * s))
+	flashlights_check.add_theme_font_size_override("font_size", roundi(8.0 * s))
+	flashlights_check.toggled.connect(func(on: bool) -> void: flashlights_only_toggled.emit(on))
+	palette_vbox.add_child(flashlights_check)
 
 	var fog_reset_btn := _make_action_btn("↺", "Reset fog to fully hidden (covers entire map)")
 	fog_reset_btn.pressed.connect(func() -> void: action_fired.emit("fog_reset"))

@@ -711,6 +711,7 @@ func _build_ui() -> void:
 	_palette.spawn_auto_assign_requested.connect(_on_spawn_auto_assign)
 	_palette.play_mode_toggled.connect(_on_palette_play_mode_toggled)
 	_palette.dm_fog_visible_toggled.connect(_on_dm_fog_visible_toggled)
+	_palette.flashlights_only_toggled.connect(_on_flashlights_only_toggled)
 	_palette.undock_btn.pressed.connect(_on_undock_btn_pressed)
 
 	# Add flyout panel to ui layer (not ui_root) for HiDPI stability
@@ -1036,6 +1037,9 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	# Send current fog overlay state so the player matches the DM.
 	var overlay_idx := _view_menu.get_item_index(28)
 	_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": _view_menu.is_item_checked(overlay_idx)})
+	# Send current flashlights-only state.
+	var fl_enabled: bool = _map_view.fog_overlay.is_flashlights_only() if _map_view != null and _map_view.fog_overlay != null else false
+	_nm_broadcast_to_displays({"msg": "flashlights_only_toggle", "enabled": fl_enabled})
 
 	# Retry if no ack and peer is still connected.
 	var retry_timer := get_tree().create_timer(1.0)
@@ -1880,6 +1884,13 @@ func _on_dm_fog_visible_toggled(enabled: bool) -> void:
 	if _map_view == null:
 		return
 	_map_view.set_dm_fog_visible(enabled)
+
+
+func _on_flashlights_only_toggled(enabled: bool) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_flashlights_only(enabled)
+	_nm_broadcast_to_displays({"msg": "flashlights_only_toggle", "enabled": enabled})
 
 
 func _on_wall_rect_toggled(enabled: bool) -> void:

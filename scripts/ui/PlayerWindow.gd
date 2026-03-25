@@ -74,6 +74,8 @@ func on_state(data: Dictionary) -> void:
 			_handle_fog_brush_stroke(data)
 		"fog_overlay_toggle":
 			_handle_fog_overlay_toggle(data)
+		"flashlights_only_toggle":
+			_handle_flashlights_only_toggle(data)
 		"camera_update":
 			_handle_camera_update(data)
 		"state", "delta":
@@ -305,6 +307,12 @@ func _handle_fog_overlay_toggle(data: Dictionary) -> void:
 	if _map_view == null:
 		return
 	_map_view.set_fog_overlay_enabled(bool(data.get("enabled", false)))
+
+
+func _handle_flashlights_only_toggle(data: Dictionary) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_flashlights_only(bool(data.get("enabled", false)))
 
 
 func _apply_cached_fog_stamp() -> void:

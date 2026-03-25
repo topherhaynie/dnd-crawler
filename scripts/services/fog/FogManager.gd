@@ -13,6 +13,7 @@ class_name FogManager
 signal fog_changed
 signal fog_enabled_changed(is_enabled: bool)
 signal fog_stroke_applied(stroke: Dictionary)
+signal flashlights_only_changed(is_enabled: bool)
 
 var service: IFogService = null
 var model: FogModel = null
@@ -61,6 +62,15 @@ func set_enabled(enabled: bool) -> void:
 		return
 	model.enabled = enabled
 	fog_enabled_changed.emit(enabled)
+
+
+func set_flashlights_only(enabled: bool) -> void:
+	if model == null:
+		model = FogModel.new()
+	if model.flashlights_only == enabled:
+		return
+	model.flashlights_only = enabled
+	flashlights_only_changed.emit(enabled)
 
 
 func apply_snapshot(buffer: PackedByteArray) -> bool:

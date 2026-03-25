@@ -4,6 +4,7 @@ uniform sampler2D history_tex : filter_linear, repeat_disable;
 uniform sampler2D live_lights_tex : filter_linear, repeat_disable;
 uniform sampler2D fog_overlay_tex : filter_linear, repeat_enable;
 uniform bool is_dm = false;
+uniform bool flashlights_only = false;
 uniform bool fog_overlay_enabled = false;
 uniform float player_alpha_scale = 1.00;
 uniform float dm_history_alpha_scale = 0.80;
@@ -29,7 +30,12 @@ void fragment() {
     vec3 base_color = fog_color.rgb;
 
     if (is_dm) {
-        fog_alpha = clamp(1.0 - history_mask, 0.0, 1.0) * dm_history_alpha_scale;
+        if (flashlights_only) {
+            float dm_combined = max(history_mask, live_mask);
+            fog_alpha = clamp(1.0 - dm_combined, 0.0, 1.0) * dm_history_alpha_scale;
+        } else {
+            fog_alpha = clamp(1.0 - history_mask, 0.0, 1.0) * dm_history_alpha_scale;
+        }
     } else {
         float player_history_mask = clamp(history_mask * live_mask_gain, 0.0, 1.0);
         float combined_mask = max(player_history_mask, live_mask);
