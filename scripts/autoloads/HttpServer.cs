@@ -25,12 +25,15 @@ public partial class HttpServer : Node
 		try
 		{
 			_listener = new HttpListener();
-			// Listen on localhost. On Windows also add the wildcard prefix so LAN
-			// clients can reach the server; the http://+:port/ syntax is a Windows
-			// URL ACL reservation and throws HttpListenerException on macOS/Linux.
 			_listener.Prefixes.Add($"http://localhost:{HTTP_PORT}/");
+			// Also listen on all interfaces so LAN clients (mobile devices) can
+			// reach the server.  On Windows the strong wildcard (+) requires an
+			// URL ACL reservation; on macOS/Linux the managed HttpListener
+			// handles the weak wildcard (*) without elevated privileges.
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 				_listener.Prefixes.Add($"http://+:{HTTP_PORT}/");
+			else
+				_listener.Prefixes.Add($"http://*:{HTTP_PORT}/");
 			_listener.Start();
 			_running = true;
 			_listenerThread = new Thread(ListenerLoop) { IsBackground = true };

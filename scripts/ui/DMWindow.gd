@@ -654,6 +654,8 @@ func _build_ui() -> void:
 	_view_menu.add_separator()
 	_view_menu.add_item("Sync Fog Now", 24)
 	_view_menu.add_item("Reset Fog…", 27)
+	_view_menu.add_check_item("Fog Overlay Effect", 28)
+	_view_menu.set_item_checked(_view_menu.get_item_index(28), false)
 	_view_menu.add_separator()
 	_view_menu.add_item("Measurement Tools…", 26)
 	_view_menu.add_separator()
@@ -1031,6 +1033,9 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_broadcast_player_state()
 	_broadcast_token_state()
 	_broadcast_measurement_state()
+	# Send current fog overlay state so the player matches the DM.
+	var overlay_idx := _view_menu.get_item_index(28)
+	_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": _view_menu.is_item_checked(overlay_idx)})
 
 	# Retry if no ack and peer is still connected.
 	var retry_timer := get_tree().create_timer(1.0)
@@ -1069,7 +1074,7 @@ func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 		fog_state_png = await _map_view.get_fog_state()
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if not fog_state_png.is_empty() and registry != null and registry.fog != null:
-		registry.fog.apply_snapshot(fog_state_png)
+		registry.fog.sync_model_from_gpu(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
 	if DEBUG_FOG_SNAPSHOT:
 		print("DMWindow: fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [
@@ -1833,6 +1838,13 @@ func _on_view_menu_id(id: int) -> void:
 			_manual_fog_sync_now()
 		27: # Reset fog to fully hidden
 			_show_fog_reset_confirm()
+		28: # Toggle fog overlay effect
+			var idx := _view_menu.get_item_index(28)
+			var on := not _view_menu.is_item_checked(idx)
+			_view_menu.set_item_checked(idx, on)
+			if _map_view:
+				_map_view.set_fog_overlay_enabled(on)
+			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
 		26: # Open measurement tools panel
 			_open_measure_panel()
 		23: # Launch player display process

@@ -94,6 +94,8 @@ var _los_dirty_regions: Array = []
 ## Set after a LOS bake has occurred — cleared after _writeback_gpu_history_to_model()
 ## so we only do the expensive GPU→CPU readback when the GPU history has actually changed.
 var _gpu_history_dirty: bool = false
+var _fog_overlay_texture: Texture2D = null
+var _fog_overlay_enabled: bool = false
 
 
 # === Registry Helpers ===
@@ -277,6 +279,25 @@ func set_display_enabled(enabled: bool) -> void:
 	_apply_shader_uniforms()
 	if _fog_enabled:
 		_queue_los_full_bake()
+
+
+func set_fog_overlay_enabled(enabled: bool) -> void:
+	_fog_overlay_enabled = enabled
+	if _fog_overlay_enabled and _fog_overlay_texture == null:
+		var noise := FastNoiseLite.new()
+		noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		noise.frequency = 0.012
+		noise.fractal_octaves = 4
+		noise.fractal_lacunarity = 2.0
+		noise.fractal_gain = 0.5
+		var noise_tex := NoiseTexture2D.new()
+		noise_tex.noise = noise
+		noise_tex.width = 512
+		noise_tex.height = 512
+		noise_tex.seamless = true
+		noise_tex.normalize = true
+		_fog_overlay_texture = noise_tex
+	_apply_shader_uniforms()
 
 # === Public API ===
 
@@ -948,6 +969,9 @@ func _apply_shader_uniforms() -> void:
 	mat.set_shader_parameter("player_alpha_scale", PLAYER_ALPHA_SCALE)
 	mat.set_shader_parameter("dm_history_alpha_scale", DM_HISTORY_ALPHA_SCALE)
 	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
+	mat.set_shader_parameter("fog_overlay_enabled", _fog_overlay_enabled)
+	if _fog_overlay_texture != null:
+		mat.set_shader_parameter("fog_overlay_tex", _fog_overlay_texture)
 	_fog_rect.visible = _fog_enabled
 	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 

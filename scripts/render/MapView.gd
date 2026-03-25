@@ -452,6 +452,11 @@ func set_dm_fog_visible(enabled: bool) -> void:
 		_refresh_fog_overlay()
 
 
+func set_fog_overlay_enabled(enabled: bool) -> void:
+	if fog_overlay != null:
+		fog_overlay.set_fog_overlay_enabled(enabled)
+
+
 func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
 	fog_tool = tool_id
 	fog_brush_radius_px = maxf(8.0, brush_radius_px)

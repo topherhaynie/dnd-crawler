@@ -179,6 +179,9 @@ func _handle_packet(raw: String) -> void:
 		"camera_update":
 			# DM moved the player view — apply immediately
 			state_received.emit(data)
+		"fog_overlay_toggle":
+			# DM toggled fog overlay effect
+			state_received.emit(data)
 		"window_resize":
 			# DM requests a specific window size — only honour when not fullscreen
 			var w := int(data.get("width", 0))

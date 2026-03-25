@@ -87,6 +87,27 @@ func apply_snapshot(buffer: PackedByteArray) -> bool:
 	return true
 
 
+func sync_model_from_gpu(buffer: PackedByteArray) -> void:
+	## Update the CPU model image from a GPU readback without emitting
+	## fog_changed — prevents a re-seed loop when the DM snapshots its own
+	## GPU state for broadcast.
+	if buffer.is_empty():
+		return
+	if model == null:
+		model = FogModel.new()
+	var image := Image.new()
+	var err := image.load_png_from_buffer(buffer)
+	if err != OK or image.is_empty():
+		return
+	image.convert(Image.FORMAT_L8)
+	if model.history_image != null and not model.history_image.is_empty() \
+			and (image.get_width() != model.history_image.get_width() \
+			or image.get_height() != model.history_image.get_height()):
+		image.resize(model.history_image.get_width(), model.history_image.get_height(), Image.INTERPOLATE_NEAREST)
+	model.history_image = image
+	model.size = Vector2i(image.get_width(), image.get_height())
+
+
 func reveal_brush(world_pos: Vector2, radius_px: float) -> void:
 	if model == null or model.history_image == null or service == null:
 		return

@@ -406,11 +406,28 @@
             }
         });
 
-        // If this page is served by the game, default the host field
-        // to the page's hostname so mobile devices auto-connect to the server.
+        // Auto-fill host / port / player-id from URL query params
+        // (e.g. ?host=192.168.1.5&port=9090&player_id=abc-123).
+        // When served over HTTPS (e.g. everstonekeep.com) the browser blocks
+        // plain ws:// connections (mixed content).  Redirect to the local
+        // game HTTP server so everything stays on plain HTTP.
         try {
-            if (location.protocol && location.protocol.startsWith("http") && location.hostname) {
-                hostEl.value = location.hostname;
+            const params = new URLSearchParams(location.search);
+            const qHost = params.get("host");
+            const qPort = params.get("port");
+            const qPid = params.get("player_id");
+
+            if (location.protocol === "https:" && qHost) {
+                const httpPort = params.get("http_port") || "8080";
+                const localUrl = `http://${qHost}:${httpPort}/mobile_client/index.html${location.search}`;
+                location.replace(localUrl);
+            } else {
+                if (qHost) hostEl.value = qHost;
+                else if (location.protocol === "http:" && location.hostname) {
+                    hostEl.value = location.hostname;
+                }
+                if (qPort) portEl.value = qPort;
+                if (qPid) playerIdEl.value = qPid;
             }
         } catch (e) { }
 
