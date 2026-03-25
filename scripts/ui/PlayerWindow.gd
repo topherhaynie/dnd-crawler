@@ -25,6 +25,15 @@ var _pending_fog_snapshot: Dictionary = {}
 var _pending_fog_deltas: Array = []
 var _incoming_fog_snapshot_chunks: Dictionary = {}
 var _bound_player_id: String = ""
+var _notes_canvas: CanvasLayer = null
+var _notes_panel: PanelContainer = null
+var _notes_vbox: VBoxContainer = null
+var _notes_font_size: int = 28
+var _notes_dragging: bool = false
+var _notes_drag_offset: Vector2 = Vector2.ZERO
+var _notes_resizing: bool = false
+var _notes_resize_origin: Vector2 = Vector2.ZERO
+var _notes_resize_start_size: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -33,6 +42,7 @@ func _ready() -> void:
 	add_child(_map_view)
 	_map_view.allow_keyboard_pan = false
 	_map_view.set_dm_view(false)
+	_build_puzzle_notes_panel()
 	print("PlayerWindow: ready — awaiting map from DM")
 
 
@@ -90,6 +100,8 @@ func on_state(data: Dictionary) -> void:
 			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary)
 		"token_updated":
 			_handle_token_added(data.get("token", {}) as Dictionary)
+		"puzzle_notes_state":
+			pass # Handled by the puzzle_notes catch-all below the match block
 		"token_detected":
 			if _map_view != null:
 				_map_view.set_token_detected(str(data.get("token_id", "")), true)
@@ -111,6 +123,11 @@ func on_state(data: Dictionary) -> void:
 			_handle_measurement_added(data.get("measurement", {}) as Dictionary)
 		_:
 			pass
+	# Puzzle notes piggyback on token messages (and standalone puzzle_notes_state).
+	# Process them from ANY message that carries the key, so they work even if
+	# the standalone message type is dropped or unrecognised.
+	if data.has("puzzle_notes"):
+		_handle_puzzle_notes_state(data.get("puzzle_notes", []) as Array)
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +484,183 @@ func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
 		td.height_px = matched_sprite.get_token_height_px()
 		td.blocks_los = matched_sprite.get_token_blocks_los()
 		_map_view.apply_token_passthrough_state(td)
+
+
+# ---------------------------------------------------------------------------
+# Puzzle notes panel (player display overlay)
+# ---------------------------------------------------------------------------
+
+func _build_puzzle_notes_panel() -> void:
+	_notes_canvas = CanvasLayer.new()
+	_notes_canvas.layer = 100
+	add_child(_notes_canvas)
+
+	_notes_panel = PanelContainer.new()
+	_notes_panel.visible = false
+	_notes_panel.custom_minimum_size = Vector2(360, 200)
+	_notes_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.08, 0.12, 0.92)
+	style.content_margin_left = 16.0
+	style.content_margin_right = 16.0
+	style.content_margin_top = 12.0
+	style.content_margin_bottom = 12.0
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	_notes_panel.add_theme_stylebox_override("panel", style)
+	_notes_canvas.add_child(_notes_panel)
+
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 10)
+	_notes_panel.add_child(outer)
+
+	# Drag-handle / title bar.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	header.mouse_filter = Control.MOUSE_FILTER_STOP
+	header.gui_input.connect(_on_notes_header_gui_input)
+	outer.add_child(header)
+
+	var title_lbl := Label.new()
+	title_lbl.text = "Puzzle Notes"
+	title_lbl.add_theme_font_size_override("font_size", 20)
+	title_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 1.0))
+	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(title_lbl)
+
+	var size_down := Button.new()
+	size_down.text = "A-"
+	size_down.custom_minimum_size = Vector2(44, 0)
+	size_down.pressed.connect(_on_notes_font_size_change.bind(-4))
+	header.add_child(size_down)
+
+	var size_up := Button.new()
+	size_up.text = "A+"
+	size_up.custom_minimum_size = Vector2(44, 0)
+	size_up.pressed.connect(_on_notes_font_size_change.bind(4))
+	header.add_child(size_up)
+
+	var close_btn := Button.new()
+	close_btn.text = "\u2715"
+	close_btn.custom_minimum_size = Vector2(36, 0)
+	close_btn.pressed.connect(func() -> void: _notes_panel.hide())
+	header.add_child(close_btn)
+
+	# Scrollable note list.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, 160)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	outer.add_child(scroll)
+
+	_notes_vbox = VBoxContainer.new()
+	_notes_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_notes_vbox.add_theme_constant_override("separation", 14)
+	scroll.add_child(_notes_vbox)
+
+	# Resize grip in the bottom-right corner.
+	var grip := Label.new()
+	grip.text = "\u2921" # ⤡ diagonal arrow
+	grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	grip.add_theme_font_size_override("font_size", 18)
+	grip.add_theme_color_override("font_color", Color(0.5, 0.5, 0.6, 0.6))
+	grip.mouse_filter = Control.MOUSE_FILTER_STOP
+	grip.mouse_default_cursor_shape = Control.CURSOR_FDIAGSIZE
+	grip.gui_input.connect(_on_notes_resize_gui_input)
+	outer.add_child(grip)
+
+
+func _handle_puzzle_notes_state(notes: Array) -> void:
+	if _notes_panel == null or _notes_vbox == null:
+		return
+	# Remove old children immediately (not queue_free) so child count is accurate.
+	for child in _notes_vbox.get_children():
+		_notes_vbox.remove_child(child)
+		child.queue_free()
+	if notes.is_empty():
+		_notes_panel.hide()
+		return
+	for raw: Variant in notes:
+		if not raw is Dictionary:
+			continue
+		var d := raw as Dictionary
+		var label_text: String = str(d.get("label", ""))
+		var note_text: String = str(d.get("text", ""))
+		if note_text.is_empty():
+			continue
+		var entry := VBoxContainer.new()
+		entry.add_theme_constant_override("separation", 4)
+		if not label_text.is_empty():
+			var src_lbl := Label.new()
+			src_lbl.text = label_text
+			src_lbl.add_theme_font_size_override("font_size", maxi(16, _notes_font_size - 6))
+			src_lbl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.9, 0.8))
+			entry.add_child(src_lbl)
+		var note_lbl := RichTextLabel.new()
+		note_lbl.bbcode_enabled = false
+		note_lbl.fit_content = true
+		note_lbl.scroll_active = false
+		note_lbl.text = note_text
+		note_lbl.add_theme_font_size_override("normal_font_size", _notes_font_size)
+		note_lbl.add_theme_color_override("default_color", Color.WHITE)
+		entry.add_child(note_lbl)
+		_notes_vbox.add_child(entry)
+	if _notes_vbox.get_child_count() > 0:
+		# Position near top-right of the viewport on first show.
+		if not _notes_panel.visible:
+			var vp_size := get_viewport().get_visible_rect().size
+			_notes_panel.position = Vector2(maxf(0.0, vp_size.x - 440.0), 24.0)
+		_notes_panel.show()
+	else:
+		_notes_panel.hide()
+
+
+func _on_notes_header_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			_notes_dragging = mb.pressed
+			if mb.pressed:
+				_notes_drag_offset = _notes_panel.position - mb.global_position
+	elif event is InputEventMouseMotion and _notes_dragging:
+		_notes_panel.position = (event as InputEventMouseMotion).global_position + _notes_drag_offset
+
+
+func _on_notes_resize_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			_notes_resizing = mb.pressed
+			if mb.pressed:
+				_notes_resize_origin = mb.global_position
+				_notes_resize_start_size = _notes_panel.size
+	elif event is InputEventMouseMotion and _notes_resizing:
+		var delta := (event as InputEventMouseMotion).global_position - _notes_resize_origin
+		var new_size := _notes_resize_start_size + delta
+		_notes_panel.size = Vector2(
+			maxf(new_size.x, _notes_panel.custom_minimum_size.x),
+			maxf(new_size.y, _notes_panel.custom_minimum_size.y)
+		)
+
+
+func _on_notes_font_size_change(delta: int) -> void:
+	_notes_font_size = clampi(_notes_font_size + delta, 14, 72)
+	# Re-apply font sizes to existing labels.
+	if _notes_vbox == null:
+		return
+	for child in _notes_vbox.get_children():
+		var entry: VBoxContainer = child as VBoxContainer
+		if entry == null:
+			continue
+		for sub in entry.get_children():
+			if sub is RichTextLabel:
+				(sub as RichTextLabel).add_theme_font_size_override("normal_font_size", _notes_font_size)
+			elif sub is Label:
+				(sub as Label).add_theme_font_size_override("font_size", maxi(16, _notes_font_size - 6))
 
 
 # ---------------------------------------------------------------------------

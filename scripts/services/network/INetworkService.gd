@@ -35,6 +35,11 @@ func broadcast_to_displays(_data: Dictionary) -> void:
 func send_to_display(_peer_id: int, _data: Dictionary) -> void:
 	push_error("INetworkService.send_to_display: not implemented")
 
+
+func send_map_to_display(_peer_id: int, _map: Object, _is_update: bool = false, _fog_snapshot: Dictionary = {}) -> void:
+	push_error("INetworkService.send_map_to_display: not implemented")
+
+
 func bind_peer(_peer_id: int, _player_id: Variant) -> void:
 	push_error("INetworkService.bind_peer: not implemented")
 

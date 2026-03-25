@@ -354,6 +354,7 @@ tokens currently visible to players (`is_visible_to_players == true`).
 | `autopause` | bool | `false` | Pause game on player proximity (stub) |
 | `pause_on_interact` | bool | `false` | Pause game on player interact (stub) |
 | `notes` | String | `""` | DM-only text notes |
+| `puzzle_notes` | Array | `[]` | Ordered puzzle hints; each element is `{text: String, revealed: bool}`. Revealed notes are broadcast independently of token visibility via `puzzle_notes_state`. |
 | `icon_key` | String | `""` | Asset key for the token's icon image |
 | `width_px` | float | `48` | Bounding box width in world-space pixels |
 | `height_px` | float | `48` | Bounding box height in world-space pixels |
@@ -367,6 +368,28 @@ tokens currently visible to players (`is_visible_to_players == true`).
 |---|---|
 | 0 | ELLIPSE |
 | 1 | RECTANGLE |
+
+---
+
+### `puzzle_notes_state` — revealed puzzle notes
+
+Sent on initial connect, after map load, and whenever the DM edits token puzzle
+notes.  Contains all revealed puzzle notes across **all** tokens, regardless of
+token visibility.
+
+```json
+{
+  "msg": "puzzle_notes_state",
+  "notes": [
+    { "label": "Ancient Chest", "text": "The runes glow faintly blue…" }
+  ]
+}
+```
+
+**Fields:**
+- `notes` (Array): zero or more `{label: String, text: String}` objects.
+  - `label`: the originating token's display label.
+  - `text`: the revealed puzzle note text.
 
 ---
 

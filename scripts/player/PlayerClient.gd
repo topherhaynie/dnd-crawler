@@ -55,6 +55,10 @@ func _process(_delta: float) -> void:
 
 func _connect_to_server() -> void:
 	_socket = WebSocketPeer.new() # fresh peer each attempt
+	# Match the DM server's buffer sizes so large map payloads and fog
+	# snapshot chunks can be received without dropping the connection.
+	_socket.inbound_buffer_size = 4 * 1024 * 1024 # 4 MiB
+	_socket.outbound_buffer_size = 1 * 1024 * 1024 # 1 MiB
 	var err := _socket.connect_to_url(SERVER_URL)
 	if err != OK:
 		push_warning("PlayerClient: could not initiate connection to %s (err=%d)" % [SERVER_URL, err])
@@ -208,6 +212,9 @@ func _handle_packet(raw: String) -> void:
 			state_received.emit(data)
 		"token_moved":
 			# Lightweight position update for a live token
+			state_received.emit(data)
+		"puzzle_notes_state":
+			# Revealed puzzle notes from all tokens (independent of visibility)
 			state_received.emit(data)
 		"measurement_state", "measurement_added", "measurement_removed", \
 		"measurement_moved", "measurement_updated":

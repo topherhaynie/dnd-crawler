@@ -73,6 +73,9 @@ var _trigger_count: int = 0
 # --- Notes ----------------------------------------------------------------
 ## Free-form DM notes attached to this token.
 var notes: String = ""
+## Ordered puzzle hints the DM can progressively reveal to players.
+## Each element is a Dictionary: {"text": String, "revealed": bool}.
+var puzzle_notes: Array = []
 
 # --- Appearance -----------------------------------------------------------
 ## Rendered size of the token in world-space pixels.
@@ -142,6 +145,7 @@ func to_dict() -> Dictionary:
 		"autopause_on_collision": autopause_on_collision,
 		"passage_paths": _serialize_passage_paths(),
 		"passage_width_px": passage_width_px,
+		"puzzle_notes": _serialize_puzzle_notes(),
 	}
 
 
@@ -172,6 +176,7 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.autopause_on_collision = bool(d.get("autopause_on_collision", false))
 	t.passage_width_px = float(d.get("passage_width_px", 48.0))
 	t.passage_paths = _deserialize_passage_paths(d)
+	t.puzzle_notes = _deserialize_puzzle_notes(d)
 	return t
 
 
@@ -223,6 +228,30 @@ static func _pts_array_to_packed(pts: Array) -> PackedVector2Array:
 		var pt := raw_pt as Dictionary
 		chain.append(Vector2(float(pt.get("x", 0.0)), float(pt.get("y", 0.0))))
 	return chain
+
+
+## Serialise puzzle_notes to a JSON-safe Array[{text, revealed}].
+func _serialize_puzzle_notes() -> Array:
+	var result: Array = []
+	for raw: Variant in puzzle_notes:
+		if raw is Dictionary:
+			var d := raw as Dictionary
+			result.append({"text": str(d.get("text", "")), "revealed": bool(d.get("revealed", false))})
+	return result
+
+
+## Deserialise puzzle_notes from a dict, returns empty array for old maps.
+static func _deserialize_puzzle_notes(d: Dictionary) -> Array:
+	var result: Array = []
+	var raw: Variant = d.get("puzzle_notes", [])
+	if not raw is Array:
+		return result
+	for entry: Variant in raw as Array:
+		if not entry is Dictionary:
+			continue
+		var ed := entry as Dictionary
+		result.append({"text": str(ed.get("text", "")), "revealed": bool(ed.get("revealed", false))})
+	return result
 
 
 ## Human-readable category name for UI labels.

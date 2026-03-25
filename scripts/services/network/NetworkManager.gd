@@ -34,6 +34,12 @@ func send_to_display(peer_id: int, data: Dictionary) -> void:
 	service.send_to_display(peer_id, data)
 
 
+func send_map_to_display(peer_id: int, map: Object, is_update: bool = false, fog_snapshot: Dictionary = {}) -> void:
+	if service == null:
+		return
+	service.send_map_to_display(peer_id, map, is_update, fog_snapshot)
+
+
 func bind_peer(peer_id: int, player_id: Variant) -> void:
 	if service == null:
 		return

@@ -303,6 +303,25 @@ func send_to_display(peer_id: int, data: Dictionary) -> void:
 	if err != OK:
 		push_warning("NetworkService: send_to_display failed peer=%d err=%d msg=%s" % [peer_id, err, str(data.get("msg", data.get("type", "?")))])
 
+
+## Send to a display peer, bypassing the fog backpressure gate.
+## Used for fog snapshot chunks that must arrive in full.
+func _send_to_display_forced(peer_id: int, data: Dictionary) -> void:
+	if _server == null:
+		return
+	if not peer_id in _display_peers:
+		return
+	var ws_peer := _server.get_peer(peer_id)
+	if ws_peer == null:
+		return
+	if ws_peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	var payload := JSON.stringify(data).to_utf8_buffer()
+	var err := ws_peer.send(payload)
+	if err != OK:
+		push_warning("NetworkService: _send_to_display_forced failed peer=%d err=%d msg=%s" % [peer_id, err, str(data.get("msg", data.get("type", "?")))])
+
+
 func displays_under_backpressure() -> bool:
 	for peer_id in _display_peers:
 		if _is_peer_under_backpressure(peer_id):
@@ -373,7 +392,7 @@ func _send_fog_snapshot_to_display(peer_id: int, fog_snapshot: Dictionary) -> vo
 	var snapshot_hash := int(fog_snapshot.get("snapshot_hash", -1))
 	var total_chunks := int(ceil(float(b64.length()) / float(FOG_SNAPSHOT_B64_CHUNK_CHARS)))
 	total_chunks = maxi(1, total_chunks)
-	send_to_display(peer_id, {
+	_send_to_display_forced(peer_id, {
 		"msg": "fog_state_snapshot_begin",
 		"snapshot_bytes": snapshot_bytes,
 		"snapshot_hash": snapshot_hash,
@@ -383,14 +402,14 @@ func _send_fog_snapshot_to_display(peer_id: int, fog_snapshot: Dictionary) -> vo
 		var start := i * FOG_SNAPSHOT_B64_CHUNK_CHARS
 		var count := mini(FOG_SNAPSHOT_B64_CHUNK_CHARS, b64.length() - start)
 		var part := b64.substr(start, count)
-		send_to_display(peer_id, {
+		_send_to_display_forced(peer_id, {
 			"msg": "fog_state_snapshot_chunk",
 			"snapshot_hash": snapshot_hash,
 			"index": i,
 			"chunks": total_chunks,
 			"fog_state_png_b64_chunk": part,
 		})
-	send_to_display(peer_id, {
+	_send_to_display_forced(peer_id, {
 		"msg": "fog_state_snapshot_end",
 		"snapshot_bytes": snapshot_bytes,
 		"snapshot_hash": snapshot_hash,

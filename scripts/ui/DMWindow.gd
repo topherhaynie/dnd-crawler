@@ -126,6 +126,10 @@ var _token_rotation_spin: SpinBox = null
 var _token_shape_option: OptionButton = null
 var _token_blocks_los_check: CheckBox = null
 var _token_blocks_los_row: HBoxContainer = null
+## Puzzle notes sub-section
+var _puzzle_notes_container: VBoxContainer = null
+var _puzzle_notes_scroll: ScrollContainer = null
+var _puzzle_notes_add_btn: Button = null
 ## Right-click context menu for tokens
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
@@ -354,13 +358,11 @@ func _nm_broadcast_map_update(map: MapData) -> void:
 	if nm != null:
 		nm.broadcast_to_displays({"msg": "map_updated", "map": map.to_dict()})
 
-func _nm_send_map_to_display(peer_id: int, map: MapData, _is_update: bool, fog_snapshot: Dictionary) -> void:
+func _nm_send_map_to_display(peer_id: int, map: MapData, is_update: bool, fog_snapshot: Dictionary) -> void:
 	var nm := _network()
 	if nm == null:
 		return
-	nm.send_to_display(peer_id, {"msg": "map_loaded", "map": map.to_dict()})
-	if not fog_snapshot.is_empty():
-		nm.send_to_display(peer_id, fog_snapshot)
+	nm.send_map_to_display(peer_id, map, is_update, fog_snapshot)
 
 func _nm_bind_peer(peer_id: int, player_id: Variant) -> void:
 	var nm := _network()
@@ -1034,6 +1036,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_broadcast_player_viewport()
 	_broadcast_player_state()
 	_broadcast_token_state()
+	_broadcast_puzzle_notes_state()
 	_broadcast_measurement_state()
 	# Send current fog overlay state so the player matches the DM.
 	var overlay_idx := _view_menu.get_item_index(28)
@@ -3169,7 +3172,9 @@ func _on_token_context_menu_id(id: int) -> void:
 			tm.remove_token(_token_context_id)
 			if _map_view != null:
 				_map_view.remove_token_sprite(_token_context_id)
-			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id})
+			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id,
+				"puzzle_notes": _collect_revealed_puzzle_notes()})
+			_broadcast_puzzle_notes_state()
 			if del_snapshot != null:
 				var cid := _token_context_id
 				var mv := _map_view
@@ -3180,11 +3185,14 @@ func _on_token_context_menu_id(id: int) -> void:
 							var restored := TokenData.from_dict(del_snapshot.to_dict())
 							reg_del.token.add_token(restored)
 							if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
-							_broadcast_token_change(restored, true),
+							_broadcast_token_change(restored, true)
+							_broadcast_puzzle_notes_state(),
 						func():
 							reg_del.token.remove_token(cid)
 							if mv != null: mv.remove_token_sprite(cid)
-							_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid})))
+							_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid,
+								"puzzle_notes": _collect_revealed_puzzle_notes()})
+							_broadcast_puzzle_notes_state()))
 		3: # Toggle open/closed (DOOR / SECRET_PASSAGE)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
@@ -3237,6 +3245,8 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_blocks_los_row.visible = is_door_type
 	if _token_notes_edit != null:
 		_token_notes_edit.text = data.notes
+	# Populate puzzle notes rows.
+	_populate_puzzle_note_rows(data.puzzle_notes)
 	# Store temporary placement position in editor id if brand new.
 	if _token_editor_dialog != null:
 		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -3252,7 +3262,7 @@ func _open_token_editor(data: TokenData) -> void:
 func _build_token_editor_dialog() -> void:
 	_token_editor_dialog = ConfirmationDialog.new()
 	_token_editor_dialog.title = "Token"
-	_token_editor_dialog.min_size = Vector2i(400, 420)
+	_token_editor_dialog.min_size = Vector2i(520, 620)
 	_token_editor_dialog.confirmed.connect(_on_token_editor_confirmed)
 	add_child(_token_editor_dialog)
 
@@ -3472,6 +3482,25 @@ func _build_token_editor_dialog() -> void:
 	_token_notes_edit.placeholder_text = "DM notes (not shown to players)"
 	vbox.add_child(_token_notes_edit)
 
+	# Puzzle Notes
+	var pn_header := Label.new()
+	pn_header.text = "Puzzle Notes (shown to players when revealed):"
+	vbox.add_child(pn_header)
+	_puzzle_notes_scroll = ScrollContainer.new()
+	_puzzle_notes_scroll.custom_minimum_size = Vector2(0, 160)
+	_puzzle_notes_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_puzzle_notes_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_puzzle_notes_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(_puzzle_notes_scroll)
+	_puzzle_notes_container = VBoxContainer.new()
+	_puzzle_notes_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_puzzle_notes_container.add_theme_constant_override("separation", 4)
+	_puzzle_notes_scroll.add_child(_puzzle_notes_container)
+	_puzzle_notes_add_btn = Button.new()
+	_puzzle_notes_add_btn.text = "+ Add Note"
+	_puzzle_notes_add_btn.pressed.connect(_on_puzzle_note_add_pressed)
+	vbox.add_child(_puzzle_notes_add_btn)
+
 
 func _apply_token_context_menu_theme() -> void:
 	if _token_context_menu == null:
@@ -3492,6 +3521,100 @@ func _on_token_category_changed(idx: int) -> void:
 		_token_autopause_collision_check.button_pressed = true
 
 
+# ── Puzzle notes helpers ────────────────────────────────────────────────────
+
+func _populate_puzzle_note_rows(notes: Array) -> void:
+	if _puzzle_notes_container == null:
+		return
+	for child in _puzzle_notes_container.get_children():
+		child.queue_free()
+	for raw: Variant in notes:
+		if raw is Dictionary:
+			var d := raw as Dictionary
+			_add_puzzle_note_row(str(d.get("text", "")), bool(d.get("revealed", false)))
+
+
+func _add_puzzle_note_row(text: String, revealed: bool) -> void:
+	if _puzzle_notes_container == null:
+		return
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var up_btn := Button.new()
+	up_btn.text = "▲"
+	up_btn.custom_minimum_size = Vector2(28, 0)
+	up_btn.pressed.connect(_move_puzzle_note_row.bind(row, -1))
+	row.add_child(up_btn)
+
+	var down_btn := Button.new()
+	down_btn.text = "▼"
+	down_btn.custom_minimum_size = Vector2(28, 0)
+	down_btn.pressed.connect(_move_puzzle_note_row.bind(row, 1))
+	row.add_child(down_btn)
+
+	var line_edit := LineEdit.new()
+	line_edit.text = text
+	line_edit.placeholder_text = "Puzzle hint…"
+	line_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(line_edit)
+
+	var reveal_check := CheckBox.new()
+	reveal_check.text = "Reveal"
+	reveal_check.button_pressed = revealed
+	row.add_child(reveal_check)
+
+	var del_btn := Button.new()
+	del_btn.text = "✕"
+	del_btn.custom_minimum_size = Vector2(28, 0)
+	del_btn.pressed.connect(_remove_puzzle_note_row.bind(row))
+	row.add_child(del_btn)
+
+	_puzzle_notes_container.add_child(row)
+	# Scale fonts to match the rest of the dialog (rows are added after initial
+	# scale_control_fonts pass, so they miss the recursive walk).
+	var mgr: UIScaleManager = _get_ui_scale_mgr()
+	if mgr != null:
+		mgr.scale_control_fonts(row)
+
+
+func _remove_puzzle_note_row(row: HBoxContainer) -> void:
+	if row != null and row.get_parent() == _puzzle_notes_container:
+		_puzzle_notes_container.remove_child(row)
+		row.queue_free()
+
+
+func _move_puzzle_note_row(row: HBoxContainer, delta: int) -> void:
+	if _puzzle_notes_container == null or row == null:
+		return
+	var idx: int = row.get_index()
+	var new_idx: int = clampi(idx + delta, 0, _puzzle_notes_container.get_child_count() - 1)
+	if new_idx != idx:
+		_puzzle_notes_container.move_child(row, new_idx)
+
+
+func _read_puzzle_note_rows() -> Array:
+	var result: Array = []
+	if _puzzle_notes_container == null:
+		return result
+	for child in _puzzle_notes_container.get_children():
+		var row: HBoxContainer = child as HBoxContainer
+		if row == null:
+			continue
+		var line_edit: LineEdit = row.get_child(2) as LineEdit
+		var reveal_check: CheckBox = row.get_child(3) as CheckBox
+		if line_edit == null or reveal_check == null:
+			continue
+		var note_text: String = line_edit.text.strip_edges()
+		if note_text.is_empty():
+			continue
+		result.append({"text": note_text, "revealed": reveal_check.button_pressed})
+	return result
+
+
+func _on_puzzle_note_add_pressed() -> void:
+	_add_puzzle_note_row("", false)
+
+
 func _on_token_editor_confirmed() -> void:
 	var label_text: String = _token_label_edit.text.strip_edges() if _token_label_edit != null else ""
 	var category: int = _token_category_option.get_selected_id() if _token_category_option != null else 0
@@ -3505,6 +3628,7 @@ func _on_token_editor_confirmed() -> void:
 	var trigger_px: float = trigger_feet / 5.0 * _pixels_per_5ft_current()
 	var do_pi: bool = _token_pause_interact_check.button_pressed if _token_pause_interact_check != null else false
 	var notes_text: String = _token_notes_edit.text if _token_notes_edit != null else ""
+	var p_notes: Array = _read_puzzle_note_rows()
 	var w_px: float = _token_width_spin.value if _token_width_spin != null else 48.0
 	var h_px: float = _token_height_spin.value if _token_height_spin != null else 48.0
 	var rot_deg: float = _token_rotation_spin.value if _token_rotation_spin != null else 0.0
@@ -3540,6 +3664,7 @@ func _on_token_editor_confirmed() -> void:
 	data.trigger_radius_px = trigger_px
 	data.pause_on_interact = do_pi
 	data.notes = notes_text
+	data.puzzle_notes = p_notes
 	data.width_px = w_px
 	data.height_px = h_px
 	data.rotation_deg = rot_deg
@@ -3571,14 +3696,16 @@ func _on_token_editor_confirmed() -> void:
 					var restored := TokenData.from_dict(old_snapshot.to_dict())
 					tm.update_token(restored)
 					if mv != null: mv.update_token_sprite(restored); mv.apply_token_passthrough_state(restored)
-					_broadcast_token_change(restored, false),
+					_broadcast_token_change(restored, false)
+					_broadcast_puzzle_notes_state(),
 				func():
 					var td: TokenData = tm.get_token_by_id(new_snapshot.id)
 					if td == null: return
 					var reapplied := TokenData.from_dict(new_snapshot.to_dict())
 					tm.update_token(reapplied)
 					if mv != null: mv.update_token_sprite(reapplied); mv.apply_token_passthrough_state(reapplied)
-					_broadcast_token_change(reapplied, false)))
+					_broadcast_token_change(reapplied, false)
+					_broadcast_puzzle_notes_state()))
 		else:
 			# New token creation.
 			var new_id := new_snapshot.id
@@ -3586,15 +3713,19 @@ func _on_token_editor_confirmed() -> void:
 				func():
 					tm.remove_token(new_id)
 					if mv != null: mv.remove_token_sprite(new_id)
-					_nm_broadcast_to_displays({"msg": "token_removed", "token_id": new_id}),
+					_nm_broadcast_to_displays({"msg": "token_removed", "token_id": new_id,
+						"puzzle_notes": _collect_revealed_puzzle_notes()})
+					_broadcast_puzzle_notes_state(),
 				func():
 					var readd := TokenData.from_dict(new_snapshot.to_dict())
 					tm.add_token(readd)
 					if mv != null: mv.add_token_sprite(readd, true); mv.apply_token_passthrough_state(readd)
-					_broadcast_token_change(readd, true)))
+					_broadcast_token_change(readd, true)
+					_broadcast_puzzle_notes_state()))
 
 	# Broadcast to player displays.
 	_broadcast_token_change(data, existing == null)
+	_broadcast_puzzle_notes_state()
 
 
 func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
@@ -3628,7 +3759,39 @@ func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 	if not data.is_visible_to_players and not is_passthrough_category:
 		return
 	var msg_type: String = "token_added" if is_new else "token_updated"
-	_nm_broadcast_to_displays({"msg": msg_type, "token": data.to_dict()})
+	_nm_broadcast_to_displays({"msg": msg_type, "token": data.to_dict(),
+		"puzzle_notes": _collect_revealed_puzzle_notes()})
+
+
+## Collect all revealed puzzle notes from every token (regardless of visibility).
+func _collect_revealed_puzzle_notes() -> Array:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return []
+	var notes: Array = []
+	for raw in registry.token.get_all_tokens():
+		var td: TokenData = raw as TokenData
+		if td == null:
+			continue
+		for note_raw: Variant in td.puzzle_notes:
+			if not note_raw is Dictionary:
+				continue
+			var d := note_raw as Dictionary
+			if not bool(d.get("revealed", false)):
+				continue
+			var text: String = str(d.get("text", ""))
+			if text.is_empty():
+				continue
+			notes.append({"label": td.label, "text": text})
+	return notes
+
+
+## Broadcast all revealed puzzle notes to player displays.
+## Notes are independent of token visibility — hidden tokens can still have
+## revealed notes that should appear on the player screen.
+func _broadcast_puzzle_notes_state() -> void:
+	_nm_broadcast_to_displays({"msg": "puzzle_notes_state",
+		"puzzle_notes": _collect_revealed_puzzle_notes()})
 
 
 ## Broadcast the full visible-token snapshot (called on initial client connect
@@ -4046,7 +4209,8 @@ func _broadcast_token_state() -> void:
 		if td.category == TokenData.TokenCategory.DOOR \
 				or td.category == TokenData.TokenCategory.SECRET_PASSAGE:
 			dicts.append(td.to_dict())
-	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts})
+	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts,
+		"puzzle_notes": _collect_revealed_puzzle_notes()})
 
 
 # ---------------------------------------------------------------------------
