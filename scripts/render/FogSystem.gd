@@ -34,6 +34,10 @@ const VIEWPORT_MARGIN_PX_MAX: float = 256.0
 var _map_size: Vector2 = Vector2(1920, 1080)
 var _is_dm: bool = true
 var _fog_enabled: bool = false
+## When false the DM fog overlay renders at alpha 0 (fully transparent) while
+## the GPU pipeline (LOS baking, stroke handling, history recording) continues
+## to run.  Only affects the DM view — player display always shows fog.
+var _dm_display_visible: bool = true
 ## Ratio between fog-texture pixels and world (map) pixels.  Computed in
 ## configure() as  min(1.0, MAX_FOG_DIM / max(map_w, map_h)).
 var _fog_scale: float = 1.0
@@ -263,22 +267,15 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			str(_viewport_local),
 		])
 
-## Lightweight visibility toggle — avoids full pipeline reconfiguration.
-## Use this when only the DM fog overlay needs to appear/disappear without
-## changing map size, fog scale, or viewport-local mode.  The GPU history
-## viewports retain their content across the toggle, so no re-seed is needed.
+## Lightweight DM-side visibility toggle.  Sets the fog overlay alpha to 0
+## (fully transparent) so the DM can see the map unobstructed, while the GPU
+## pipeline (LOS baking, stroke handling, history recording) continues to run.
+## Player display is unaffected — it always renders fog at full opacity.
 func set_display_enabled(enabled: bool) -> void:
-	if _fog_enabled == enabled:
+	if _dm_display_visible == enabled:
 		return
-	_fog_enabled = enabled
-	if _live_lights_viewport:
-		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _fog_enabled else SubViewport.UPDATE_DISABLED
-	var mgr := _fog_manager()
-	if mgr != null:
-		mgr.set_enabled(_fog_enabled)
+	_dm_display_visible = enabled
 	_apply_shader_uniforms()
-	if _fog_enabled:
-		_queue_los_full_bake()
 
 
 func set_fog_overlay_enabled(enabled: bool) -> void:
@@ -302,14 +299,6 @@ func set_fog_overlay_enabled(enabled: bool) -> void:
 # === Public API ===
 
 func get_fog_state() -> PackedByteArray:
-	# When fog rendering is disabled the GPU history is stale — _process,
-	# _on_fog_stroke_applied, and _bake_live_los_into_history all skip — so
-	# fall back to the CPU model which always receives brush strokes.
-	if not _fog_enabled:
-		var cpu_model := _fog_model()
-		if cpu_model != null and cpu_model.history_image != null and not cpu_model.history_image.is_empty():
-			return cpu_model.history_image.save_png_to_buffer()
-		return PackedByteArray()
 	# Read from GPU to capture both manual reveals AND LOS accumulation.
 	if _history_gpu_ready:
 		if _history_swap_pending or _history_seed_pending:
@@ -967,7 +956,8 @@ func _apply_shader_uniforms() -> void:
 	mat.set_shader_parameter("is_dm", _is_dm)
 	mat.set_shader_parameter("fog_color", Color(0.0, 0.0, 0.0, 1.0))
 	mat.set_shader_parameter("player_alpha_scale", PLAYER_ALPHA_SCALE)
-	mat.set_shader_parameter("dm_history_alpha_scale", DM_HISTORY_ALPHA_SCALE)
+	var dm_alpha: float = DM_HISTORY_ALPHA_SCALE if _dm_display_visible or not _is_dm else 0.0
+	mat.set_shader_parameter("dm_history_alpha_scale", dm_alpha)
 	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
 	mat.set_shader_parameter("fog_overlay_enabled", _fog_overlay_enabled)
 	if _fog_overlay_texture != null:

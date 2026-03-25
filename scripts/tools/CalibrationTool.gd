@@ -142,14 +142,13 @@ func apply_measurement(feet: float) -> void:
 	if px_dist <= 0.0:
 		return
 	var px_per_foot := px_dist / feet
-	match _map.grid_type:
-		MapData.GridType.SQUARE:
-			_map.cell_px = px_per_foot * 5.0 # one cell = 5 ft
-			print("CalibrationTool: cell_px = %.2f" % _map.cell_px)
-		MapData.GridType.HEX_FLAT, MapData.GridType.HEX_POINTY:
-			# hex_size = outer radius; one hex width (flat-top) = 2 * hex_size
-			# Treat the ruler span as the width of N hexes; one hex = 5 ft
-			_map.hex_size = (px_per_foot * 5.0) / 2.0
-			print("CalibrationTool: hex_size = %.2f" % _map.hex_size)
+	# Always keep both calibration fields in sync so switching grid type
+	# preserves the calibrated scale (1 square cell = 1 hex width = 5 ft).
+	_map.cell_px = px_per_foot * 5.0
+	_map.hex_size = _map.cell_px / 2.0
+	if _map.grid_type == MapData.GridType.SQUARE:
+		print("CalibrationTool: cell_px = %.2f" % _map.cell_px)
+	else:
+		print("CalibrationTool: hex_size = %.2f" % _map.hex_size)
 	calibration_done.emit(_map)
 	deactivate()

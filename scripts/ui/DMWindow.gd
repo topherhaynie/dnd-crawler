@@ -1991,13 +1991,11 @@ func _on_manual_scale_confirmed() -> void:
 		return
 	var px_per_cell := _scale_px_spin.value
 	var ft_per_cell := _scale_ft_spin.value
-	# Normalise to pixels-per-5ft cell
+	# Normalise to pixels-per-5ft cell and keep both fields in sync so
+	# switching grid type preserves the calibrated scale.
 	var cell_px := px_per_cell * (5.0 / ft_per_cell)
-	match map.grid_type:
-		MapData.GridType.SQUARE:
-			map.cell_px = cell_px
-		_:
-			map.hex_size = cell_px * 0.5
+	map.cell_px = cell_px
+	map.hex_size = cell_px * 0.5
 	_map_view.grid_overlay.apply_map_data(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
