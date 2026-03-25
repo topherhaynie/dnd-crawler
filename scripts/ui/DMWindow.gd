@@ -4550,6 +4550,21 @@ func _save_map_as_path(bundle_path: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _apply_map(map: MapData, from_save: bool = false) -> void:
+	# ── Clear per-map transient state so nothing leaks between maps ──────
+	_detected_token_ids.clear()
+	_autopause_locked_ids.clear()
+	_token_editor_id = ""
+	_token_context_id = ""
+	_selected_passage_token_id = ""
+	_initial_sync_ack_pending.clear()
+	_initial_sync_attempt_by_peer.clear()
+	_broadcast_dirty = false
+	_fog_dirty = false
+	_fog_snapshot_in_flight = false
+	_fog_snapshot_queued = false
+	_player_state_dirty = false
+	_dm_override_player_id = ""
+
 	# Clear undo history whenever a new map is loaded — history must not span maps.
 	var _hreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _hreg != null and _hreg.history != null:
@@ -4568,6 +4583,9 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	if not from_save:
 		# Player cam is initialised to the DM's initial view once the camera settles.
 		call_deferred("_init_player_cam_from_dm")
+	else:
+		# Restore the viewport indicator from the saved player camera state.
+		_update_viewport_indicator()
 	# Load DM-placed token sprites FIRST so that reset_for_new_map can add
 	# player sprites into the same layer without being clobbered.
 	if _map_view != null:
@@ -4655,15 +4673,29 @@ func _on_map_fog_changed(_map_data: MapData) -> void:
 
 
 func _on_map_fog_brush_applied(stroke: Dictionary) -> void:
-	var center := stroke.get("center", Vector2.ZERO) as Vector2
-	_nm_broadcast_to_displays({
-		"msg": "fog_brush_stroke",
-		"type": str(stroke.get("type", "brush")),
-		"center_x": center.x,
-		"center_y": center.y,
-		"radius": float(stroke.get("radius", 0.0)),
-		"reveal": bool(stroke.get("reveal", true)),
-	})
+	var stype: String = str(stroke.get("type", "brush"))
+	if stype == "rect":
+		var a := stroke.get("a", Vector2.ZERO) as Vector2
+		var b := stroke.get("b", Vector2.ZERO) as Vector2
+		_nm_broadcast_to_displays({
+			"msg": "fog_brush_stroke",
+			"type": "rect",
+			"a_x": a.x,
+			"a_y": a.y,
+			"b_x": b.x,
+			"b_y": b.y,
+			"reveal": bool(stroke.get("reveal", true)),
+		})
+	else:
+		var center := stroke.get("center", Vector2.ZERO) as Vector2
+		_nm_broadcast_to_displays({
+			"msg": "fog_brush_stroke",
+			"type": stype,
+			"center_x": center.x,
+			"center_y": center.y,
+			"radius": float(stroke.get("radius", 0.0)),
+			"reveal": bool(stroke.get("reveal", true)),
+		})
 
 
 func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:

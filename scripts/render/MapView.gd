@@ -297,8 +297,62 @@ var _fog_cover_frames_remaining: int = 0
 # Public API
 # ---------------------------------------------------------------------------
 
+func reset_transient_state() -> void:
+	## Clear all per-map transient interaction state so nothing leaks between
+	## map loads (viewport indicator, active tools, drag/hover/selection state).
+
+	# ── Tool modes ──
+	active_tool = Tool.SELECT
+	fog_tool = FogTool.NONE
+	if _passage_tool != PassageTool.NONE:
+		deactivate_passage_tool()
+	_active_passage_token_id = ""
+	_wip_passage_paths = []
+	_passage_current_chain = PackedVector2Array()
+	_passage_freehand_active = false
+
+	# ── Token interaction ──
+	_cancel_token_drag()
+	_cancel_token_resize()
+	_clear_token_hover()
+	_draggable_tokens.clear()
+	_token_drag_order.clear()
+
+	# ── Wall editing ──
+	_set_selected_wall(-1)
+	_wall_dragging_handle = -1
+	_wall_drag_start_points.clear()
+	_wall_rect_dragging = false
+	_clear_wall_polygon_preview()
+
+	# ── Spawn editing ──
+	_selected_spawn_index = -1
+	_dragging_spawn_index = -1
+
+	# ── Measurement ──
+	_selected_meas_id = ""
+	_meas_dragging = false
+	_meas_move_dragging = false
+	_meas_edit_dragging = false
+
+	# ── Fog interaction ──
+	_fog_rect_dragging = false
+	_fog_stroke_in_progress = false
+
+	# ── Viewport indicator ──
+	set_viewport_indicator(Rect2())
+	_dragging_indicator = false
+	_resizing_indicator = false
+	_resize_handle_idx = -1
+
+	# ── Camera / input ──
+	_panning = false
+	_reset_cursor()
+
+
 func load_map(map: MapData) -> void:
 	## Load a MapData and display it. Safe to call from DM or Player process.
+	reset_transient_state()
 	_map = map
 
 	# On the player side, show an opaque black cover BEFORE assigning the map
@@ -464,11 +518,11 @@ func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
 	if fog_tool != FogTool.REVEAL_RECT and fog_tool != FogTool.HIDE_RECT:
 		_fog_rect_dragging = false
 		_clear_fog_rect_preview()
-	if fog_tool == FogTool.NONE:
-		_hide_fog_brush_cursor()
-	elif fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.HIDE_BRUSH:
+	if fog_tool == FogTool.REVEAL_BRUSH or fog_tool == FogTool.HIDE_BRUSH:
 		_build_fog_brush_cursor()
 		_update_fog_brush_cursor_style()
+	else:
+		_hide_fog_brush_cursor()
 
 
 func apply_fog_state(cell_px: int, hidden_cells: Array) -> void:
@@ -2538,16 +2592,26 @@ func _flush_fog_brush_strokes() -> void:
 
 
 func apply_fog_brush_stroke(data: Dictionary) -> void:
-	## Apply a remotely-received brush stroke on the GPU (player side).
+	## Apply a remotely-received brush/rect stroke on the GPU (player side).
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.fog == null:
 		return
-	var stroke := {
-		"type": str(data.get("type", "brush")),
-		"center": Vector2(float(data.get("center_x", 0.0)), float(data.get("center_y", 0.0))),
-		"radius": float(data.get("radius", 0.0)),
-		"reveal": bool(data.get("reveal", true)),
-	}
+	var stype: String = str(data.get("type", "brush"))
+	var stroke: Dictionary
+	if stype == "rect":
+		stroke = {
+			"type": "rect",
+			"a": Vector2(float(data.get("a_x", 0.0)), float(data.get("a_y", 0.0))),
+			"b": Vector2(float(data.get("b_x", 0.0)), float(data.get("b_y", 0.0))),
+			"reveal": bool(data.get("reveal", true)),
+		}
+	else:
+		stroke = {
+			"type": stype,
+			"center": Vector2(float(data.get("center_x", 0.0)), float(data.get("center_y", 0.0))),
+			"radius": float(data.get("radius", 0.0)),
+			"reveal": bool(data.get("reveal", true)),
+		}
 	registry.fog.fog_stroke_applied.emit(stroke)
 
 
@@ -2557,11 +2621,9 @@ func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.fog == null:
 		return
-	if reveal:
-		registry.fog.reveal_rect(a, b)
-	else:
-		registry.fog.hide_rect(a, b)
-	fog_changed.emit(_map)
+	registry.fog.queue_gpu_rect(a, b, reveal)
+	registry.fog.flush_pending_strokes()
+	fog_brush_applied.emit({"type": "rect", "a": a, "b": b, "reveal": reveal})
 
 
 ## Snapshot the current fog state into a transportable Dictionary.

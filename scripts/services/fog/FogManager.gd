@@ -132,6 +132,14 @@ func queue_gpu_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> void
 	fog_stroke_applied.emit(stroke)
 
 
+func queue_gpu_rect(a: Vector2, b: Vector2, reveal: bool) -> void:
+	## Send a rect stroke to the GPU immediately without the CPU pixel loop.
+	## Call flush_pending_strokes() afterwards to update the CPU model.
+	var stroke := {"type": "rect", "a": a, "b": b, "reveal": reveal}
+	_pending_strokes.append(stroke)
+	fog_stroke_applied.emit(stroke)
+
+
 func flush_pending_strokes() -> void:
 	## Batch-apply all queued GPU strokes to the CPU history image.
 	if model == null or model.history_image == null or service == null:
