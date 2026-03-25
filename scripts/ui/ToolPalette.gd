@@ -242,6 +242,10 @@ func _build() -> void:
 	fog_visible_check.toggled.connect(func(enabled: bool) -> void: dm_fog_visible_toggled.emit(enabled))
 	palette_vbox.add_child(fog_visible_check)
 
+	var fog_reset_btn := _make_action_btn("↺", "Reset fog to fully hidden (covers entire map)")
+	fog_reset_btn.pressed.connect(func() -> void: action_fired.emit("fog_reset"))
+	palette_vbox.add_child(fog_reset_btn)
+
 	# Wall (stacked — right-click/hold selects Rect or Poly)
 	_wall_stack_btn = _make_toggle_btn("▭", "Wall tool — Rectangle", _tool_group)
 	_wall_stack_btn.pressed.connect(func() -> void: _activate_wall_tool())

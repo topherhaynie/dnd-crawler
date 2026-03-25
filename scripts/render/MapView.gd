@@ -445,7 +445,10 @@ func set_dm_view(enabled: bool) -> void:
 
 func set_dm_fog_visible(enabled: bool) -> void:
 	dm_fog_visible = enabled
-	_refresh_fog_overlay()
+	if fog_overlay != null:
+		fog_overlay.set_display_enabled(enabled if is_dm_view else true)
+	else:
+		_refresh_fog_overlay()
 
 
 func set_fog_tool(tool_id: int, brush_radius_px: float) -> void:
@@ -2658,6 +2661,14 @@ func apply_fog_snapshot(buffer: PackedByteArray) -> bool:
 
 func set_fog_state(data: PackedByteArray) -> bool:
 	return apply_fog_snapshot(data)
+
+
+func reset_fog() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
+		return
+	registry.fog.reset()
+	fog_changed.emit(_map)
 
 
 func _apply_cached_fog_snapshot_if_compatible() -> bool:

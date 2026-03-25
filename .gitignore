@@ -11,6 +11,8 @@
 
 # Build and release scripts
 /release.sh
+/install.sh
+/uninstall.sh
 
 # Export presets may contain signing credentials
 # export_presets.cfg

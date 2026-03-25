@@ -652,6 +652,7 @@ func _build_ui() -> void:
 	_view_menu.add_item("Reset View", 22)
 	_view_menu.add_separator()
 	_view_menu.add_item("Sync Fog Now", 24)
+	_view_menu.add_item("Reset Fog…", 27)
 	_view_menu.add_separator()
 	_view_menu.add_item("Measurement Tools…", 26)
 	_view_menu.add_separator()
@@ -1347,6 +1348,8 @@ func _on_palette_action_fired(action_key: String) -> void:
 				m2.camera_rotation = _player_cam_rotation
 			_update_viewport_indicator()
 			_broadcast_player_viewport()
+		"fog_reset":
+			_show_fog_reset_confirm()
 
 
 func _on_palette_fog_mode_changed(fog_id: int, brush_size: float) -> void:
@@ -1831,6 +1834,8 @@ func _on_view_menu_id(id: int) -> void:
 				_map_view._reset_camera()
 		24: # Manual fog resync
 			_manual_fog_sync_now()
+		27: # Reset fog to fully hidden
+			_show_fog_reset_confirm()
 		26: # Open measurement tools panel
 			_open_measure_panel()
 		23: # Launch player display process
@@ -4675,6 +4680,28 @@ func _manual_fog_sync_now() -> void:
 	_fog_countdown = 0.0
 	_broadcast_fog_state()
 	_set_status("Fog sync queued to player displays.")
+
+
+var _fog_reset_dialog: ConfirmationDialog = null
+
+func _show_fog_reset_confirm() -> void:
+	if _fog_reset_dialog == null:
+		_fog_reset_dialog = ConfirmationDialog.new()
+		_fog_reset_dialog.title = "Reset Fog"
+		_fog_reset_dialog.dialog_text = "Reset all fog to fully hidden?\nThis will cover the entire map and cannot be undone."
+		_fog_reset_dialog.ok_button_text = "Reset"
+		_fog_reset_dialog.confirmed.connect(_on_fog_reset_confirmed)
+		add_child(_fog_reset_dialog)
+	_fog_reset_dialog.reset_size()
+	_fog_reset_dialog.popup_centered()
+
+
+func _on_fog_reset_confirmed() -> void:
+	if _map_view == null:
+		return
+	_map_view.reset_fog()
+	_broadcast_fog_state()
+	_set_status("Fog reset — map fully hidden.")
 
 
 func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:

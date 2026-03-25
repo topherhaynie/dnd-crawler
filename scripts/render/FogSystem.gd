@@ -281,6 +281,23 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			str(_viewport_local),
 		])
 
+## Lightweight visibility toggle — avoids full pipeline reconfiguration.
+## Use this when only the DM fog overlay needs to appear/disappear without
+## changing map size, fog scale, or viewport-local mode.  The GPU history
+## viewports retain their content across the toggle, so no re-seed is needed.
+func set_display_enabled(enabled: bool) -> void:
+	if _fog_enabled == enabled:
+		return
+	_fog_enabled = enabled
+	if _live_lights_viewport:
+		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _fog_enabled else SubViewport.UPDATE_DISABLED
+	var mgr := _fog_manager()
+	if mgr != null:
+		mgr.set_enabled(_fog_enabled)
+	_apply_shader_uniforms()
+	if _fog_enabled:
+		_queue_los_full_bake()
+
 # === Public API ===
 
 func get_fog_state() -> PackedByteArray:

@@ -15,8 +15,8 @@ run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.5", "C#", "Forward Plus")
 boot_splash/bg_color=Color(0.1, 0.1, 0.12, 1)
 boot_splash/image="res://assets/icon.png"
-boot_splash/minimum_display_time=2000
 config/icon="res://assets/icon.png"
+boot_splash/minimum_display_time=2000
 config/main_scene="res://scenes/Main.tscn"
 
 [autoload]
@@ -26,7 +26,6 @@ ServiceBootstrap="*res://scripts/autoloads/ServiceBootstrap.gd"
 
 [display]
 
-window/size/initial_position_type=1
 window/subwindows/embed_subwindows=false
 
 [dotnet]
