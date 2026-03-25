@@ -797,18 +797,19 @@ func set_passage_tool(mode: int) -> void:
 ## Commit WIP paths to passage_paths_committed signal and exit passage-paint mode.
 func deactivate_passage_tool() -> void:
 	_finalize_current_chain()
-	if _active_passage_token_id != "":
-		passage_paths_committed.emit(
-			_active_passage_token_id,
-			_wip_passage_paths.duplicate(),
-			_wip_brush_size
-		)
+	# Capture commit data before clearing state so the signal handler sees
+	# _passage_tool == NONE and won't re-enter deactivate_passage_tool().
+	var commit_token_id: String = _active_passage_token_id
+	var commit_paths: Array = _wip_passage_paths.duplicate()
+	var commit_brush: float = _wip_brush_size
 	_passage_tool = PassageTool.NONE
 	_active_passage_token_id = ""
 	_wip_passage_paths = []
 	_passage_current_chain = PackedVector2Array()
 	_passage_freehand_active = false
 	_clear_passage_overlay_contents()
+	if commit_token_id != "":
+		passage_paths_committed.emit(commit_token_id, commit_paths, commit_brush)
 
 
 ## Discard WIP without committing — resets the passage to empty.

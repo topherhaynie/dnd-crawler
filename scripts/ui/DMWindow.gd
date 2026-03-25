@@ -2942,6 +2942,8 @@ func _on_token_selected(token_id: String) -> void:
 	if _passage_panel != null:
 		_passage_panel.visible = true
 		_passage_token_label.text = "Passage: %s" % data.label if not data.label.is_empty() else "Secret Passage"
+	if _passage_mode_option != null:
+		_passage_mode_option.selected = 0
 
 
 func _hide_passage_panel() -> void:
@@ -3057,6 +3059,8 @@ func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float
 				if mv != null: mv.update_token_sprite(td); mv.apply_token_passthrough_state(td)
 				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
+	_hide_passage_panel()
+	_set_status("Passage paths saved")
 
 
 # ---------------------------------------------------------------------------
