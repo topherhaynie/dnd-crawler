@@ -6,11 +6,10 @@ using System.IO;
 using System.Threading;
 using System.Collections.Generic;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 
 public partial class HttpServer : Node
 {
-	private HttpListener _listener;
+	private TcpListener _listener;
 	private Thread _listenerThread;
 	private volatile bool _running = false;
 	private const int HTTP_PORT = 8080;
@@ -24,26 +23,17 @@ public partial class HttpServer : Node
 	{
 		try
 		{
-			_listener = new HttpListener();
-			_listener.Prefixes.Add($"http://localhost:{HTTP_PORT}/");
-			// Also listen on all interfaces so LAN clients (mobile devices) can
-			// reach the server.  On Windows the strong wildcard (+) requires an
-			// URL ACL reservation; on macOS/Linux the managed HttpListener
-			// handles the weak wildcard (*) without elevated privileges.
-			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-				_listener.Prefixes.Add($"http://+:{HTTP_PORT}/");
-			else
-				_listener.Prefixes.Add($"http://*:{HTTP_PORT}/");
+			// TcpListener on IPAddress.Any binds 0.0.0.0 — works on macOS,
+			// Windows, and Linux without elevated privileges or URL ACLs.
+			_listener = new TcpListener(IPAddress.Any, HTTP_PORT);
 			_listener.Start();
 			_running = true;
 			_listenerThread = new Thread(ListenerLoop) { IsBackground = true };
 			_listenerThread.Start();
-			GD.Print($"HttpServer: listening on port {HTTP_PORT}");
-			// Print accessible URLs for convenience (HTTP + WebSocket).
+			GD.Print($"HttpServer: listening on 0.0.0.0:{HTTP_PORT}");
 			try
 			{
-				var ips = GetLocalIPv4Addresses();
-				foreach (var ip in ips)
+				foreach (var ip in GetLocalIPv4Addresses())
 				{
 					GD.Print($"HttpServer: http://{ip}:{HTTP_PORT}/mobile_client/index.html");
 					GD.Print($"HttpServer: ws://{ip}:9090");
@@ -53,7 +43,7 @@ public partial class HttpServer : Node
 		}
 		catch (Exception e)
 		{
-			GD.PushError($"HttpServer: failed to start HttpListener: {e.Message}");
+			GD.PushError($"HttpServer: failed to start: {e.Message}");
 		}
 	}
 
@@ -63,10 +53,12 @@ public partial class HttpServer : Node
 		{
 			try
 			{
-				var context = _listener.GetContext();
-				HandleContext(context);
+				var client = _listener.AcceptTcpClient();
+				// Handle each request on a thread-pool thread so the accept
+				// loop stays responsive.
+				ThreadPool.QueueUserWorkItem(_ => HandleClient(client));
 			}
-			catch (HttpListenerException) { break; }
+			catch (SocketException) { break; }
 			catch (Exception e)
 			{
 				GD.PrintErr($"HttpServer listener error: {e}");
@@ -74,51 +66,88 @@ public partial class HttpServer : Node
 		}
 	}
 
-	private void HandleContext(HttpListenerContext ctx)
+	private void HandleClient(TcpClient client)
 	{
-		var req = ctx.Request;
-		var res = ctx.Response;
-		var path = req.Url.AbsolutePath;
-		GD.Print($"HttpServer: received request: {req.HttpMethod} {path}");
-
 		try
 		{
-			if (path == "/")
+			using var stream = client.GetStream();
+			stream.ReadTimeout = 5000;
+
+			// Read the HTTP request line (e.g. "GET /path HTTP/1.1\r\n...")
+			var buffer = new byte[4096];
+			int bytesRead = stream.Read(buffer, 0, buffer.Length);
+			if (bytesRead == 0) return;
+
+			var requestText = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+			var firstLine = requestText.Split('\n')[0].Trim();
+			var parts = firstLine.Split(' ');
+			if (parts.Length < 2) return;
+
+			var path = parts[1];
+			// Strip query string for route matching
+			var routePath = path.Contains('?') ? path.Substring(0, path.IndexOf('?')) : path;
+
+			GD.Print($"HttpServer: {parts[0]} {path}");
+
+			if (routePath == "/")
 			{
-				res.StatusCode = 303;
-				res.RedirectLocation = "/mobile_client/index.html";
-				res.Close();
+				var location = path.Contains('?')
+					? "/mobile_client/index.html" + path.Substring(path.IndexOf('?'))
+					: "/mobile_client/index.html";
+				WriteResponse(stream, 303, "text/html", null, location);
 				return;
 			}
 
-			if (path == "/mobile_client/index.html")
+			if (routePath == "/mobile_client/index.html")
 			{
-				// AppContext.BaseDirectory is stable in both editor and packaged exports
-				// on all platforms. Directory.GetCurrentDirectory() is unreliable
-				// inside a macOS .app bundle (cwd is typically "/").
-				var localPath = Path.Combine(AppContext.BaseDirectory, "assets/mobile_client/index.html");
+				// ProjectSettings.GlobalizePath works in both the editor and
+				// packaged exports — it resolves res:// to the real filesystem
+				// path regardless of platform.
+				var localPath = Godot.ProjectSettings.GlobalizePath("res://assets/mobile_client/index.html");
 				if (!File.Exists(localPath))
 				{
-					res.StatusCode = 404;
-					res.Close();
+					WriteResponse(stream, 404, "text/plain", Encoding.UTF8.GetBytes("Not Found"));
 					return;
 				}
 				var bytes = File.ReadAllBytes(localPath);
-				res.ContentType = "text/html";
-				res.ContentLength64 = bytes.Length;
-				res.OutputStream.Write(bytes, 0, bytes.Length);
-				res.Close();
+				WriteResponse(stream, 200, "text/html; charset=utf-8", bytes);
 				return;
 			}
 
-			res.StatusCode = 404;
-			res.Close();
+			WriteResponse(stream, 404, "text/plain", Encoding.UTF8.GetBytes("Not Found"));
 		}
 		catch (Exception e)
 		{
-			GD.PrintErr($"HttpServer: error handling request: {e}");
-			try { res.StatusCode = 500; res.Close(); } catch { }
+			GD.PrintErr($"HttpServer: error handling request: {e.Message}");
 		}
+		finally
+		{
+			try { client.Close(); } catch { }
+		}
+	}
+
+	private static void WriteResponse(NetworkStream stream, int statusCode, string contentType, byte[] body, string redirectLocation = null)
+	{
+		var statusText = statusCode switch
+		{
+			200 => "OK",
+			303 => "See Other",
+			404 => "Not Found",
+			_ => "Error"
+		};
+		var sb = new StringBuilder();
+		sb.Append($"HTTP/1.1 {statusCode} {statusText}\r\n");
+		sb.Append($"Content-Type: {contentType}\r\n");
+		if (redirectLocation != null)
+			sb.Append($"Location: {redirectLocation}\r\n");
+		sb.Append($"Content-Length: {body?.Length ?? 0}\r\n");
+		sb.Append("Connection: close\r\n");
+		sb.Append("\r\n");
+
+		var header = Encoding.UTF8.GetBytes(sb.ToString());
+		stream.Write(header, 0, header.Length);
+		if (body != null && body.Length > 0)
+			stream.Write(body, 0, body.Length);
 	}
 
 	private List<string> GetLocalIPv4Addresses()
@@ -130,9 +159,7 @@ public partial class HttpServer : Node
 			foreach (var addr in host.AddressList)
 			{
 				if (addr.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(addr))
-				{
 					list.Add(addr.ToString());
-				}
 			}
 		}
 		catch { }
@@ -142,11 +169,7 @@ public partial class HttpServer : Node
 	public override void _ExitTree()
 	{
 		_running = false;
-		try
-		{
-			_listener?.Stop();
-		}
-		catch { }
+		try { _listener?.Stop(); } catch { }
 		try { _listenerThread?.Join(1000); } catch { }
 	}
 }
