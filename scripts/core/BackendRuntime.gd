@@ -180,18 +180,12 @@ func _rebuild_cached_wall_edges(map: MapData) -> void:
 			for i in range(frag.size()):
 				_cached_wall_edges.append([frag[i], frag[(i + 1) % frag.size()]])
 
-	# Include edges from closed DOOR token wall rects.
-	var door_rects: Dictionary = _map_view.get_door_wall_rects() if _map_view != null else {}
-	for door_rect: Variant in door_rects.values():
-		var rect: Rect2 = door_rect as Rect2
-		var corners: Array[Vector2] = [
-			rect.position,
-			Vector2(rect.end.x, rect.position.y),
-			rect.end,
-			Vector2(rect.position.x, rect.end.y),
-		]
-		for i in range(4):
-			_cached_wall_edges.append([corners[i], corners[(i + 1) % 4]])
+	# Include edges from closed DOOR token wall quads (rotation-aware).
+	var door_quads: Dictionary = _map_view.get_door_wall_quads() if _map_view != null else {}
+	for door_quad: Variant in door_quads.values():
+		var quad: PackedVector2Array = door_quad as PackedVector2Array
+		for i in range(quad.size()):
+			_cached_wall_edges.append([quad[i], quad[(i + 1) % quad.size()]])
 
 
 func build_player_state_payload() -> Array:
@@ -528,10 +522,10 @@ func _point_inside_any_wall(pos: Vector2, map: MapData) -> bool:
 		for frag in fragments:
 			if Geometry2D.is_point_in_polygon(pos, frag):
 				return true
-	# Check closed DOOR token wall rects.
-	var door_rects: Dictionary = _map_view.get_door_wall_rects() if _map_view != null else {}
-	for door_rect: Variant in door_rects.values():
-		if (door_rect as Rect2).has_point(pos):
+	# Check closed DOOR token wall quads (rotation-aware).
+	var door_quads: Dictionary = _map_view.get_door_wall_quads() if _map_view != null else {}
+	for door_quad: Variant in door_quads.values():
+		if Geometry2D.is_point_in_polygon(pos, door_quad as PackedVector2Array):
 			return true
 	return false
 
