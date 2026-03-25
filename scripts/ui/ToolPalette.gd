@@ -41,7 +41,7 @@ var _flyout: PanelContainer = null
 var _flyout_vbox: VBoxContainer = null
 var _tool_group: ButtonGroup = null
 var _active_tool_key: String = "select"
-var _ui_scale_fn: Callable ## set by DMWindow to provide _ui_scale()
+var _ui_scale_mgr: UIScaleManager = null ## set by DMWindow during setup
 var _flyout_anchor_node: Control = null ## the button the flyout should align to
 
 # Stacked button state
@@ -72,14 +72,14 @@ const _SMALL_FONT: float = 11.0
 const _HEADER_FONT: float = 8.0
 
 
-func setup(ui_scale_fn: Callable) -> void:
-	_ui_scale_fn = ui_scale_fn
+func setup(ui_scale_mgr: UIScaleManager = null) -> void:
+	_ui_scale_mgr = ui_scale_mgr
 	_build()
 
 
 func _s() -> float:
-	if _ui_scale_fn.is_valid():
-		return _ui_scale_fn.call() as float
+	if _ui_scale_mgr != null:
+		return _ui_scale_mgr.get_scale()
 	return 1.0
 
 

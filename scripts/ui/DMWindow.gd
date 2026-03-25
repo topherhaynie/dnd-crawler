@@ -195,6 +195,7 @@ var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze pane
 
 # ── Share player link dialog ────────────────────────────────────────────────
 var _share_dialog: AcceptDialog = null
+var _share_dialog_root: VBoxContainer = null
 var _share_qr_rect: TextureRect = null
 var _share_url_label: Label = null
 
@@ -465,6 +466,9 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED:
 		# Defer so the viewport reports its final settled size, not
 		# an intermediate size mid-transition (e.g. macOS fullscreen animation).
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry != null and registry.ui_scale != null:
+			registry.ui_scale.refresh()
 		call_deferred("_apply_ui_scale")
 
 
@@ -690,7 +694,7 @@ func _build_ui() -> void:
 	_palette.anchor_top = 0.0
 	_palette.anchor_bottom = 1.0
 	_palette.grow_horizontal = Control.GROW_DIRECTION_END
-	_palette.setup(Callable(self , "_ui_scale"))
+	_palette.setup(_get_ui_scale_mgr())
 	_ui_layer.add_child(_palette)
 	_apply_palette_size()
 
@@ -1393,7 +1397,6 @@ func _undock_palette() -> void:
 
 	_palette_window = Window.new()
 	_palette_window.title = "Tools"
-	_palette_window.min_size = Vector2i(100, 300)
 	_palette_window.popup_window = false
 	_palette_window.exclusive = false
 	add_child(_palette_window)
@@ -1407,7 +1410,11 @@ func _undock_palette() -> void:
 	_palette.set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	_palette_window.close_requested.connect(_dock_palette)
-	_palette_window.popup_centered(Vector2i(100, 500))
+	var _pm := _get_ui_scale_mgr()
+	if _pm != null:
+		_pm.popup_fitted(_palette_window, 80.0, 500.0)
+	else:
+		_palette_window.popup_centered()
 
 
 func _dock_palette() -> void:
@@ -1701,7 +1708,6 @@ func _undock_freeze_panel() -> void:
 
 	_freeze_panel_window = Window.new()
 	_freeze_panel_window.title = "Players"
-	_freeze_panel_window.min_size = Vector2i(260, 300)
 	_freeze_panel_window.popup_window = false
 	_freeze_panel_window.exclusive = false
 	add_child(_freeze_panel_window)
@@ -1713,9 +1719,18 @@ func _undock_freeze_panel() -> void:
 	_freeze_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	_freeze_panel_window.add_child(_freeze_panel)
 	_freeze_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Clear docked-mode offsets so the panel fills the window correctly.
+	_freeze_panel.offset_left = 0.0
+	_freeze_panel.offset_right = 0.0
+	_freeze_panel.offset_top = 0.0
+	_freeze_panel.offset_bottom = 0.0
 
 	_freeze_panel_window.close_requested.connect(_dock_freeze_panel)
-	_freeze_panel_window.popup_centered(Vector2i(260, 500))
+	var _fm := _get_ui_scale_mgr()
+	if _fm != null:
+		_fm.popup_fitted(_freeze_panel_window, 220.0, 400.0)
+	else:
+		_freeze_panel_window.popup_centered()
 
 	if _view_menu != null:
 		_view_menu.set_item_checked(1, true)
@@ -1953,7 +1968,7 @@ func _on_manual_scale_pressed() -> void:
 		_:
 			_scale_px_spin.value = map.hex_size * 2.0
 	_scale_ft_spin.value = 5.0
-	_manual_scale_dialog.popup_centered(Vector2i(roundi(360 * _ui_scale()), roundi(180 * _ui_scale())))
+	_manual_scale_dialog.popup_centered()
 
 
 func _on_manual_scale_confirmed() -> void:
@@ -1986,7 +2001,7 @@ func _on_set_offset_pressed() -> void:
 		return
 	_solo_offset_x_spin.value = map.grid_offset.x
 	_solo_offset_y_spin.value = map.grid_offset.y
-	_offset_dialog.popup_centered(Vector2i(roundi(320 * _ui_scale()), roundi(200 * _ui_scale())))
+	_offset_dialog.popup_centered()
 
 
 func _on_offset_confirmed() -> void:
@@ -2013,20 +2028,26 @@ func _build_profiles_dialog() -> void:
 
 	var root := HSplitContainer.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.split_offset = 280
+	var _sm := _get_ui_scale_mgr()
+	var _ps: float = _sm.get_scale() if _sm != null else 1.0
+	root.split_offset = roundi(280.0 * _ps)
 	_profiles_dialog.add_child(root)
 	_profiles_root = root
 
 	var left_panel := VBoxContainer.new()
-	left_panel.custom_minimum_size = Vector2(260, 0)
+	left_panel.custom_minimum_size = Vector2(roundi(260.0 * _ps), 0)
 	root.add_child(left_panel)
 
 	var left_title := Label.new()
 	left_title.text = "Profiles"
+	if _sm != null:
+		left_title.add_theme_font_size_override("font_size", _sm.scaled(15.0))
 	left_panel.add_child(left_title)
 
 	_profiles_list = ItemList.new()
 	_profiles_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if _sm != null:
+		_profiles_list.add_theme_font_size_override("font_size", _sm.scaled(14.0))
 	_profiles_list.item_selected.connect(_on_profile_selected)
 	left_panel.add_child(_profiles_list)
 
@@ -2035,12 +2056,16 @@ func _build_profiles_dialog() -> void:
 
 	_profile_add_btn = Button.new()
 	_profile_add_btn.text = "New"
+	if _sm != null:
+		_sm.scale_button(_profile_add_btn)
 	_profile_add_btn.pressed.connect(_on_profile_add_pressed)
 	list_btn_row.add_child(_profile_add_btn)
 
 	_profile_delete_btn = Button.new()
 	_profile_delete_btn.text = "Remove"
 	_profile_delete_btn.disabled = true
+	if _sm != null:
+		_sm.scale_button(_profile_delete_btn)
 	_profile_delete_btn.pressed.connect(_on_profile_delete_pressed)
 	list_btn_row.add_child(_profile_delete_btn)
 
@@ -3160,7 +3185,7 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_editor_dialog.title = "New Token" if is_new else "Edit Token"
 		## Store the new-token world_pos in meta so confirm can read it.
 		_token_editor_dialog.set_meta("pending_world_pos", data.world_pos)
-		_token_editor_dialog.popup_centered(Vector2i(roundi(440 * _ui_scale()), roundi(640 * _ui_scale())))
+		_token_editor_dialog.popup_centered()
 
 
 func _build_token_editor_dialog() -> void:
@@ -3741,31 +3766,34 @@ func _open_measure_panel() -> void:
 		return
 	_measure_panel = Window.new()
 	_measure_panel.title = "Measurement Tools"
-	var s: float = _ui_scale()
-	var w: int = roundi(300.0 * s)
-	var h: int = roundi(480.0 * s)
-	_measure_panel.min_size = Vector2i(w, h)
 	_measure_panel.close_requested.connect(func() -> void:
 		if _measure_panel != null: _measure_panel.hide())
 	add_child(_measure_panel)
 	_build_measure_panel_contents()
-	_measure_panel.popup_centered(Vector2i(w, h))
+	var mgr := _get_ui_scale_mgr()
+	if mgr != null:
+		mgr.popup_fitted(_measure_panel, 260.0, 420.0)
+	else:
+		_measure_panel.popup_centered()
 
 
 func _build_measure_panel_contents() -> void:
 	if _measure_panel == null:
 		return
+	var mgr := _get_ui_scale_mgr()
 	var root := VBoxContainer.new()
 	var margin := MarginContainer.new()
+	var m: int = mgr.scaled(8.0) if mgr != null else 8
 	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 8)
+		margin.add_theme_constant_override("margin_" + side, m)
 	margin.add_child(root)
 	_measure_panel.add_child(margin)
 
 	# Tool buttons
 	var title_lbl := Label.new()
 	title_lbl.text = "Draw Tool"
-	title_lbl.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
+	if mgr != null:
+		title_lbl.add_theme_font_size_override("font_size", mgr.scaled(13.0))
 	root.add_child(title_lbl)
 
 	_measure_tool_group = ButtonGroup.new()
@@ -3790,8 +3818,9 @@ func _build_measure_panel_contents() -> void:
 		btn.toggle_mode = true
 		btn.button_group = _measure_tool_group
 		btn.focus_mode = Control.FOCUS_NONE
-		btn.custom_minimum_size = Vector2(roundi(34.0 * _ui_scale()), roundi(34.0 * _ui_scale()))
-		btn.add_theme_font_size_override("font_size", roundi(18.0 * _ui_scale()))
+		if mgr != null:
+			btn.custom_minimum_size = Vector2(mgr.scaled(34.0), mgr.scaled(34.0))
+			btn.add_theme_font_size_override("font_size", mgr.scaled(18.0))
 		var k := key # capture
 		btn.pressed.connect(func(): _on_measure_tool_btn_pressed(k))
 		btn_row.add_child(btn)
@@ -3801,11 +3830,13 @@ func _build_measure_panel_contents() -> void:
 	# Active shapes list
 	var shapes_lbl := Label.new()
 	shapes_lbl.text = "Active shapes"
-	shapes_lbl.add_theme_font_size_override("font_size", roundi(13.0 * _ui_scale()))
+	if mgr != null:
+		shapes_lbl.add_theme_font_size_override("font_size", mgr.scaled(13.0))
 	root.add_child(shapes_lbl)
 
 	_measure_shape_list = ItemList.new()
-	_measure_shape_list.custom_minimum_size = Vector2(0, 140)
+	var list_h: int = mgr.scaled(140.0) if mgr != null else 140
+	_measure_shape_list.custom_minimum_size = Vector2(0, list_h)
 	_measure_shape_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_measure_shape_list.focus_mode = Control.FOCUS_NONE
 	_measure_shape_list.item_selected.connect(_on_measure_shape_selected)
@@ -3820,12 +3851,16 @@ func _build_measure_panel_contents() -> void:
 	var del_btn := Button.new()
 	del_btn.text = "Delete Selected"
 	del_btn.focus_mode = Control.FOCUS_NONE
+	if mgr != null:
+		mgr.scale_button(del_btn)
 	del_btn.pressed.connect(_on_measure_delete_selected_pressed)
 	action_row.add_child(del_btn)
 
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear All"
 	clear_btn.focus_mode = Control.FOCUS_NONE
+	if mgr != null:
+		mgr.scale_button(clear_btn, 80.0)
 	clear_btn.pressed.connect(_on_measure_clear_all_pressed)
 	action_row.add_child(clear_btn)
 
@@ -5035,6 +5070,7 @@ func _apply_passage_panel_size() -> void:
 
 
 func _apply_ui_scale() -> void:
+	var mgr := _get_ui_scale_mgr()
 	var scale := _ui_scale()
 	if _palette:
 		_palette.custom_minimum_size = Vector2(roundi(34.0 * scale), 0)
@@ -5056,55 +5092,70 @@ func _apply_ui_scale() -> void:
 		_freeze_master_btn.custom_minimum_size = Vector2(0, roundi(30.0 * scale))
 		_freeze_master_btn.add_theme_font_size_override("font_size", roundi(13.0 * scale))
 	_refresh_freeze_panel()
-	_apply_freeze_panel_size()
+	# Only reposition freeze panel when docked — floating window manages its own layout.
+	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
+		_apply_freeze_panel_size()
+
+	if mgr == null:
+		return
+
+	# ── Profiles — crisp font scaling (no root.scale bitmap upscale) ────
 	if _profiles_dialog:
 		var vp := get_viewport().get_visible_rect().size
 		_profiles_dialog.min_size = Vector2i(roundi(vp.x * 0.72), roundi(vp.y * 0.72))
-		var close_btn := _profiles_dialog.get_ok_button()
-		if close_btn:
-			close_btn.custom_minimum_size = Vector2(roundi(110.0 * scale), roundi(34.0 * scale))
-			close_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+		mgr.scale_button(_profiles_dialog.get_ok_button())
 	if _profiles_root:
-		_profiles_root.scale = Vector2(scale, scale)
+		mgr.scale_control_fonts(_profiles_root)
 
-	# ── Small-dialog content & button scaling ────────────────────────────────
+	# ── Small dialogs — scale content + buttons via manager ─────────────
 	if _cal_dialog_root:
-		_cal_dialog_root.scale = Vector2(scale, scale)
-		_cal_dialog.min_size = Vector2i(roundi(340 * scale), roundi(280 * scale))
-		_scale_dialog_btn(_cal_dialog.get_ok_button(), scale)
-		_scale_dialog_btn(_cal_dialog.get_cancel_button(), scale)
+		_cal_dialog.min_size = Vector2i(mgr.scaled(320.0), 0)
+		mgr.scale_control_fonts(_cal_dialog_root)
+		mgr.scale_button(_cal_dialog.get_ok_button())
+		mgr.scale_button(_cal_dialog.get_cancel_button())
 	if _manual_scale_dialog_root:
-		_manual_scale_dialog_root.scale = Vector2(scale, scale)
-		_manual_scale_dialog.min_size = Vector2i(roundi(360 * scale), roundi(180 * scale))
-		_scale_dialog_btn(_manual_scale_dialog.get_ok_button(), scale)
-		_scale_dialog_btn(_manual_scale_dialog.get_cancel_button(), scale)
+		_manual_scale_dialog.min_size = Vector2i(mgr.scaled(320.0), 0)
+		mgr.scale_control_fonts(_manual_scale_dialog_root)
+		mgr.scale_button(_manual_scale_dialog.get_ok_button())
+		mgr.scale_button(_manual_scale_dialog.get_cancel_button())
 	if _offset_dialog_root:
-		_offset_dialog_root.scale = Vector2(scale, scale)
-		_offset_dialog.min_size = Vector2i(roundi(320 * scale), roundi(200 * scale))
-		_scale_dialog_btn(_offset_dialog.get_ok_button(), scale)
-		_scale_dialog_btn(_offset_dialog.get_cancel_button(), scale)
+		_offset_dialog.min_size = Vector2i(mgr.scaled(280.0), 0)
+		mgr.scale_control_fonts(_offset_dialog_root)
+		mgr.scale_button(_offset_dialog.get_ok_button())
+		mgr.scale_button(_offset_dialog.get_cancel_button())
 	if _token_editor_dialog_root:
-		_token_editor_dialog_root.scale = Vector2(scale, scale)
-		_token_editor_dialog.min_size = Vector2i(roundi(440 * scale), roundi(640 * scale))
-		_scale_dialog_btn(_token_editor_dialog.get_ok_button(), scale)
-		_scale_dialog_btn(_token_editor_dialog.get_cancel_button(), scale)
+		_token_editor_dialog.min_size = Vector2i(mgr.scaled(400.0), mgr.scaled(420.0))
+		mgr.scale_control_fonts(_token_editor_dialog_root)
+		mgr.scale_button(_token_editor_dialog.get_ok_button())
+		mgr.scale_button(_token_editor_dialog.get_cancel_button())
 	_apply_token_context_menu_theme()
 
-
-func _scale_dialog_btn(btn: BaseButton, scale: float) -> void:
-	if btn == null:
-		return
-	btn.custom_minimum_size = Vector2(roundi(110.0 * scale), roundi(34.0 * scale))
-	btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	# ── Share player link dialog ──
+	if _share_dialog_root:
+		_share_qr_rect.custom_minimum_size = Vector2(mgr.scaled(280.0), mgr.scaled(280.0))
+		_share_url_label.add_theme_font_size_override("font_size", mgr.scaled(13.0))
+		_share_dialog_root.add_theme_constant_override("separation", mgr.scaled(12.0))
+		mgr.scale_button(_share_dialog.get_ok_button())
 
 
 func _ui_scale() -> float:
-	## Blend DPI scaling with viewport-relative scaling so fullscreen does not
-	## make UI appear tiny on large displays.
-	var dpi_scale := clampf(DisplayServer.screen_get_dpi() / 96.0, 1.0, 2.0)
-	var vp := get_viewport().get_visible_rect().size
-	var viewport_scale := clampf(minf(vp.x / 1920.0, vp.y / 1080.0), 1.0, 1.6)
-	return maxf(dpi_scale, viewport_scale)
+	## Delegates to UIScaleManager so scale logic lives in one place.
+	var mgr: UIScaleManager = _get_ui_scale_mgr()
+	if mgr != null:
+		return mgr.get_scale()
+	return 1.0
+
+
+func _get_ui_scale_mgr() -> UIScaleManager:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		# Registry node not yet added (deferred). Fall back to bootstrap.
+		var bootstrap := get_node_or_null("/root/ServiceBootstrap")
+		if bootstrap != null and bootstrap.get("registry") != null:
+			reg = bootstrap.registry as ServiceRegistry
+	if reg != null and reg.ui_scale != null:
+		return reg.ui_scale
+	return null
 
 
 # ---------------------------------------------------------------------------
@@ -5121,22 +5172,34 @@ func _build_share_url() -> String:
 
 func _show_share_player_link() -> void:
 	var url: String = _build_share_url()
+	var mgr := _get_ui_scale_mgr()
 
 	if _share_dialog != null:
 		# Refresh QR and URL in case IP changed
 		_share_url_label.text = url
 		var refresh_img: Image = QRCodeScript.generate(url, 8)
 		_share_qr_rect.texture = ImageTexture.create_from_image(refresh_img)
+		_apply_ui_scale()
+		_share_dialog.reset_size()
 		_share_dialog.popup_centered()
 		return
 
 	_share_dialog = AcceptDialog.new()
 	_share_dialog.title = "Share Player Link"
-	_share_dialog.min_size = Vector2i(420, 0)
 	_share_dialog.ok_button_text = "Close"
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 12)
+	# Content root — children sized explicitly via scale factor.
+	# No root scale transform: dialogs need Godot’s layout engine to see the
+	# real child sizes so the window auto-fits its content correctly.
+	_share_dialog_root = VBoxContainer.new()
+	if mgr != null:
+		_share_dialog_root.add_theme_constant_override("separation", mgr.scaled(12.0))
+
+	# Top padding
+	var top_pad := Control.new()
+	if mgr != null:
+		top_pad.custom_minimum_size = Vector2(0, mgr.scaled(8.0))
+	_share_dialog_root.add_child(top_pad)
 
 	# QR code
 	var qr_img: Image = QRCodeScript.generate(url, 8)
@@ -5144,27 +5207,34 @@ func _show_share_player_link() -> void:
 	_share_qr_rect = TextureRect.new()
 	_share_qr_rect.texture = qr_tex
 	_share_qr_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_share_qr_rect.custom_minimum_size = Vector2(320, 320)
+	if mgr != null:
+		_share_qr_rect.custom_minimum_size = Vector2(mgr.scaled(280.0), mgr.scaled(280.0))
 	_share_qr_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	vbox.add_child(_share_qr_rect)
+	_share_dialog_root.add_child(_share_qr_rect)
 
 	# URL label
 	_share_url_label = Label.new()
 	_share_url_label.text = url
 	_share_url_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_share_url_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_share_url_label.add_theme_font_size_override("font_size", 13)
-	vbox.add_child(_share_url_label)
+	if mgr != null:
+		_share_url_label.add_theme_font_size_override("font_size", mgr.scaled(13.0))
+	_share_dialog_root.add_child(_share_url_label)
 
 	# Copy URL button
 	var copy_btn := Button.new()
 	copy_btn.text = "Copy URL"
 	copy_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	if mgr != null:
+		mgr.scale_button(copy_btn)
 	copy_btn.pressed.connect(func() -> void:
 		DisplayServer.clipboard_set(url)
 		_set_status("Player link copied to clipboard"))
-	vbox.add_child(copy_btn)
+	_share_dialog_root.add_child(copy_btn)
 
-	_share_dialog.add_child(vbox)
+	_share_dialog.add_child(_share_dialog_root)
+	if mgr != null:
+		mgr.scale_button(_share_dialog.get_ok_button())
 	add_child(_share_dialog)
+	_share_dialog.reset_size()
 	_share_dialog.popup_centered()

@@ -26,7 +26,7 @@ All subsystems are accessed through typed manager properties on `ServiceRegistry
 
 ```gdscript
 var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-registry.fog.service.set_fog_enabled(true)
+registry.fog.set_fog_enabled(true)
 ```
 
 | Registry property | Protocol | Service |
@@ -38,6 +38,10 @@ registry.fog.service.set_fog_enabled(true)
 | `registry.profile` | `IProfileService` | `ProfileService` |
 | `registry.persistence` | `IPersistenceService` | `PersistenceService` |
 | `registry.input` | `IInputService` | `InputService` |
+| `registry.token` | `ITokenService` | `TokenService` |
+| `registry.history` | `IHistoryService` | `HistoryService` |
+| `registry.measurement` | `IMeasurementService` | `MeasurementService` |
+| `registry.ui_scale` | `IUIScaleService` | `UIScaleService` |
 
 Never use `get_service(String)` in new code — always use the typed manager properties.
 

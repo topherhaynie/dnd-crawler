@@ -6,6 +6,11 @@ extends Node
 ## All add_child calls are deferred so that service _ready() methods run after
 ## the scene tree is stable. The registry object is fully configured before
 ## it enters the tree.
+##
+## Views that need a manager before the registry enters the tree can access it
+## via `(get_node("/root/ServiceBootstrap")).registry.ui_scale` etc.
+
+var registry: ServiceRegistry
 
 func _ready() -> void:
 	# --- Instantiate services ---
@@ -39,8 +44,11 @@ func _ready() -> void:
 	var measurement_svc := MeasurementService.new()
 	measurement_svc.name = "MeasurementService"
 
+	var ui_scale_svc := UIScaleService.new()
+	ui_scale_svc.name = "UIScaleService"
+
 	# --- Build registry and wire managers ---
-	var registry := ServiceRegistry.new()
+	registry = ServiceRegistry.new()
 	registry.name = "ServiceRegistry"
 
 	var fog_mgr := FogManager.new()
@@ -92,7 +100,14 @@ func _ready() -> void:
 	measurement_mgr.service = measurement_svc
 	registry.measurement = measurement_mgr
 
+	var ui_scale_mgr := UIScaleManager.new()
+	ui_scale_mgr.service = ui_scale_svc
+	registry.ui_scale = ui_scale_mgr
+
 	# --- Add to scene tree (deferred to avoid ready-order races) ---
+	# Views that need a scale factor early get it via UIScaleManager's DPI
+	# fallback (no tree lookup required).  ToolPalette stores its manager ref
+	# directly so it never calls get_node during _ready().
 	var root := get_tree().root
 	root.call_deferred("add_child", registry)
 	root.call_deferred("add_child", fog_svc)
@@ -105,5 +120,6 @@ func _ready() -> void:
 	root.call_deferred("add_child", token_svc)
 	root.call_deferred("add_child", history_svc)
 	root.call_deferred("add_child", measurement_svc)
+	root.call_deferred("add_child", ui_scale_svc)
 
 	print("ServiceBootstrap: all services registered")

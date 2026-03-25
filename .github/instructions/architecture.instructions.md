@@ -192,3 +192,93 @@ if _backend != null:
 **Legitimate exceptions** (the only cases where `has_method` is acceptable):
 - Godot engine **version compatibility** checks on engine-provided objects (e.g. `ws_peer.has_method("get_current_outbound_buffered_amount")`)
 - Genuinely **polymorphic scene nodes** stored as `Node` where no common typed base class can be used (e.g. mixed `TokenSprite` / `PlayerSprite` nodes in the same layer in `MapView`)
+
+## UI Scaling — Mandatory Pattern
+
+All programmatically created UI controls (dialogs, labels, buttons, texture rects) **must** be scaled by the `UIScaleManager`. Never use hardcoded pixel values for `min_size`, `custom_minimum_size`, `font_size`, or `popup_centered()` size arguments.
+
+### Getting the scale factor
+
+```gdscript
+var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+var scale: float = registry.ui_scale.get_scale() if registry != null and registry.ui_scale != null else 1.0
+```
+
+Or in DMWindow/ToolPalette, use the existing `_ui_scale()` / `_s()` helpers which delegate to the manager.
+
+### UIScaleManager helper methods
+
+The manager (`registry.ui_scale`) provides convenience helpers that keep scale math out of view code:
+
+| Method | Purpose |
+|---|---|
+| `get_scale() -> float` | Returns the current blend of DPI + viewport scale |
+| `scaled(base) -> int` | `roundi(base * get_scale())` — use for any px value |
+| `scale_button(btn, base_w, base_h, base_font)` | Sets `custom_minimum_size` and `font_size` on a `BaseButton` |
+| `scale_control_fonts(root_node, base_font_size)` | Recursively sets font sizes on Labels, LineEdits, SpinBoxes, etc. |
+| `popup_fitted(dialog, base_min_w, base_min_h)` | Enables `wrap_controls`, sets `min_size`, calls `reset_size()` + `popup_centered()` |
+| `refresh()` | Recomputes scale; emits `scale_changed` if it changed |
+
+Prefer these helpers over inline `roundi(x * scale)` arithmetic.
+
+### Dialogs: No `Control.scale` Transform
+
+**Never** set `Control.scale` on a content root inside a Window/Dialog. Godot's layout engine computes the Window size from **unscaled** child minimums, but the `scale` transform makes content render larger. Result: the Window is too small and content is clipped or offset.
+
+The correct approach for dialogs:
+- Size **each child control explicitly** using the scale factor: `label.add_theme_font_size_override("font_size", mgr.scaled(14.0))`
+- Use `mgr.popup_fitted()` or call `reset_size()` then `popup_centered()` with **no size argument**
+- In `_apply_ui_scale()`, update child sizes and call `mgr.scale_button()` on OK/Cancel
+
+The `_ui_root.scale` (full-screen CanvasLayer overlay) is fine — it's not a Window, so there's no layout/rendering disconnect.
+
+### Window sizing: `wrap_controls` and `reset_size()`
+
+Plain `Window` nodes default to `wrap_controls = false` — they do **not** auto-size to child content. `AcceptDialog` defaults to `wrap_controls = true`.
+
+Key rules:
+- **Always set `wrap_controls = true`** on plain Windows that should fit their content.
+- **Always call `reset_size()`** before `popup_centered()` when re-showing a dialog whose content changed. `popup_centered()` uses `max(minsize_param, current_size)` as a floor — without `reset_size()` a previously-enlarged window stays big.
+- **Never pass a size argument** to `popup_centered()` for content-driven dialogs. Let `wrap_controls + min_size` determine the size.
+- **`popup_fitted()`** on UIScaleManager handles all of this automatically.
+
+### Reparenting panels into floating Windows
+
+When detaching a docked panel into a floating Window:
+- Set `wrap_controls = true` on the Window (or use `mgr.popup_fitted()`)
+- After `set_anchors_preset(PRESET_FULL_RECT)`, **zero all offsets** — `set_anchors_preset` does not reset offsets, and docked-mode offsets (e.g. `offset_left = -400`) will push content off-screen
+- Guard `_apply_xxx_panel_size()` so it only runs when the panel is docked (check `get_parent() == _ui_layer`)
+
+### Required pattern for new dialogs
+
+Every dynamically created dialog needs:
+
+1. **A `_xxx_dialog_root: VBoxContainer`** (or HBoxContainer) as the content root. **No `.scale` transform.**
+2. **Explicitly scaled children**: `custom_minimum_size`, `font_size`, `separation` overrides all multiplied via `mgr.scaled()`.
+3. **`mgr.popup_fitted()`** or `reset_size()` + `popup_centered()` with **no size argument** — let Godot auto-fit.
+4. **An entry in `_apply_ui_scale()`** to re-scale child sizes when the viewport resizes.
+5. **`mgr.scale_button()`** called on OK/Cancel buttons.
+
+```gdscript
+# Example — new dialog following the pattern
+var mgr := _get_ui_scale_mgr()
+_my_dialog = AcceptDialog.new()
+_my_dialog.ok_button_text = "Close"
+
+_my_dialog_root = VBoxContainer.new()
+_my_dialog_root.add_theme_constant_override("separation", mgr.scaled(8.0))
+
+var lbl := Label.new()
+lbl.add_theme_font_size_override("font_size", mgr.scaled(14.0))
+_my_dialog_root.add_child(lbl)
+
+_my_dialog.add_child(_my_dialog_root)
+mgr.scale_button(_my_dialog.get_ok_button())
+add_child(_my_dialog)
+_my_dialog.reset_size()
+_my_dialog.popup_centered()  # auto-fits to content
+```
+
+### Refreshing on resize
+
+`UIScaleManager.refresh()` must be called when the viewport size changes. The service caches the scale and only emits `scale_changed` when the value actually changes. DMWindow calls `refresh()` in its `NOTIFICATION_WM_SIZE_CHANGED` handler.
