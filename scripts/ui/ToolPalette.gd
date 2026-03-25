@@ -19,6 +19,7 @@ signal fog_mode_changed(fog_id: int, brush_size: float)
 signal wall_mode_changed(index: int)
 signal spawn_profile_selected(item_idx: int)
 signal spawn_auto_assign_requested()
+signal move_to_spawns_requested()
 signal play_mode_toggled(active: bool)
 signal dm_fog_visible_toggled(enabled: bool)
 signal flashlights_only_toggled(enabled: bool)
@@ -34,6 +35,7 @@ var fog_brush_spin: SpinBox = null
 var wall_mode_option: OptionButton = null
 var spawn_profile_option: OptionButton = null
 var spawn_auto_assign_btn: Button = null
+var move_to_spawns_btn: Button = null
 var token_btn: Button = null
 var undock_btn: Button = null
 
@@ -301,6 +303,10 @@ func _build() -> void:
 	_apply_compact_style(play_mode_btn)
 	play_mode_btn.pressed.connect(func() -> void: play_mode_toggled.emit(play_mode_btn.button_pressed))
 	palette_vbox.add_child(play_mode_btn)
+
+	move_to_spawns_btn = _make_action_btn("⚑▶", "Move all players to their assigned spawn points")
+	move_to_spawns_btn.pressed.connect(func() -> void: move_to_spawns_requested.emit())
+	palette_vbox.add_child(move_to_spawns_btn)
 
 	# ── Build context widgets (not yet parented) ────────────────────────
 	_build_fog_context()

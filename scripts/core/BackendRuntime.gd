@@ -252,6 +252,59 @@ func end_token_drag(token_id: Variant, new_world_pos: Vector2) -> void:
 	token.set_light_suppressed(false)
 
 
+func move_all_to_spawns() -> void:
+	if _map_view == null:
+		return
+	var map: MapData = _map()
+	if map == null:
+		return
+	var gs := _game_state()
+	if gs == null:
+		return
+	var map_size: Vector2 = _map_view.map_image.texture.get_size() if _map_view.map_image and _map_view.map_image.texture else Vector2(1920, 1080)
+	var origin: Vector2 = map_size * 0.5
+	var spawn_pts: Array = map.spawn_points if map.spawn_points.size() > 0 else []
+
+	# Pass 1: build profile_id → spawn point for explicit bindings.
+	var bound_profiles: Dictionary = {}
+	var bound_spawns: Dictionary = {}
+	for sp_idx in range(spawn_pts.size()):
+		var sp: Dictionary = spawn_pts[sp_idx] as Dictionary
+		var pid: String = str(sp.get("profile_id", ""))
+		if not pid.is_empty():
+			bound_profiles[pid] = sp
+			bound_spawns[sp_idx] = true
+
+	# Collect unbound spawn points for round-robin.
+	var unbound_spawns: Array = []
+	for sp_idx in range(spawn_pts.size()):
+		if not bound_spawns.has(sp_idx):
+			unbound_spawns.append(spawn_pts[sp_idx])
+
+	var rr_idx := 0
+	for profile in gs.list_profiles():
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		if bound_profiles.has(p.id):
+			var sp: Dictionary = bound_profiles[p.id] as Dictionary
+			gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+		elif unbound_spawns.size() > 0:
+			var sp: Dictionary = unbound_spawns[rr_idx % unbound_spawns.size()] as Dictionary
+			gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+			rr_idx += 1
+		elif spawn_pts.size() > 0:
+			var sp: Dictionary = spawn_pts[rr_idx % spawn_pts.size()] as Dictionary
+			gs.player_positions[p.id] = Vector2(sp.get("x", origin.x), sp.get("y", origin.y))
+			rr_idx += 1
+		else:
+			gs.player_positions[p.id] = origin + Vector2((rr_idx % 4) * 40.0, floor(float(rr_idx) / 4.0) * 40.0)
+			rr_idx += 1
+		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
+		if token and is_instance_valid(token):
+			token.global_position = gs.player_positions[p.id]
+
+
 func _ensure_spawn_positions() -> void:
 	if _spawn_initialized or _map_view == null:
 		return

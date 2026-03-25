@@ -252,6 +252,8 @@ func _ready() -> void:
 	call_deferred("_ensure_game_state_bindings")
 	# Defer input-action bindings so InputService is registered by bootstrap.
 	call_deferred("_ensure_input_bindings")
+	# Re-apply gamepad bindings whenever a controller connects or disconnects.
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	# Defer history bindings so HistoryService is registered by bootstrap.
 	call_deferred("_ensure_history_bindings")
 	# Release all undo/redo closures when this node is freed to avoid dangling refs.
@@ -712,6 +714,7 @@ func _build_ui() -> void:
 	_palette.wall_mode_changed.connect(_on_wall_tool_selected)
 	_palette.spawn_profile_selected.connect(_on_spawn_profile_selected)
 	_palette.spawn_auto_assign_requested.connect(_on_spawn_auto_assign)
+	_palette.move_to_spawns_requested.connect(_on_move_to_spawns)
 	_palette.play_mode_toggled.connect(_on_palette_play_mode_toggled)
 	_palette.dm_fog_visible_toggled.connect(_on_dm_fog_visible_toggled)
 	_palette.flashlights_only_toggled.connect(_on_flashlights_only_toggled)
@@ -2708,6 +2711,12 @@ func _apply_profile_bindings() -> void:
 	_player_state_countdown = 0.0
 	# Send player_bind to all display peers after re-binding.
 	_send_player_bind_to_all_displays()
+
+
+func _on_joy_connection_changed(_device: int, _connected: bool) -> void:
+	_apply_profile_bindings()
+	if _profiles_dialog and _profiles_dialog.visible:
+		_refresh_available_inputs()
 
 
 func _on_profiles_changed() -> void:
@@ -5097,6 +5106,14 @@ func _on_spawn_auto_assign() -> void:
 	_map_view.spawn_points_changed.emit(_map_view._map)
 	_refresh_spawn_profile_option()
 	_set_status("Profiles auto-assigned to spawn points.")
+
+
+func _on_move_to_spawns() -> void:
+	if _backend == null or _map_view == null or _map_view._map == null:
+		return
+	_backend.move_all_to_spawns()
+	_broadcast_player_state()
+	_set_status("All players moved to spawn points.")
 
 
 func _broadcast_fog_state() -> void:
