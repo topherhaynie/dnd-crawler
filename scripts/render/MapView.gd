@@ -300,7 +300,6 @@ var _fog_cover_frames_remaining: int = 0
 func reset_transient_state() -> void:
 	## Clear all per-map transient interaction state so nothing leaks between
 	## map loads (viewport indicator, active tools, drag/hover/selection state).
-
 	# ── Tool modes ──
 	active_tool = Tool.SELECT
 	fog_tool = FogTool.NONE
