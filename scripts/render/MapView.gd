@@ -1219,6 +1219,12 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 		if ts != null:
 			rx = maxf(ts.get_token_width_px() * 0.5, 16.0)
 			ry = maxf(ts.get_token_height_px() * 0.5, 16.0)
+		else:
+			var ps := node as PlayerSprite
+			if ps != null:
+				var half_d: float = ps.get_token_diameter_px() * 0.5
+				rx = maxf(half_d, 16.0)
+				ry = maxf(half_d, 16.0)
 		var local_pos: Vector2 = node.to_local(world_pos)
 		var ellipse_val: float = (local_pos.x / rx) * (local_pos.x / rx) + (local_pos.y / ry) * (local_pos.y / ry)
 		if ellipse_val <= 1.0:
@@ -1733,7 +1739,7 @@ func _unhandled_input(event: InputEvent) -> void:
 								_resize_anchor_world = corners[(handle_idx + 2) % 4]
 								get_viewport().set_input_as_handled()
 								return
-					if not _is_measure_tool_active() and _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
+					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE and not _is_measure_tool_active() and _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
 						_dragging_indicator = true
 						get_viewport().set_input_as_handled()
 					elif active_tool == Tool.PAN:
