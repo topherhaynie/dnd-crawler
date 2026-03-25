@@ -12,6 +12,8 @@ signal profiles_changed()
 @warning_ignore("unused_signal")
 signal player_lock_changed(player_id: Variant, is_locked: bool)
 @warning_ignore("unused_signal")
+signal player_light_off_changed(player_id: Variant, is_off: bool)
+@warning_ignore("unused_signal")
 signal session_saved(save_name: String)
 @warning_ignore("unused_signal")
 signal session_loaded(save_name: String)
@@ -41,6 +43,13 @@ func unlock_all_players() -> void:
 
 func is_locked(_player_id: Variant) -> bool:
 	push_error("IGameStateService.is_locked: not implemented")
+	return false
+
+func set_light_off(_player_id: Variant, _off: bool) -> void:
+	push_error("IGameStateService.set_light_off: not implemented")
+
+func is_light_off(_player_id: Variant) -> bool:
+	push_error("IGameStateService.is_light_off: not implemented")
 	return false
 
 # --- Session save/load ------------------------------------------------------

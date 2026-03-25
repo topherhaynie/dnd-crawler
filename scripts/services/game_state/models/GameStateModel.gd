@@ -10,6 +10,7 @@ const _GameSaveDataClass = preload("res://scripts/services/game_state/models/Gam
 ## GameStateService via injection before _ready() runs.
 
 var player_locked: Dictionary = {}
+var player_light_off: Dictionary = {}
 var player_positions: Dictionary = {}
 var windows: Array = []
 

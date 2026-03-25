@@ -103,6 +103,19 @@ func is_locked(player_id: Variant) -> bool:
 	return bool(_model.player_locked.get(player_id, false))
 
 
+func set_light_off(player_id: Variant, off: bool) -> void:
+	if _model == null:
+		return
+	_model.player_light_off[player_id] = off
+	emit_signal("player_light_off_changed", player_id, off)
+
+
+func is_light_off(player_id: Variant) -> bool:
+	if _model == null:
+		return false
+	return bool(_model.player_light_off.get(player_id, false))
+
+
 # ---------------------------------------------------------------------------
 # Session save / load
 # ---------------------------------------------------------------------------

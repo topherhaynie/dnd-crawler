@@ -207,6 +207,7 @@ func build_player_state_payload() -> Array:
 		var pos: Vector2 = gs_mgr.player_positions.get(p.id, Vector2.ZERO)
 		var dashing: bool = im.is_dashing(p.id) if im != null else false
 		var locked: bool = gs_mgr.is_locked(p.id)
+		var light_off: bool = gs_mgr.is_light_off(p.id)
 		players.append({
 			"id": p.id,
 			"name": p.player_name,
@@ -217,6 +218,7 @@ func build_player_state_payload() -> Array:
 			"perception_mod": p.perception_mod,
 			"is_dashing": dashing,
 			"is_locked": locked,
+			"light_off": light_off,
 			"vision_scale": _vision_scale_for_profile(p),
 			"token_diameter_px": token_diameter_px,
 			"facing": token.rotation if token and is_instance_valid(token) else 0.0,

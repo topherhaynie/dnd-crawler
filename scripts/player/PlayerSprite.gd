@@ -99,6 +99,7 @@ func apply_from_state(data: Dictionary) -> void:
 	perception_mod = int(data.get("perception_mod", 0))
 	is_dashing = bool(data.get("is_dashing", false))
 	is_locked = bool(data.get("is_locked", false))
+	set_light_suppressed(bool(data.get("light_off", false)))
 	indicator_color_str = str(data.get("indicator_color", ""))
 	vision_scale = clampf(float(data.get("vision_scale", 1.0)), 0.1, 4.0)
 	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0

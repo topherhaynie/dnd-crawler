@@ -189,6 +189,7 @@ var _freeze_master_btn: Button = null ## "Freeze All" / "Free All" master toggle
 var _fp_vbox: VBoxContainer = null ## inner scale root — scaled by _apply_ui_scale like _ui_root
 var _freeze_rows: VBoxContainer = null
 var _freeze_row_buttons: Dictionary = {} ## {player_id: CheckButton}
+var _freeze_light_buttons: Dictionary = {} ## {player_id: Button}
 var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which locks came from autopause
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
@@ -1533,6 +1534,7 @@ func _refresh_freeze_panel() -> void:
 	for child in _freeze_rows.get_children():
 		child.queue_free()
 	_freeze_row_buttons.clear()
+	_freeze_light_buttons.clear()
 
 	var pm := _profile_service()
 	if pm == null:
@@ -1604,8 +1606,22 @@ func _refresh_freeze_panel() -> void:
 		chk.toggled.connect(func(on: bool) -> void: _on_player_freeze_toggled(pid, on))
 		status_box.add_child(chk)
 
+		var light_off: bool = gs.is_light_off(p.id) if gs != null else false
+		var light_btn := Button.new()
+		light_btn.text = "🚫" if light_off else "🔦"
+		light_btn.toggle_mode = true
+		light_btn.button_pressed = light_off
+		light_btn.focus_mode = Control.FOCUS_NONE
+		light_btn.tooltip_text = "Toggle player vision light on/off"
+		light_btn.custom_minimum_size = Vector2(roundi(28.0 * _ui_scale()), roundi(28.0 * _ui_scale()))
+		light_btn.add_theme_font_size_override("font_size", roundi(12.0 * _ui_scale()))
+		var lpid := p.id
+		light_btn.toggled.connect(func(off: bool) -> void: _on_player_light_toggled(lpid, off))
+		status_box.add_child(light_btn)
+
 		_freeze_rows.add_child(row)
 		_freeze_row_buttons[p.id] = chk
+		_freeze_light_buttons[p.id] = light_btn
 
 	_update_master_toggle()
 
@@ -1627,6 +1643,24 @@ func _on_player_freeze_toggled(player_id: String, toggled_on: bool) -> void:
 		if sb != null:
 			sb.modulate = Color(0.6, 1.0, 0.6) if toggled_on else Color(1.0, 0.6, 0.6)
 	_update_master_toggle()
+
+
+func _on_player_light_toggled(player_id: String, off: bool) -> void:
+	var gs := _game_state()
+	if gs == null:
+		return
+	gs.set_light_off(player_id, off)
+	# Update button text
+	var btn: Variant = _freeze_light_buttons.get(player_id, null)
+	if btn is Button:
+		(btn as Button).text = "🚫" if off else "🔦"
+	# Suppress on DM-side token
+	if _backend != null:
+		var dm_tokens: Dictionary = _backend.get_dm_token_nodes()
+		var token: Variant = dm_tokens.get(player_id, null)
+		if token is PlayerSprite:
+			(token as PlayerSprite).set_light_suppressed(off)
+	_broadcast_player_state()
 
 
 func _on_player_lock_changed_external(player_id: Variant, locked: bool) -> void:

@@ -37,9 +37,14 @@ void fragment() {
             fog_alpha = clamp(1.0 - history_mask, 0.0, 1.0) * dm_history_alpha_scale;
         }
     } else {
-        float player_history_mask = clamp(history_mask * live_mask_gain, 0.0, 1.0);
-        float combined_mask = max(player_history_mask, live_mask);
-        fog_alpha = clamp(1.0 - combined_mask, 0.0, 1.0) * player_alpha_scale;
+        if (flashlights_only) {
+            float player_combined = max(history_mask, live_mask);
+            fog_alpha = clamp(1.0 - player_combined, 0.0, 1.0) * player_alpha_scale;
+        } else {
+            float player_history_mask = clamp(history_mask * live_mask_gain, 0.0, 1.0);
+            float combined_mask = max(player_history_mask, live_mask);
+            fog_alpha = clamp(1.0 - combined_mask, 0.0, 1.0) * player_alpha_scale;
+        }
     }
 
     if (fog_overlay_enabled && fog_alpha > 0.001) {

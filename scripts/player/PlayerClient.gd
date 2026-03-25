@@ -182,6 +182,9 @@ func _handle_packet(raw: String) -> void:
 		"fog_overlay_toggle":
 			# DM toggled fog overlay effect
 			state_received.emit(data)
+		"flashlights_only_toggle":
+			# DM toggled flashlights-only fog mode
+			state_received.emit(data)
 		"window_resize":
 			# DM requests a specific window size — only honour when not fullscreen
 			var w := int(data.get("width", 0))

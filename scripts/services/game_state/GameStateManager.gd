@@ -12,6 +12,7 @@ const _GameSaveDataClass = preload("res://scripts/services/game_state/models/Gam
 ## Access via: get_node("/root/ServiceRegistry").game_state
 
 signal player_lock_changed(player_id: Variant, is_locked: bool)
+signal player_light_off_changed(player_id: Variant, is_off: bool)
 signal player_positions_changed()
 @warning_ignore("unused_signal")
 signal profiles_changed()
@@ -90,6 +91,21 @@ func is_locked(player_id: Variant) -> bool:
 	if model == null:
 		return false
 	return bool(model.player_locked.get(player_id, false))
+
+
+func set_light_off(player_id: Variant, off: bool) -> void:
+	if model == null:
+		return
+	model.player_light_off[player_id] = off
+	player_light_off_changed.emit(player_id, off)
+	if service != null:
+		service.emit_signal("player_light_off_changed", player_id, off)
+
+
+func is_light_off(player_id: Variant) -> bool:
+	if model == null:
+		return false
+	return bool(model.player_light_off.get(player_id, false))
 
 
 func get_position(player_id: Variant) -> Vector2:
