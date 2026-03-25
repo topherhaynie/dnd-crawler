@@ -161,6 +161,9 @@ func _handle_packet(raw: String) -> void:
 		"fog_delta":
 			# Fog delta update — highest-frequency visibility channel
 			state_received.emit(data)
+		"fog_brush_stroke":
+			# Real-time GPU fog brush stroke from DM
+			state_received.emit(data)
 		"fog_state_snapshot":
 			# Atomic fog gamestate snapshot (initial sync / manual resync)
 			state_received.emit(data)

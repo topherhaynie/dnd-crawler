@@ -549,6 +549,7 @@ func _build_ui() -> void:
 	_map_view.set_dm_view(true)
 	_map_view.fog_changed.connect(_on_map_fog_changed)
 	_map_view.fog_delta.connect(_on_map_fog_delta)
+	_map_view.fog_brush_applied.connect(_on_map_fog_brush_applied)
 	_map_view.walls_changed.connect(_on_map_walls_changed)
 	_map_view.spawn_points_changed.connect(_on_map_spawn_points_changed)
 	_map_view.spawn_point_selected.connect(_on_spawn_point_selected)
@@ -1104,8 +1105,6 @@ func _on_viewport_indicator_moved(new_center: Vector2) -> void:
 	_player_cam_pos = new_center
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
-	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
-	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 	if old_pos != new_center:
 		var registry_im := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		if registry_im != null and registry_im.history != null:
@@ -1155,8 +1154,6 @@ func _on_viewport_indicator_resized(new_rect: Rect2) -> void:
 	_broadcast_player_viewport()
 	_broadcast_dirty = true
 	_broadcast_countdown = _BROADCAST_DEBOUNCE
-	# Queue a fog snapshot so the player viewport-local re-seed has fresh data.
-	_queue_fog_snapshot_sync(_FOG_AUTO_SYNC_DEBOUNCE)
 	# Push undo command capturing before/after state.
 	var new_pos := _player_cam_pos
 	var new_zoom := _player_cam_zoom
@@ -4645,6 +4642,18 @@ func _on_map_fog_changed(_map_data: MapData) -> void:
 		_fog_dirty = false
 		_broadcast_fog_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
+
+
+func _on_map_fog_brush_applied(stroke: Dictionary) -> void:
+	var center := stroke.get("center", Vector2.ZERO) as Vector2
+	_nm_broadcast_to_displays({
+		"msg": "fog_brush_stroke",
+		"type": str(stroke.get("type", "brush")),
+		"center_x": center.x,
+		"center_y": center.y,
+		"radius": float(stroke.get("radius", 0.0)),
+		"reveal": bool(stroke.get("reveal", true)),
+	})
 
 
 func _on_map_fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array) -> void:

@@ -205,6 +205,7 @@ func _set_active_tool(tool: Tool) -> void:
 signal viewport_indicator_moved(new_center: Vector2)
 signal viewport_indicator_resized(new_rect: Rect2)
 signal fog_changed(map: MapData)
+signal fog_brush_applied(stroke: Dictionary)
 @warning_ignore("unused_signal")
 signal fog_delta(cell_px: int, revealed_cells: Array, hidden_cells: Array)
 signal walls_changed(map: MapData)
@@ -2405,6 +2406,7 @@ func _handle_fog_input(event: InputEvent) -> bool:
 				else:
 					if _fog_stroke_in_progress:
 						_fog_stroke_in_progress = false
+						_flush_fog_brush_strokes()
 						_push_fog_undo_command(_fog_undo_before, is_reveal)
 					return true
 		if event is InputEventMouseMotion:
@@ -2499,11 +2501,33 @@ func _apply_fog_brush(world_pos: Vector2, reveal: bool) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.fog == null:
 		return
-	if reveal:
-		registry.fog.reveal_brush(world_pos, fog_brush_radius_px)
-	else:
-		registry.fog.hide_brush(world_pos, fog_brush_radius_px)
-	fog_changed.emit(_map)
+	var stroke := {"type": "brush", "center": world_pos, "radius": fog_brush_radius_px, "reveal": reveal}
+	registry.fog.queue_gpu_brush(world_pos, fog_brush_radius_px, reveal)
+	fog_brush_applied.emit(stroke)
+
+
+func _flush_fog_brush_strokes() -> void:
+	## Batch-apply pending GPU brush strokes to the CPU fog model so undo
+	## snapshots and persistence stay in sync.  The player display is already
+	## current because each stroke was broadcast in real-time.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
+		return
+	registry.fog.flush_pending_strokes()
+
+
+func apply_fog_brush_stroke(data: Dictionary) -> void:
+	## Apply a remotely-received brush stroke on the GPU (player side).
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.fog == null:
+		return
+	var stroke := {
+		"type": str(data.get("type", "brush")),
+		"center": Vector2(float(data.get("center_x", 0.0)), float(data.get("center_y", 0.0))),
+		"radius": float(data.get("radius", 0.0)),
+		"reveal": bool(data.get("reveal", true)),
+	}
+	registry.fog.fog_stroke_applied.emit(stroke)
 
 
 func _apply_fog_rect(a: Vector2, b: Vector2, reveal: bool) -> void:

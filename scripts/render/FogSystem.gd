@@ -23,7 +23,7 @@ const MAX_DIRTY_REGIONS: int = 12
 ## SubViewports for fog history, LOS, and paint are capped to this limit.
 ## The fog overlay is rendered at world size and UV-mapped, so visual quality
 ## degrades gracefully while VRAM stays bounded.
-const MAX_FOG_DIM: int = 2048
+const MAX_FOG_DIM: int = 4096
 ## Maximum world-space padding around the player's visible area for
 ## viewport-local fog SubViewports.  Scaled down for small maps so the
 ## viewport covers the entire map and avoids constant re-seeding.
@@ -131,15 +131,7 @@ func _on_fog_model_changed() -> void:
 	_prev_los_width = 0
 	_prev_los_height = 0
 	if _history_gpu_ready:
-		if _viewport_local and _fog_world_rect.size.x > 0:
-			_crop_and_seed_from_model_history()
-		elif _viewport_local:
-			# Rect not yet established — update_viewport_rect() will seed from
-			# the CPU model once the camera position is known.  Seeding at the
-			# base resolution here would be immediately discarded by the resize.
-			return
-		else:
-			_seed_gpu_history_from_image(model.history_image)
+		_seed_gpu_history_from_image(model.history_image)
 	_queue_los_full_bake()
 
 
@@ -160,16 +152,7 @@ func _apply_gpu_stroke(stroke: Dictionary) -> void:
 	# Transform the stroke from world-space to fog-texture-space.
 	var scaled_stroke := stroke.duplicate()
 	var stype: Variant = stroke.get("type", "")
-	if _viewport_local and _fog_world_rect.size.x > 0:
-		# Offset world coords into viewport-local coords.
-		var offset := _fog_world_rect.position
-		if str(stype) == "brush":
-			scaled_stroke["center"] = (stroke.get("center", Vector2.ZERO) as Vector2) - offset
-			# radius stays in world pixels (1:1 in viewport-local mode)
-		elif str(stype) == "rect":
-			scaled_stroke["a"] = (stroke.get("a", Vector2.ZERO) as Vector2) - offset
-			scaled_stroke["b"] = (stroke.get("b", Vector2.ZERO) as Vector2) - offset
-	elif _fog_scale < 1.0:
+	if _fog_scale < 1.0:
 		if str(stype) == "brush":
 			scaled_stroke["center"] = (stroke.get("center", Vector2.ZERO) as Vector2) * _fog_scale
 			scaled_stroke["radius"] = float(stroke.get("radius", 0.0)) * _fog_scale
@@ -246,10 +229,7 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 	var base_fog_size := Vector2i(
 		maxi(1, roundi(_map_size.x * base_fog_scale)),
 		maxi(1, roundi(_map_size.y * base_fog_scale)))
-	# Player renderer uses viewport-local mode: SubViewports will be resized
-	# to the visible area by update_viewport_rect().  Until then, use the
-	# capped resolution as a safe fallback.
-	_viewport_local = not _is_dm
+	_viewport_local = false
 	_fog_world_rect = Rect2()
 	_fog_scale = base_fog_scale
 	_fog_size = base_fog_size
@@ -373,61 +353,16 @@ func _viewport_margin_px() -> float:
 	return minf(VIEWPORT_MARGIN_PX_MAX, minf(_map_size.x, _map_size.y) * 0.25)
 
 
-func update_viewport_rect(camera_pos: Vector2, zoom: float, screen_size: Vector2, rotation_deg: int = 0) -> void:
-	## Called every frame by the player MapView.  Re-positions and re-sizes
-	## the fog SubViewports when the camera moves beyond the current margin.
-	if not _viewport_local or not _fog_enabled:
-		return
-	# If the fog rect already covers the entire map, no rect change is possible.
-	var map_rect := Rect2(Vector2.ZERO, _map_size)
-	if _fog_world_rect.size.x > 0 and _fog_world_rect.encloses(map_rect):
-		return
-	# Compute world-space visible rect, accounting for camera rotation.
-	# When the camera is rotated, the axis-aligned bounding box of the
-	# rotated screen rectangle is larger than the unrotated one.
-	var world_size := screen_size / maxf(zoom, 0.01)
-	var rad := deg_to_rad(float(rotation_deg))
-	var abs_cos := absf(cos(rad))
-	var abs_sin := absf(sin(rad))
-	var rotated_w := world_size.x * abs_cos + world_size.y * abs_sin
-	var rotated_h := world_size.x * abs_sin + world_size.y * abs_cos
-	var aabb_size := Vector2(rotated_w, rotated_h)
-	var world_pos := camera_pos - aabb_size * 0.5
-	var visible_rect := Rect2(world_pos, aabb_size)
-	# If the current fog rect still encloses the visible area, nothing to do.
-	if _fog_world_rect.size.x > 0 and _fog_world_rect.encloses(visible_rect):
-		return
-	# Pad and clamp to map bounds.
-	var margin_world := _viewport_margin_px() / maxf(zoom, 0.01)
-	var padded := visible_rect.grow(margin_world)
-	var clamped := padded.intersection(map_rect)
-	if clamped.size.x < 1.0 or clamped.size.y < 1.0:
-		return
-	# Write back the current GPU history into the CPU model before changing
-	# the viewport rect.  This preserves LOS-accumulated reveals that only
-	# exist on the GPU so the next _crop_and_seed_from_model_history() picks
-	# them up from the model instead of losing them.
-	if _gpu_history_dirty:
-		_writeback_gpu_history_to_model()
-	_fog_world_rect = clamped
-	_fog_size = Vector2i(maxi(1, int(clamped.size.x)), maxi(1, int(clamped.size.y)))
-	_fog_scale = 1.0
-	_live_light_config_by_token_id.clear()
-	_resize_buffers_and_nodes()
-	_apply_shader_uniforms()
-	_crop_and_seed_from_model_history()
-	_refresh_wall_occluders()
-	_queue_los_full_bake()
-	if DEBUG_FOG_TELEMETRY:
-		print("FogSystem: viewport_rect updated (rect=%s fog_size=%s)" % [
-			str(_fog_world_rect), str(_fog_size)])
+func update_viewport_rect(_camera_pos: Vector2, _zoom: float, _screen_size: Vector2, _rotation_deg: int = 0) -> void:
+	## No-op — both DM and player now run full-resolution fog SubViewports.
+	## Kept for API compatibility with MapView._process().
+	return
 
 
 func _writeback_gpu_history_to_model() -> void:
-	## Read the active GPU history texture and merge it back into the CPU
-	## model's history_image.  This captures LOS-accumulated reveals that
-	## only exist on the GPU so they survive viewport-local rect changes.
-	if not _history_gpu_ready or _fog_world_rect.size.x <= 0:
+	## Read the active GPU history texture and write it back into the CPU
+	## model's history_image.  Used for save, sync, and undo serialization.
+	if not _history_gpu_ready:
 		return
 	var model := _fog_model()
 	if model == null or model.history_image == null or model.history_image.is_empty():
@@ -444,23 +379,12 @@ func _writeback_gpu_history_to_model() -> void:
 	var dh := dest.get_height()
 	if dw < 1 or dh < 1:
 		return
-	# Map the current _fog_world_rect to pixel coords in the dest image.
-	var scale_x := float(dw) / _map_size.x
-	var scale_y := float(dh) / _map_size.y
-	var dst_x := clampi(roundi(_fog_world_rect.position.x * scale_x), 0, dw - 1)
-	var dst_y := clampi(roundi(_fog_world_rect.position.y * scale_y), 0, dh - 1)
-	var dst_w := clampi(roundi(_fog_world_rect.size.x * scale_x), 1, dw - dst_x)
-	var dst_h := clampi(roundi(_fog_world_rect.size.y * scale_y), 1, dh - dst_y)
-	# Down-scale GPU image to match the destination region size.
-	if gpu_img.get_width() != dst_w or gpu_img.get_height() != dst_h:
-		gpu_img.resize(dst_w, dst_h, Image.INTERPOLATE_BILINEAR)
+	# Resize GPU image to match CPU model dimensions if needed.
+	if gpu_img.get_width() != dw or gpu_img.get_height() != dh:
+		gpu_img.resize(dw, dh, Image.INTERPOLATE_BILINEAR)
 	# Merge using byte-level max() — never darken already-revealed pixels.
 	var gpu_data := gpu_img.get_data()
-	var cpu_crop := dest.get_region(Rect2i(dst_x, dst_y, dst_w, dst_h))
-	if cpu_crop == null or cpu_crop.is_empty():
-		dest.blit_rect(gpu_img, Rect2i(0, 0, dst_w, dst_h), Vector2i(dst_x, dst_y))
-		return
-	var cpu_data := cpu_crop.get_data()
+	var cpu_data := dest.get_data()
 	var count := mini(gpu_data.size(), cpu_data.size())
 	var merged := PackedByteArray()
 	merged.resize(count)
@@ -474,8 +398,7 @@ func _writeback_gpu_history_to_model() -> void:
 		else:
 			merged[i] = c
 	if any_change:
-		var merged_img := Image.create_from_data(dst_w, dst_h, false, Image.FORMAT_L8, merged)
-		dest.blit_rect(merged_img, Rect2i(0, 0, dst_w, dst_h), Vector2i(dst_x, dst_y))
+		model.history_image = Image.create_from_data(dw, dh, false, Image.FORMAT_L8, merged)
 	_gpu_history_dirty = false
 
 
@@ -534,11 +457,7 @@ func sync_player_revealers(tokens: Array) -> void:
 
 		# Fast-path: skip full _configure_vision_light when nothing changed.
 		var reveal_world := token.get_fog_reveal_position()
-		var reveal_local: Vector2
-		if _viewport_local and _fog_world_rect.size.x > 0:
-			reveal_local = reveal_world - _fog_world_rect.position
-		else:
-			reveal_local = reveal_world * _fog_scale
+		var reveal_local: Vector2 = reveal_world * _fog_scale
 		var src_energy: float = src.energy if src != null else -1.0
 		var prev_cfg: Dictionary = _live_light_config_by_token_id.get(token_id, {}) as Dictionary
 		var cfg_changed: bool = prev_cfg.is_empty() \
@@ -611,11 +530,7 @@ func _configure_vision_light(light: PointLight2D, src: PointLight2D, token: Play
 
 	var reveal_world := token.get_fog_reveal_position()
 	# Map world position into fog-texture space.
-	var reveal_local: Vector2
-	if _viewport_local and _fog_world_rect.size.x > 0:
-		reveal_local = reveal_world - _fog_world_rect.position
-	else:
-		reveal_local = reveal_world * _fog_scale
+	var reveal_local: Vector2 = reveal_world * _fog_scale
 	if light.position.distance_to(reveal_local) > 0.0001:
 		light.position = reveal_local
 	if absf(light.rotation - token.rotation) > 0.0001:
@@ -673,10 +588,7 @@ func _refresh_wall_occluders() -> void:
 		for raw_point in poly:
 			if raw_point is Vector2:
 				var world_pt := raw_point as Vector2
-				if _viewport_local and _fog_world_rect.size.x > 0:
-					points.append(world_pt - _fog_world_rect.position)
-				else:
-					points.append(world_pt * _fog_scale)
+				points.append(world_pt * _fog_scale)
 		if points.size() < 3:
 			continue
 		_live_occluder_layer.add_child(_new_occluder(points))
@@ -870,14 +782,9 @@ func _resize_buffers_and_nodes() -> void:
 		_live_light_rect.position = Vector2.ZERO
 		_live_light_rect.size = fog_world
 	if _fog_rect:
-		if _viewport_local and _fog_world_rect.size.x > 0:
-			# Viewport-local: overlay covers only the visible area.
-			_fog_rect.position = _fog_world_rect.position
-			_fog_rect.size = _fog_world_rect.size
-		else:
-			# Full-map: overlay covers the entire map, UV-mapped to fog textures.
-			_fog_rect.position = Vector2.ZERO
-			_fog_rect.size = _map_size
+		# Full-map: overlay covers the entire map, UV-mapped to fog textures.
+		_fog_rect.position = Vector2.ZERO
+		_fog_rect.size = _map_size
 		_fog_rect.scale = Vector2.ONE
 	if _mask_host:
 		_mask_host.position = Vector2.ZERO
@@ -1042,7 +949,7 @@ func _apply_shader_uniforms() -> void:
 	mat.set_shader_parameter("dm_history_alpha_scale", DM_HISTORY_ALPHA_SCALE)
 	mat.set_shader_parameter("live_mask_gain", LIVE_MASK_GAIN)
 	_fog_rect.visible = _fog_enabled
-	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_fog_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 
 
 # === Helpers ===

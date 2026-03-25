@@ -16,6 +16,7 @@ signal fog_stroke_applied(stroke: Dictionary)
 
 var service: IFogService = null
 var model: FogModel = null
+var _pending_strokes: Array = []
 
 
 func configure(size: Vector2i, is_dm: bool, enabled: bool) -> void:
@@ -100,6 +101,37 @@ func hide_brush(world_pos: Vector2, radius_px: float) -> void:
 	var s := model.fog_scale
 	service.apply_history_brush(model.history_image, world_pos * s, radius_px * s, false)
 	fog_stroke_applied.emit({"type": "brush", "center": world_pos, "radius": radius_px, "reveal": false})
+
+
+func queue_gpu_brush(world_pos: Vector2, radius_px: float, reveal: bool) -> void:
+	## Send a brush stroke to the GPU immediately without the CPU pixel loop.
+	## Call flush_pending_strokes() when the drag ends to update the CPU model.
+	var stroke := {"type": "brush", "center": world_pos, "radius": radius_px, "reveal": reveal}
+	_pending_strokes.append(stroke)
+	fog_stroke_applied.emit(stroke)
+
+
+func flush_pending_strokes() -> void:
+	## Batch-apply all queued GPU strokes to the CPU history image.
+	if model == null or model.history_image == null or service == null:
+		_pending_strokes.clear()
+		return
+	if _pending_strokes.is_empty():
+		return
+	var s := model.fog_scale
+	for raw in _pending_strokes:
+		var stroke := raw as Dictionary
+		var stype: String = str(stroke.get("type", ""))
+		var reveal: bool = bool(stroke.get("reveal", true))
+		if stype == "brush":
+			var center := stroke.get("center", Vector2.ZERO) as Vector2
+			var radius: float = float(stroke.get("radius", 0.0))
+			service.apply_history_brush(model.history_image, center * s, radius * s, reveal)
+		elif stype == "rect":
+			var a := stroke.get("a", Vector2.ZERO) as Vector2
+			var b := stroke.get("b", Vector2.ZERO) as Vector2
+			service.apply_history_rect(model.history_image, a * s, b * s, reveal)
+	_pending_strokes.clear()
 
 
 func reveal_rect(a: Vector2, b: Vector2) -> void:
