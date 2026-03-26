@@ -71,6 +71,7 @@ var _ui_root: VBoxContainer = null
 # Player profile form fields
 var _profile_orientation_spin: SpinBox = null
 
+var _menu_bar: MenuBar = null ## in-window MenuBar (0-height on macOS native menu)
 var _palette: PanelContainer = null ## Photoshop-style tool palette (ToolPalette)
 var _view_menu: PopupMenu = null ## kept for checkmark management
 var _edit_menu: PopupMenu = null ## kept for undo/redo label updates
@@ -593,9 +594,13 @@ func _build_ui() -> void:
 	_ui_layer.add_child(_ui_root)
 
 	# ── Menu bar ─────────────────────────────────────────────────────────────
-	var menu_bar := MenuBar.new()
-	menu_bar.prefer_global_menu = true ## merge into native OS menu bar
-	_ui_root.add_child(menu_bar)
+	_menu_bar = MenuBar.new()
+	_menu_bar.prefer_global_menu = true ## merge into native OS menu bar
+	_menu_bar.resized.connect(_apply_palette_size)
+	_menu_bar.resized.connect(_apply_freeze_panel_size)
+	_ui_root.add_child(_menu_bar)
+
+	var menu_bar: MenuBar = _menu_bar ## local alias for readability below
 
 	# File menu
 	var file_menu := PopupMenu.new()
@@ -5316,6 +5321,15 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 	return OK
 
 
+func _menu_bar_screen_height() -> float:
+	## Returns the in-window MenuBar height in screen pixels.  On macOS the
+	## native global menu is used so size.y == 0; on Windows / Linux the
+	## MenuBar renders inside the window and has a non-zero height.
+	if _menu_bar == null:
+		return 0.0
+	return _menu_bar.size.y * _ui_scale()
+
+
 func _apply_palette_size() -> void:
 	## Set the palette's screen-space width. Called from _apply_ui_scale()
 	## and _dock_palette(). The palette lives directly in the CanvasLayer
@@ -5326,7 +5340,7 @@ func _apply_palette_size() -> void:
 	var panel_w := roundi(34.0 * scale)
 	_palette.offset_left = 0.0
 	_palette.offset_right = float(panel_w)
-	_palette.offset_top = 0.0
+	_palette.offset_top = _menu_bar_screen_height()
 	_palette.offset_bottom = 0.0
 
 
@@ -5340,7 +5354,7 @@ func _apply_freeze_panel_size() -> void:
 	var panel_w := roundi(200.0 * scale)
 	_freeze_panel.offset_left = float(-panel_w)
 	_freeze_panel.offset_right = 0.0
-	_freeze_panel.offset_top = 0.0
+	_freeze_panel.offset_top = _menu_bar_screen_height()
 	_freeze_panel.offset_bottom = 0.0
 
 
