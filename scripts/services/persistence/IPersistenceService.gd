@@ -54,3 +54,17 @@ func list_save_bundles() -> Array:
 func delete_save_bundle(_save_name: String) -> bool:
 	push_error("IPersistenceService.delete_save_bundle: not implemented")
 	return false
+
+# --- Map bundle enumeration & metadata --------------------------------------
+
+func list_map_bundles() -> Array:
+	push_error("IPersistenceService.list_map_bundles: not implemented")
+	return []
+
+func load_bundle_metadata(_bundle_path: String) -> Dictionary:
+	push_error("IPersistenceService.load_bundle_metadata: not implemented")
+	return {}
+
+func generate_thumbnail(_image_path: String, _dest_path: String, _max_size: Vector2i) -> bool:
+	push_error("IPersistenceService.generate_thumbnail: not implemented")
+	return false

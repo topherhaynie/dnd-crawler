@@ -71,6 +71,15 @@ func check_autopause_proximity(positions: Array, player_ids: Array) -> Array:
 	return service.check_autopause_proximity(positions, player_ids)
 
 
+func check_autopause_collision(
+		prev_positions: Array, curr_positions: Array,
+		player_ids: Array, player_radius: float) -> Dictionary:
+	if service == null:
+		return {"player_ids": [], "revealed_token_ids": []}
+	return service.check_autopause_collision(
+			prev_positions, curr_positions, player_ids, player_radius)
+
+
 func check_interact_proximity(pos: Vector2) -> Array:
 	if service == null:
 		return []

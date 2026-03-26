@@ -35,3 +35,27 @@ func copy_file(from_path: String, to_path: String) -> int:
 	if service == null:
 		return -1
 	return service.copy_file(from_path, to_path)
+
+
+func list_map_bundles() -> Array:
+	if service == null:
+		return []
+	return service.list_map_bundles()
+
+
+func list_save_bundles() -> Array:
+	if service == null:
+		return []
+	return service.list_save_bundles()
+
+
+func load_bundle_metadata(bundle_path: String) -> Dictionary:
+	if service == null:
+		return {}
+	return service.load_bundle_metadata(bundle_path)
+
+
+func generate_thumbnail(image_path: String, dest_path: String, max_size: Vector2i = Vector2i(400, 300)) -> bool:
+	if service == null:
+		return false
+	return service.generate_thumbnail(image_path, dest_path, max_size)

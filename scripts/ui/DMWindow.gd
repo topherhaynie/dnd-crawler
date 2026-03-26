@@ -24,6 +24,7 @@ const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 const GameSaveDataScript = preload("res://scripts/services/game_state/models/GameSaveData.gd")
 const ToolPaletteScript = preload("res://scripts/ui/ToolPalette.gd")
+const BundleBrowserScript = preload("res://scripts/ui/BundleBrowser.gd")
 const NetworkUtilsScript = preload("res://scripts/utils/NetworkUtils.gd")
 const QRCodeScript = preload("res://scripts/utils/QRCode.gd")
 
@@ -64,6 +65,10 @@ var _pending_image_path: String = "" ## holds image path while native save dialo
 var _map_name_mode: String = "new" ## "new" or "save_as"
 var _active_map_bundle_path: String = "" ## absolute path to the current .map bundle directory
 var _active_save_bundle_path: String = "" ## absolute path to the current .sav bundle
+
+## Bundle browser windows (lazy-created)
+var _map_browser: Node = null
+var _save_browser: Node = null
 
 var _status_label: Label = null
 var _ui_root: VBoxContainer = null
@@ -202,6 +207,7 @@ var _freeze_rows: VBoxContainer = null
 var _freeze_row_buttons: Dictionary = {} ## {player_id: CheckButton}
 var _freeze_light_buttons: Dictionary = {} ## {player_id: Button}
 var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which locks came from autopause
+var _prev_player_positions: Dictionary = {} ## {player_id: Vector2} — previous frame positions for swept-path
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
 
@@ -568,6 +574,9 @@ func _process(delta: float) -> void:
 
 	# Periodic perception-proximity check — auto-reveal tokens whose DC is
 	# met by a nearby player's passive perception.
+	# Autopause collision runs every frame for reliable swept-path detection.
+	_run_autopause_check()
+
 	_perception_timer -= delta
 	if _perception_timer <= 0.0:
 		_perception_timer = _PERCEPTION_CHECK_INTERVAL
@@ -640,6 +649,7 @@ func _build_ui() -> void:
 	file_menu.name = "File"
 	file_menu.add_item("New Map from Image…", 0)
 	file_menu.add_item("Open Map…", 1)
+	file_menu.add_item("Browse Maps…", 7)
 	file_menu.add_separator()
 	file_menu.add_item("Save Map", 2)
 	file_menu.add_item("Save Map As…", 3)
@@ -647,6 +657,7 @@ func _build_ui() -> void:
 	file_menu.add_item("Save Game", 4)
 	file_menu.add_item("Save Game As…", 5)
 	file_menu.add_item("Load Game…", 6)
+	file_menu.add_item("Browse Saves…", 8)
 	file_menu.add_separator()
 	file_menu.add_item("Quit", 9)
 	file_menu.id_pressed.connect(_on_file_menu_id)
@@ -1878,6 +1889,8 @@ func _on_file_menu_id(id: int) -> void:
 		4: _on_save_game_pressed()
 		5: _on_save_game_as_pressed()
 		6: _on_load_game_pressed()
+		7: _open_map_browser()
+		8: _open_save_browser()
 		9: get_tree().quit()
 
 
@@ -3698,9 +3711,16 @@ func _on_token_category_changed(idx: int) -> void:
 	var is_door_type: bool = cat == TokenData.TokenCategory.DOOR or cat == TokenData.TokenCategory.SECRET_PASSAGE
 	if _token_blocks_los_row != null:
 		_token_blocks_los_row.visible = is_door_type
-	# Default collision-only autopause for traps.
-	if _token_autopause_collision_check != null and cat == TokenData.TokenCategory.TRAP:
-		_token_autopause_collision_check.button_pressed = true
+	# Default trap flags: autopause (collision-only), pause-on-interact, auto-reveal.
+	if cat == TokenData.TokenCategory.TRAP:
+		if _token_autopause_check != null:
+			_token_autopause_check.button_pressed = true
+		if _token_autopause_collision_check != null:
+			_token_autopause_collision_check.button_pressed = true
+		if _token_pause_interact_check != null:
+			_token_pause_interact_check.button_pressed = true
+		if _token_auto_reveal_check != null:
+			_token_auto_reveal_check.button_pressed = true
 
 
 # ── Puzzle notes helpers ────────────────────────────────────────────────────
@@ -4428,6 +4448,59 @@ func _handle_interact_action(player_id: String) -> void:
 		_broadcast_player_state()
 
 
+# ---------------------------------------------------------------------------
+# Autopause — runs every frame for reliable swept-path collision detection.
+# ---------------------------------------------------------------------------
+
+func _run_autopause_check() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var gs: GameStateManager = _game_state()
+	if gs == null or _backend == null:
+		return
+
+	var prev_positions: Array = []
+	var curr_positions: Array = []
+	var player_ids: Array = []
+	var token_nodes: Dictionary = _backend.get_dm_token_nodes()
+	for pid in token_nodes.keys():
+		var node: Node2D = token_nodes[pid] as Node2D
+		if node == null or not is_instance_valid(node):
+			continue
+		var pid_s: String = str(pid)
+		var curr: Vector2 = node.global_position
+		var prev: Vector2 = _prev_player_positions.get(pid_s, curr) as Vector2
+		prev_positions.append(prev)
+		curr_positions.append(curr)
+		player_ids.append(pid_s)
+		_prev_player_positions[pid_s] = curr
+
+	if curr_positions.is_empty():
+		return
+
+	var player_radius: float = _pixels_per_5ft_current() * 0.5
+	var result: Dictionary = registry.token.check_autopause_collision(
+			prev_positions, curr_positions, player_ids, player_radius)
+	var paused_ids: Array = result.get("player_ids", []) as Array
+	var revealed_ids: Array = result.get("revealed_token_ids", []) as Array
+	# Broadcast trap reveals triggered by collision (trap sprung).
+	for tid in revealed_ids:
+		_on_token_visibility_changed(str(tid), true)
+	for pid in paused_ids:
+		var pid_s: String = str(pid)
+		if _autopause_locked_ids.has(pid_s):
+			continue
+		_autopause_locked_ids[pid_s] = true
+		gs.lock_player(pid_s)
+		_set_status("Autopause — %s paused by proximity trigger" % pid_s)
+	_broadcast_player_state()
+
+
+# ---------------------------------------------------------------------------
+# Perception / detection — runs on a timer (_PERCEPTION_CHECK_INTERVAL).
+# ---------------------------------------------------------------------------
+
 ## Collect player world positions and passive perceptions, then ask TokenService
 ## to auto-reveal any tokens whose perception DC is met.  Called every
 ## _PERCEPTION_CHECK_INTERVAL seconds from _process.
@@ -4463,19 +4536,6 @@ func _run_perception_check() -> void:
 	var newly_revealed: Array = registry.token.check_perception_proximity(positions, perceptions)
 	for id in newly_revealed:
 		_on_token_visibility_changed(str(id), true)
-
-	# --- Autopause proximity (Phase 3) ---
-	var gs: GameStateManager = _game_state()
-	if gs != null:
-		var paused_ids: Array = registry.token.check_autopause_proximity(positions, player_ids)
-		for pid in paused_ids:
-			var pid_s: String = str(pid)
-			if _autopause_locked_ids.has(pid_s):
-				continue
-			_autopause_locked_ids[pid_s] = true
-			gs.lock_player(pid_s)
-			_set_status("Autopause — %s paused by proximity trigger" % pid_s)
-		_broadcast_player_state()
 
 	# --- Detection exclamation (Phase 6) ---
 	var new_detected: Array = registry.token.check_detection_proximity(positions, player_ids, perceptions)
@@ -4647,6 +4707,7 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	if ms != null:
 		ms.update(map)
 	_nm_broadcast_map(map)
+	_generate_thumbnail(bundle_path, img_dest_abs)
 	_set_status("New map: %s" % map.map_name)
 
 
@@ -4655,6 +4716,31 @@ func _on_open_map_pressed() -> void:
 	_ensure_maps_dir()
 	_open_map_dialog.current_dir = _maps_dir_abs()
 	_open_map_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _open_map_browser() -> void:
+	## Open the custom map browser window.
+	_ensure_maps_dir()
+	if _map_browser == null:
+		_map_browser = BundleBrowserScript.new()
+		_map_browser.browse_mode = "map"
+		add_child(_map_browser)
+		_map_browser.bundle_selected.connect(_on_map_bundle_selected)
+	_map_browser.populate()
+	_map_browser.popup_centered_ratio(0.85)
+
+
+func _open_save_browser() -> void:
+	## Open the custom save browser window.
+	var dir := _saves_dir_abs()
+	DirAccess.make_dir_recursive_absolute(dir)
+	if _save_browser == null:
+		_save_browser = BundleBrowserScript.new()
+		_save_browser.browse_mode = "save"
+		add_child(_save_browser)
+		_save_browser.bundle_selected.connect(_on_load_game_path_selected)
+	_save_browser.populate()
+	_save_browser.popup_centered_ratio(0.85)
 
 
 func _on_map_bundle_selected(path: String) -> void:
@@ -4786,6 +4872,10 @@ func _save_game_to_bundle(save_name: String) -> void:
 			if ms != null:
 				var embedded_map_path: String = _active_save_bundle_path.path_join("map.map")
 				ms.save_to_bundle(embedded_map_path)
+			# Generate thumbnail for the .sav bundle from the embedded map image
+			var sav_img := _find_bundle_image(_active_save_bundle_path.path_join("map.map"))
+			if not sav_img.is_empty():
+				_generate_thumbnail(_active_save_bundle_path, sav_img)
 			_set_status("Game saved: %s" % save_name)
 		else:
 			_set_status("Error: failed to save game.")
@@ -4937,6 +5027,7 @@ func _save_map_as_path(bundle_path: String) -> void:
 	if ms != null:
 		ms.update(map)
 	_nm_broadcast_map_update(map)
+	_generate_thumbnail(bundle_path, new_img_abs)
 	_set_status("Saved as: %s" % map.map_name)
 
 
@@ -4948,6 +5039,7 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	# ── Clear per-map transient state so nothing leaks between maps ──────
 	_detected_token_ids.clear()
 	_autopause_locked_ids.clear()
+	_prev_player_positions.clear()
 	_token_editor_id = ""
 	_token_context_id = ""
 	_selected_passage_token_id = ""
@@ -5430,6 +5522,10 @@ func _save_map_data(map: MapData) -> void:
 	if ms != null:
 		ms.update(map)
 		ms.save_to_bundle(_active_map_bundle_path)
+		# Regenerate thumbnail on every map save
+		var thumb_img_ms := _find_bundle_image(_active_map_bundle_path)
+		if not thumb_img_ms.is_empty():
+			_generate_thumbnail(_active_map_bundle_path, thumb_img_ms)
 		return
 
 	var fa := FileAccess.open(path, FileAccess.WRITE)
@@ -5438,6 +5534,10 @@ func _save_map_data(map: MapData) -> void:
 		return
 	fa.store_string(JSON.stringify(d, "\t"))
 	fa.close()
+	# Regenerate thumbnail on every map save
+	var thumb_img := _find_bundle_image(_active_map_bundle_path)
+	if not thumb_img.is_empty():
+		_generate_thumbnail(_active_map_bundle_path, thumb_img)
 
 
 func _load_map_from_bundle(bundle_path: String) -> MapData:
@@ -5466,6 +5566,24 @@ func _set_status(msg: String) -> void:
 	if _status_label:
 		_status_label.text = msg
 	print("DMWindow: %s" % msg)
+
+
+func _generate_thumbnail(bundle_path: String, image_path: String) -> void:
+	## Generate thumbnail.png inside the bundle from the map image.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.persistence == null:
+		return
+	var thumb_dest := bundle_path.path_join("thumbnail.png")
+	registry.persistence.generate_thumbnail(image_path, thumb_dest)
+
+
+func _find_bundle_image(bundle_path: String) -> String:
+	## Locate the image file inside a bundle by trying known extensions.
+	for ext in SUPPORTED_EXTENSIONS:
+		var candidate := bundle_path.path_join("image." + ext)
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
 
 
 func _copy_file(from_path: String, to_path: String) -> Error:

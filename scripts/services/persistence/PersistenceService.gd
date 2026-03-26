@@ -144,6 +144,9 @@ func copy_file(from_path: String, to_path: String) -> int:
 # ---------------------------------------------------------------------------
 
 const _SAVES_DIR: String = "user://data/saves"
+const _MAPS_DIR: String = "user://data/maps"
+const _THUMBNAIL_MAX := Vector2i(400, 300)
+const _SUPPORTED_IMG_EXT: Array = ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
 
 func save_game_bundle(bundle_path: String, state: RefCounted, fog_image: Image, map_bundle_path: String) -> bool:
@@ -246,6 +249,93 @@ func delete_save_bundle(save_name: String) -> bool:
 	if not _remove_dir_recursive(abs_path):
 		return false
 	emit_signal("persistence_changed", save_name)
+	return true
+
+
+# ---------------------------------------------------------------------------
+# Map bundle enumeration & metadata
+# ---------------------------------------------------------------------------
+
+func list_map_bundles() -> Array:
+	var out: Array = []
+	var abs_dir := _abs(_MAPS_DIR)
+	if not DirAccess.dir_exists_absolute(abs_dir):
+		return out
+	var dir := DirAccess.open(abs_dir)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "":
+		if dir.current_is_dir() and fname.ends_with(".map"):
+			out.append(fname.get_basename())
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+
+func load_bundle_metadata(bundle_path: String) -> Dictionary:
+	## Returns {name, modified_time, thumbnail_path, bundle_path} for a .map or .sav bundle.
+	var abs_bundle := _abs(bundle_path)
+	var result: Dictionary = {
+		"name": abs_bundle.get_file().get_basename(),
+		"modified_time": 0,
+		"thumbnail_path": "",
+		"bundle_path": abs_bundle,
+	}
+
+	# Resolve modified time from the bundle directory
+	var json_path: String = ""
+	if abs_bundle.ends_with(".map"):
+		json_path = abs_bundle.path_join("map.json")
+	elif abs_bundle.ends_with(".sav"):
+		json_path = abs_bundle.path_join("state.json")
+	if not json_path.is_empty() and FileAccess.file_exists(json_path):
+		result["modified_time"] = FileAccess.get_modified_time(json_path)
+
+	# Read name from JSON metadata
+	if not json_path.is_empty() and FileAccess.file_exists(json_path):
+		var fa := FileAccess.open(json_path, FileAccess.READ)
+		if fa != null:
+			var text := fa.get_as_text()
+			fa.close()
+			var parsed: Variant = JsonUtilsScript.parse_json_text(text)
+			if parsed is Dictionary:
+				var d: Dictionary = parsed as Dictionary
+				if d.has("map_name") and d["map_name"] is String:
+					result["name"] = d["map_name"] as String
+				elif d.has("save_name") and d["save_name"] is String:
+					result["name"] = d["save_name"] as String
+
+	# Thumbnail path
+	var thumb := abs_bundle.path_join("thumbnail.png")
+	if FileAccess.file_exists(thumb):
+		result["thumbnail_path"] = thumb
+
+	return result
+
+
+func generate_thumbnail(image_path: String, dest_path: String, max_size: Vector2i = _THUMBNAIL_MAX) -> bool:
+	## Load an image, scale it down to fit within max_size, and save as PNG.
+	var img := Image.new()
+	var err := img.load(image_path)
+	if err != OK:
+		push_error("PersistenceService.generate_thumbnail: failed to load '%s' (err %d)" % [image_path, err])
+		return false
+	# Calculate scale to fit within max_size preserving aspect ratio
+	var src_w: float = float(img.get_width())
+	var src_h: float = float(img.get_height())
+	if src_w <= 0.0 or src_h <= 0.0:
+		return false
+	var scale_factor: float = minf(float(max_size.x) / src_w, float(max_size.y) / src_h)
+	if scale_factor < 1.0:
+		var new_w: int = maxi(1, roundi(src_w * scale_factor))
+		var new_h: int = maxi(1, roundi(src_h * scale_factor))
+		img.resize(new_w, new_h, Image.INTERPOLATE_LANCZOS)
+	var save_err := img.save_png(dest_path)
+	if save_err != OK:
+		push_error("PersistenceService.generate_thumbnail: failed to save '%s' (err %d)" % [dest_path, save_err])
+		return false
 	return true
 
 

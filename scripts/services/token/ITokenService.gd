@@ -88,6 +88,20 @@ func check_autopause_proximity(_positions: Array, _player_ids: Array) -> Array:
 	return []
 
 
+## Swept-path autopause check.  For tokens with autopause_on_collision,
+## tests whether the movement segment (prev→curr) intersects the effective
+## collision disc (trap body + player_radius).  For other autopause tokens
+## uses the larger trigger_radius_px with a simple point-in-circle test.
+## Collision-mode tokens already visible to players are skipped (no surprise).
+## Hidden collision-mode tokens are auto-revealed on trigger.
+## Returns Dictionary {"player_ids": Array, "revealed_token_ids": Array}.
+func check_autopause_collision(
+		_prev_positions: Array, _curr_positions: Array,
+		_player_ids: Array, _player_radius: float) -> Dictionary:
+	push_error("ITokenService.check_autopause_collision: not implemented")
+	return {"player_ids": [], "revealed_token_ids": []}
+
+
 ## Returns token IDs of pause_on_interact tokens within trigger_radius_px of pos.
 func check_interact_proximity(_pos: Vector2) -> Array:
 	push_error("ITokenService.check_interact_proximity: not implemented")
