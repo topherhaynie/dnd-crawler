@@ -134,6 +134,12 @@ var _puzzle_notes_add_btn: Button = null
 ## Right-click context menu for tokens
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
+## In-app clipboard for token copy/cut/paste (serialised TokenData snapshot).
+var _token_clipboard: Dictionary = {}
+## World position captured from background right-click for paste.
+var _background_right_click_pos: Vector2 = Vector2.ZERO
+## Background context menu (right-click on empty map space).
+var _background_context_menu: PopupMenu = null
 
 # ── Passage paint panel ────────────────────────────────────────────────────
 var _passage_panel: PanelContainer = null
@@ -329,6 +335,17 @@ func _refresh_history_menu() -> void:
 		_edit_menu.set_item_disabled(redo_idx, not can_redo)
 		var redo_desc := registry.history.get_redo_description()
 		_edit_menu.set_item_text(redo_idx, "Redo" if redo_desc.is_empty() else "Redo: %s" % redo_desc)
+	# Copy/Cut are enabled when a token is hovered; paste when clipboard is non-empty.
+	var has_hover: bool = _map_view != null and _map_view.get_hovered_token_id() != null
+	var copy_idx := _edit_menu.get_item_index(16)
+	var cut_idx := _edit_menu.get_item_index(17)
+	var paste_idx := _edit_menu.get_item_index(18)
+	if copy_idx >= 0:
+		_edit_menu.set_item_disabled(copy_idx, not has_hover)
+	if cut_idx >= 0:
+		_edit_menu.set_item_disabled(cut_idx, not has_hover)
+	if paste_idx >= 0:
+		_edit_menu.set_item_disabled(paste_idx, _token_clipboard.is_empty())
 
 
 func _network() -> NetworkManager:
@@ -501,6 +518,21 @@ func _shortcut_input(event: InputEvent) -> void:
 			if registry.history.undo():
 				_set_status("Undo: %s" % desc)
 		get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_C:
+		var hover_id: Variant = _map_view.get_hovered_token_id() if _map_view != null else null
+		if hover_id != null:
+			_copy_token(str(hover_id))
+			get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_X:
+		var hover_id: Variant = _map_view.get_hovered_token_id() if _map_view != null else null
+		if hover_id != null:
+			_cut_token(str(hover_id))
+			get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_V:
+		if not _token_clipboard.is_empty() and _map_view != null:
+			var world_pos: Vector2 = _map_view.get_global_mouse_position()
+			_paste_token(world_pos)
+			get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -566,6 +598,7 @@ func _build_ui() -> void:
 	_map_view.token_trigger_radius_changed.connect(_on_token_trigger_radius_changed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
+	_map_view.background_right_clicked.connect(_on_background_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
 	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
 	_wire_measure_signals()
@@ -625,6 +658,10 @@ func _build_ui() -> void:
 	edit_menu.add_item("Undo", 14)
 	edit_menu.add_item("Redo", 15)
 	edit_menu.add_separator()
+	edit_menu.add_item("Copy Token", 16)
+	edit_menu.add_item("Cut Token", 17)
+	edit_menu.add_item("Paste Token", 18)
+	edit_menu.add_separator()
 	edit_menu.add_item("Calibrate Grid…", 10)
 	edit_menu.add_item("Set Scale Manually…", 11)
 	edit_menu.add_item("Set Grid Offset…", 12)
@@ -635,6 +672,10 @@ func _build_ui() -> void:
 	# Undo/Redo start disabled; enabled once commands are pushed.
 	edit_menu.set_item_disabled(edit_menu.get_item_index(14), true)
 	edit_menu.set_item_disabled(edit_menu.get_item_index(15), true)
+	# Copy/Cut/Paste start disabled; enabled dynamically.
+	edit_menu.set_item_disabled(edit_menu.get_item_index(16), true)
+	edit_menu.set_item_disabled(edit_menu.get_item_index(17), true)
+	edit_menu.set_item_disabled(edit_menu.get_item_index(18), true)
 	menu_bar.add_child(edit_menu)
 
 	# View menu  (indices matter for set_item_checked)
@@ -1854,6 +1895,18 @@ func _on_edit_menu_id(id: int) -> void:
 				var desc := registry.history.get_redo_description()
 				if registry.history.redo():
 					_set_status("Redo: %s" % desc)
+		16: # Copy Token
+			var hover_id: Variant = _map_view.get_hovered_token_id() if _map_view != null else null
+			if hover_id != null:
+				_copy_token(str(hover_id))
+		17: # Cut Token
+			var hover_id: Variant = _map_view.get_hovered_token_id() if _map_view != null else null
+			if hover_id != null:
+				_cut_token(str(hover_id))
+		18: # Paste Token
+			if not _token_clipboard.is_empty() and _map_view != null:
+				var world_pos: Vector2 = _map_view.get_global_mouse_position()
+				_paste_token(world_pos)
 		10: _on_calibrate_pressed()
 		11: _on_manual_scale_pressed()
 		12: _on_set_offset_pressed()
@@ -3126,6 +3179,116 @@ func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float
 
 
 # ---------------------------------------------------------------------------
+# Token clipboard — copy / cut / paste
+# ---------------------------------------------------------------------------
+
+func _copy_token(token_id: String) -> void:
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null:
+		return
+	_token_clipboard = data.to_dict()
+	_set_status("Copied: %s" % data.label if not data.label.is_empty() else "Copied token")
+
+
+func _cut_token(token_id: String) -> void:
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null:
+		return
+	_copy_token(token_id)
+	_delete_token(token_id)
+	_set_status("Cut: %s" % data.label if not data.label.is_empty() else "Cut token")
+
+
+func _paste_token(world_pos: Vector2) -> void:
+	if _token_clipboard.is_empty():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var tm: TokenManager = registry.token
+	var data: TokenData = TokenData.from_dict(_token_clipboard)
+	var old_world_pos: Vector2 = data.world_pos
+	data.id = TokenData.generate_id()
+	data.world_pos = world_pos
+	# Offset passage paths relative to the position delta.
+	if not data.passage_paths.is_empty():
+		var delta: Vector2 = world_pos - old_world_pos
+		var shifted: Array = []
+		for raw: Variant in data.passage_paths:
+			if raw is PackedVector2Array:
+				var chain := raw as PackedVector2Array
+				var new_chain := PackedVector2Array()
+				for pt: Vector2 in chain:
+					new_chain.append(pt + delta)
+				shifted.append(new_chain)
+		data.passage_paths = shifted
+	tm.add_token(data)
+	var mv := _map_view
+	if mv != null:
+		mv.add_token_sprite(data, true)
+		mv.apply_token_passthrough_state(data)
+	_broadcast_token_change(data, true)
+	_broadcast_puzzle_notes_state()
+	# Push undo command.
+	if registry.history != null:
+		var new_snapshot: TokenData = TokenData.from_dict(data.to_dict())
+		var new_id: String = new_snapshot.id
+		registry.history.push_command(HistoryCommand.create("Token pasted",
+			func():
+				tm.remove_token(new_id)
+				if mv != null: mv.remove_token_sprite(new_id)
+				_nm_broadcast_to_displays({"msg": "token_removed", "token_id": new_id,
+					"puzzle_notes": _collect_revealed_puzzle_notes()})
+				_broadcast_puzzle_notes_state(),
+			func():
+				var readd := TokenData.from_dict(new_snapshot.to_dict())
+				tm.add_token(readd)
+				if mv != null: mv.add_token_sprite(readd, true); mv.apply_token_passthrough_state(readd)
+				_broadcast_token_change(readd, true)
+				_broadcast_puzzle_notes_state()))
+	_set_status("Pasted: %s" % data.label if not data.label.is_empty() else "Pasted token")
+
+
+func _delete_token(token_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var tm: TokenManager = registry.token
+	var del_data: TokenData = tm.get_token_by_id(token_id)
+	var del_snapshot: TokenData = null
+	if del_data != null:
+		del_snapshot = TokenData.from_dict(del_data.to_dict())
+	tm.remove_token(token_id)
+	if _map_view != null:
+		_map_view.remove_token_sprite(token_id)
+	_nm_broadcast_to_displays({"msg": "token_removed", "token_id": token_id,
+		"puzzle_notes": _collect_revealed_puzzle_notes()})
+	_broadcast_puzzle_notes_state()
+	if del_snapshot != null and registry.history != null:
+		var cid: String = token_id
+		var mv := _map_view
+		registry.history.push_command(HistoryCommand.create("Token deleted",
+			func():
+				var restored := TokenData.from_dict(del_snapshot.to_dict())
+				registry.token.add_token(restored)
+				if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
+				_broadcast_token_change(restored, true)
+				_broadcast_puzzle_notes_state(),
+			func():
+				registry.token.remove_token(cid)
+				if mv != null: mv.remove_token_sprite(cid)
+				_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid,
+					"puzzle_notes": _collect_revealed_puzzle_notes()})
+				_broadcast_puzzle_notes_state()))
+
+
+# ---------------------------------------------------------------------------
 # Token placement / editing
 # ---------------------------------------------------------------------------
 
@@ -3133,6 +3296,27 @@ func _on_token_place_requested(world_pos: Vector2) -> void:
 	## Left-click in PLACE_TOKEN tool mode — open editor for a brand-new token.
 	_token_editor_id = ""
 	_open_token_editor(TokenData.create(TokenData.TokenCategory.GENERIC, world_pos))
+
+
+func _on_background_right_clicked(world_pos: Vector2, screen_pos: Vector2) -> void:
+	## Right-click on empty map space — show background context menu with Paste.
+	if _token_clipboard.is_empty():
+		return
+	_background_right_click_pos = world_pos
+	if _background_context_menu == null:
+		_background_context_menu = PopupMenu.new()
+		_background_context_menu.id_pressed.connect(_on_background_context_menu_id)
+		add_child(_background_context_menu)
+	_apply_token_context_menu_theme_to(_background_context_menu)
+	_background_context_menu.clear()
+	_background_context_menu.add_item("Paste Token", 0)
+	_background_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
+
+
+func _on_background_context_menu_id(id: int) -> void:
+	match id:
+		0: # Paste Token
+			_paste_token(_background_right_click_pos)
 
 
 func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
@@ -3145,6 +3329,9 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 	_apply_token_context_menu_theme()
 	_token_context_menu.clear()
 	_token_context_menu.add_item("Edit Token…", 0)
+	_token_context_menu.add_separator()
+	_token_context_menu.add_item("Copy Token", 4)
+	_token_context_menu.add_item("Cut Token", 5)
 	_token_context_menu.add_separator()
 	_token_context_menu.add_item("Toggle Visibility", 1)
 	# Show door open/close toggle for DOOR and SECRET_PASSAGE categories.
@@ -3179,34 +3366,7 @@ func _on_token_context_menu_id(id: int) -> void:
 				tm.set_token_visibility(_token_context_id, not data.is_visible_to_players)
 				_on_token_visibility_changed(_token_context_id, data.is_visible_to_players)
 		2: # Delete
-			var del_data: TokenData = tm.get_token_by_id(_token_context_id)
-			var del_snapshot: TokenData = null
-			if del_data != null:
-				del_snapshot = TokenData.from_dict(del_data.to_dict())
-			tm.remove_token(_token_context_id)
-			if _map_view != null:
-				_map_view.remove_token_sprite(_token_context_id)
-			_nm_broadcast_to_displays({"msg": "token_removed", "token_id": _token_context_id,
-				"puzzle_notes": _collect_revealed_puzzle_notes()})
-			_broadcast_puzzle_notes_state()
-			if del_snapshot != null:
-				var cid := _token_context_id
-				var mv := _map_view
-				var reg_del := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-				if reg_del != null and reg_del.history != null:
-					reg_del.history.push_command(HistoryCommand.create("Token deleted",
-						func():
-							var restored := TokenData.from_dict(del_snapshot.to_dict())
-							reg_del.token.add_token(restored)
-							if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
-							_broadcast_token_change(restored, true)
-							_broadcast_puzzle_notes_state(),
-						func():
-							reg_del.token.remove_token(cid)
-							if mv != null: mv.remove_token_sprite(cid)
-							_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid,
-								"puzzle_notes": _collect_revealed_puzzle_notes()})
-							_broadcast_puzzle_notes_state()))
+			_delete_token(_token_context_id)
 		3: # Toggle open/closed (DOOR / SECRET_PASSAGE)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null:
@@ -3215,6 +3375,10 @@ func _on_token_context_menu_id(id: int) -> void:
 				if _map_view != null:
 					_map_view.apply_token_passthrough_state(data)
 				_broadcast_token_change(data, false)
+		4: # Copy Token
+			_copy_token(_token_context_id)
+		5: # Cut Token
+			_cut_token(_token_context_id)
 
 
 func _open_token_editor(data: TokenData) -> void:
@@ -3517,12 +3681,16 @@ func _build_token_editor_dialog() -> void:
 
 
 func _apply_token_context_menu_theme() -> void:
-	if _token_context_menu == null:
+	_apply_token_context_menu_theme_to(_token_context_menu)
+
+
+func _apply_token_context_menu_theme_to(menu: PopupMenu) -> void:
+	if menu == null:
 		return
 	var scale := _ui_scale()
-	_token_context_menu.add_theme_font_size_override("font_size", roundi(16.0 * scale))
-	_token_context_menu.add_theme_constant_override("v_separation", roundi(6 * scale))
-	_token_context_menu.add_theme_constant_override("h_separation", roundi(12 * scale))
+	menu.add_theme_font_size_override("font_size", roundi(16.0 * scale))
+	menu.add_theme_constant_override("v_separation", roundi(6 * scale))
+	menu.add_theme_constant_override("h_separation", roundi(12 * scale))
 
 
 func _on_token_category_changed(idx: int) -> void:

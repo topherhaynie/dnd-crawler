@@ -225,6 +225,7 @@ signal token_resize_completed(token_id: String, new_width_px: float, new_height_
 signal token_rotation_completed(token_id: String, rotation_deg: float)
 signal token_place_requested(world_pos: Vector2)
 signal token_right_clicked(token_id: String, screen_pos: Vector2)
+signal background_right_clicked(world_pos: Vector2, screen_pos: Vector2)
 signal token_selected(token_id: String)
 signal token_trigger_radius_changed(token_id: String, new_radius_px: float)
 @warning_ignore("unused_signal")
@@ -296,6 +297,10 @@ var _fog_cover_frames_remaining: int = 0
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+func get_hovered_token_id() -> Variant:
+	return _hovered_token_id
+
 
 func reset_transient_state() -> void:
 	## Clear all per-map transient interaction state so nothing leaks between
@@ -1891,6 +1896,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					var hit_id_r: Variant = _hit_test_tokens(world_pos_r)
 					if hit_id_r != null:
 						token_right_clicked.emit(str(hit_id_r), btn_event.position)
+						get_viewport().set_input_as_handled()
+					else:
+						background_right_clicked.emit(world_pos_r, btn_event.position)
 						get_viewport().set_input_as_handled()
 		return
 
