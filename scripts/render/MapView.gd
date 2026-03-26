@@ -1112,6 +1112,7 @@ func _clip_wall_by_passthroughs(points: PackedVector2Array) -> Array[PackedVecto
 	if current.is_empty():
 		return current
 	# Subtract passage corridor segment quads (precise polygon clipping).
+	const MAX_CLIP_FRAGMENTS: int = 256
 	for raw_quads: Variant in _passthrough_polys.values():
 		if not raw_quads is Array:
 			continue
@@ -1130,6 +1131,9 @@ func _clip_wall_by_passthroughs(points: PackedVector2Array) -> Array[PackedVecto
 			current = next2
 			if current.is_empty():
 				break
+			if current.size() > MAX_CLIP_FRAGMENTS:
+				push_warning("_clip_wall_by_passthroughs: fragment cap reached (%d), stopping clip" % current.size())
+				return current
 		if current.is_empty():
 			break
 	return current
@@ -1179,21 +1183,31 @@ func _build_passage_los_geometry(data: TokenData) -> void:
 	# Merge segment quads and joint circles into a union polygon so that wall
 	# clipping (for both LOS occluders and physics collision) produces a
 	# single smooth hole with no internal edges or bend gaps.
+	#
+	# Algorithm: for each new shape, try to merge it into exactly one existing
+	# union member.  Accept the merge only when it produces a single output
+	# polygon (a true union).  If the merge produces multiple fragments (self-
+	# intersecting or disjoint geometry), skip that candidate and try the next.
+	# This prevents the exponential polygon-count growth that the old loop
+	# caused when a passage criss-crossed itself.
+	const MAX_UNION_POLYS: int = 64
 	var union_polys: Array[PackedVector2Array] = [all_shapes[0].duplicate()]
 	for qi: int in range(1, all_shapes.size()):
-		var merged_any := false
-		var new_union: Array[PackedVector2Array] = []
-		for existing: PackedVector2Array in union_polys:
-			var result := Geometry2D.merge_polygons(existing, all_shapes[qi])
-			if result.size() > 0:
-				merged_any = true
-				for poly in result:
-					if (poly as PackedVector2Array).size() >= 3:
-						new_union.append(poly as PackedVector2Array)
-		if merged_any and not new_union.is_empty():
-			union_polys = new_union
-		else:
-			# Shape didn't overlap any existing union member — keep it separate.
+		if union_polys.size() >= MAX_UNION_POLYS:
+			push_warning("_build_passage_los_geometry: union polygon cap reached (%d), stopping merge" % MAX_UNION_POLYS)
+			break
+		var did_merge := false
+		for ui: int in range(union_polys.size()):
+			var result := Geometry2D.merge_polygons(union_polys[ui], all_shapes[qi])
+			# Accept only clean single-polygon unions — multiple fragments
+			# indicate complex/self-intersecting overlap that would multiply
+			# polygon count.
+			if result.size() == 1 and (result[0] as PackedVector2Array).size() >= 3:
+				union_polys[ui] = result[0] as PackedVector2Array
+				did_merge = true
+				break
+		if not did_merge:
+			# Shape didn't cleanly merge with any existing member — keep it separate.
 			union_polys.append(all_shapes[qi])
 
 	_passthrough_polys[data.id] = union_polys
