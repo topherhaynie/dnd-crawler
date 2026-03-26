@@ -77,6 +77,7 @@ var _ui_root: VBoxContainer = null
 var _profile_orientation_spin: SpinBox = null
 
 var _menu_bar: MenuBar = null ## in-window MenuBar (0-height on macOS native menu)
+var _native_menu: Node = null ## NativeWin32MenuBar instance (Windows only)
 var _palette: PanelContainer = null ## Photoshop-style tool palette (ToolPalette)
 var _view_menu: PopupMenu = null ## kept for checkmark management
 var _edit_menu: PopupMenu = null ## kept for undo/redo label updates
@@ -336,11 +337,17 @@ func _refresh_history_menu() -> void:
 	if undo_idx >= 0:
 		_edit_menu.set_item_disabled(undo_idx, not can_undo)
 		var undo_desc := registry.history.get_undo_description()
-		_edit_menu.set_item_text(undo_idx, "Undo" if undo_desc.is_empty() else "Undo: %s" % undo_desc)
+		var undo_text := "Undo" if undo_desc.is_empty() else "Undo: %s" % undo_desc
+		_edit_menu.set_item_text(undo_idx, undo_text)
+		_nm_set_disabled("Edit", 14, not can_undo)
+		_nm_set_text("Edit", 14, undo_text)
 	if redo_idx >= 0:
 		_edit_menu.set_item_disabled(redo_idx, not can_redo)
 		var redo_desc := registry.history.get_redo_description()
-		_edit_menu.set_item_text(redo_idx, "Redo" if redo_desc.is_empty() else "Redo: %s" % redo_desc)
+		var redo_text := "Redo" if redo_desc.is_empty() else "Redo: %s" % redo_desc
+		_edit_menu.set_item_text(redo_idx, redo_text)
+		_nm_set_disabled("Edit", 15, not can_redo)
+		_nm_set_text("Edit", 15, redo_text)
 	# Copy/Cut are enabled when a token is hovered; paste when clipboard is non-empty.
 	var has_hover: bool = _map_view != null and _map_view.get_hovered_token_id() != null
 	var copy_idx := _edit_menu.get_item_index(16)
@@ -348,10 +355,13 @@ func _refresh_history_menu() -> void:
 	var paste_idx := _edit_menu.get_item_index(18)
 	if copy_idx >= 0:
 		_edit_menu.set_item_disabled(copy_idx, not has_hover)
+		_nm_set_disabled("Edit", 16, not has_hover)
 	if cut_idx >= 0:
 		_edit_menu.set_item_disabled(cut_idx, not has_hover)
+		_nm_set_disabled("Edit", 17, not has_hover)
 	if paste_idx >= 0:
 		_edit_menu.set_item_disabled(paste_idx, _token_clipboard.is_empty())
+		_nm_set_disabled("Edit", 18, _token_clipboard.is_empty())
 
 
 func _network() -> NetworkManager:
@@ -744,6 +754,15 @@ func _build_ui() -> void:
 	session_menu.add_item("Share Player Link…", 30)
 	session_menu.id_pressed.connect(_on_session_menu_id)
 	menu_bar.add_child(session_menu)
+
+	# ── Native Win32 menu bar (Windows only) ────────────────────────────────
+	if OS.get_name() == "Windows":
+		var nm_script = load("res://scripts/ui/NativeWin32MenuBar.cs")
+		if nm_script:
+			_native_menu = nm_script.new()
+			add_child(_native_menu)
+			_build_native_menus()
+			_menu_bar.visible = false
 
 	# ── Content row: map spacer ─────────────────────────────────────────────
 	var content_row := HBoxContainer.new()
@@ -1447,6 +1466,8 @@ func _update_grid_submenu_checks() -> void:
 		return
 	for i in range(_grid_submenu.item_count):
 		_grid_submenu.set_item_checked(i, _grid_submenu.get_item_id(i) == _grid_type_selected)
+	if _native_menu:
+		_native_menu.call(&"SetRadioChecked", "GridType", 0, 2, _grid_type_selected)
 
 
 # ---------------------------------------------------------------------------
@@ -1840,6 +1861,7 @@ func _undock_freeze_panel() -> void:
 
 	if _view_menu != null:
 		_view_menu.set_item_checked(1, true)
+	_nm_set_checked("View", 25, true)
 
 
 func _dock_freeze_panel() -> void:
@@ -1874,6 +1896,7 @@ func _dock_freeze_panel() -> void:
 
 	if _view_menu != null:
 		_view_menu.set_item_checked(1, true)
+	_nm_set_checked("View", 25, true)
 
 
 # ---------------------------------------------------------------------------
@@ -1937,15 +1960,18 @@ func _on_view_menu_id(id: int) -> void:
 			if _palette != null:
 				_palette.visible = !_palette.visible
 				_view_menu.set_item_checked(0, _palette.visible)
+				_nm_set_checked("View", 20, _palette.visible)
 		25: # Toggle player freeze panel
 			if _freeze_panel != null:
 				_freeze_panel.visible = !_freeze_panel.visible
 				_view_menu.set_item_checked(1, _freeze_panel.visible)
+				_nm_set_checked("View", 25, _freeze_panel.visible)
 		21: # Toggle grid overlay
 			if _map_view:
 				var go: Node2D = _map_view.grid_overlay
 				go.visible = !go.visible
 				_view_menu.set_item_checked(2, go.visible)
+				_nm_set_checked("View", 21, go.visible)
 		22: # Reset DM view
 			if _map_view:
 				_map_view._reset_camera()
@@ -1957,6 +1983,7 @@ func _on_view_menu_id(id: int) -> void:
 			var idx := _view_menu.get_item_index(28)
 			var on := not _view_menu.is_item_checked(idx)
 			_view_menu.set_item_checked(idx, on)
+			_nm_set_checked("View", 28, on)
 			if _map_view:
 				_map_view.set_fog_overlay_enabled(on)
 			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
@@ -5846,3 +5873,110 @@ func _show_share_player_link() -> void:
 	add_child(_share_dialog)
 	_share_dialog.reset_size()
 	_share_dialog.popup_centered()
+
+
+# ---------------------------------------------------------------------------
+# Native Win32 menu bar (Windows only)
+# ---------------------------------------------------------------------------
+
+func _build_native_menus() -> void:
+	## Populate the NativeWin32MenuBar with the same structure as the Godot
+	## MenuBar / PopupMenu tree.  Called once from _build_ui() on Windows.
+	if _native_menu == null:
+		return
+	var nm := _native_menu
+
+	# File
+	nm.call(&"AddMenu", "File")
+	nm.call(&"AddItem", "File", "New Map from Image…", 0)
+	nm.call(&"AddItem", "File", "Open Map…", 1)
+	nm.call(&"AddItem", "File", "Browse Maps…", 7)
+	nm.call(&"AddSeparator", "File")
+	nm.call(&"AddItem", "File", "Save Map", 2)
+	nm.call(&"AddItem", "File", "Save Map As…", 3)
+	nm.call(&"AddSeparator", "File")
+	nm.call(&"AddItem", "File", "Save Game", 4)
+	nm.call(&"AddItem", "File", "Save Game As…", 5)
+	nm.call(&"AddItem", "File", "Load Game…", 6)
+	nm.call(&"AddItem", "File", "Browse Saves…", 8)
+	nm.call(&"AddSeparator", "File")
+	nm.call(&"AddItem", "File", "Quit", 9)
+
+	# Edit
+	nm.call(&"AddMenu", "Edit")
+	nm.call(&"AddItem", "Edit", "Undo", 14)
+	nm.call(&"AddItem", "Edit", "Redo", 15)
+	nm.call(&"AddSeparator", "Edit")
+	nm.call(&"AddItem", "Edit", "Copy Token", 16)
+	nm.call(&"AddItem", "Edit", "Cut Token", 17)
+	nm.call(&"AddItem", "Edit", "Paste Token", 18)
+	nm.call(&"AddSeparator", "Edit")
+	nm.call(&"AddItem", "Edit", "Calibrate Grid…", 10)
+	nm.call(&"AddItem", "Edit", "Set Scale Manually…", 11)
+	nm.call(&"AddItem", "Edit", "Set Grid Offset…", 12)
+	nm.call(&"AddSeparator", "Edit")
+	nm.call(&"AddItem", "Edit", "Player Profiles…", 13)
+	# Initial disabled state
+	nm.call(&"SetItemDisabled", "Edit", 14, true)
+	nm.call(&"SetItemDisabled", "Edit", 15, true)
+	nm.call(&"SetItemDisabled", "Edit", 16, true)
+	nm.call(&"SetItemDisabled", "Edit", 17, true)
+	nm.call(&"SetItemDisabled", "Edit", 18, true)
+
+	# View
+	nm.call(&"AddMenu", "View")
+	nm.call(&"AddCheckItem", "View", "Toolbar", 20, true)
+	nm.call(&"AddCheckItem", "View", "Player Freeze Panel", 25, true)
+	nm.call(&"AddCheckItem", "View", "Grid Overlay", 21, true)
+	nm.call(&"AddSeparator", "View")
+	nm.call(&"AddItem", "View", "Reset View", 22)
+	nm.call(&"AddSeparator", "View")
+	nm.call(&"AddItem", "View", "Sync Fog Now", 24)
+	nm.call(&"AddItem", "View", "Reset Fog…", 27)
+	nm.call(&"AddCheckItem", "View", "Fog Overlay Effect", 28, false)
+	nm.call(&"AddSeparator", "View")
+	nm.call(&"AddItem", "View", "Measurement Tools…", 26)
+	nm.call(&"AddSeparator", "View")
+
+	# Grid Type submenu
+	nm.call(&"AddMenu", "GridType")
+	nm.call(&"AddRadioCheckItem", "GridType", "□  Square", 0, true)
+	nm.call(&"AddRadioCheckItem", "GridType", "⬢  Hex Flat-top", 1, false)
+	nm.call(&"AddRadioCheckItem", "GridType", "⬣  Hex Pointy-top", 2, false)
+	nm.call(&"AddSubmenu", "View", "GridType", "Grid Type")
+
+	nm.call(&"AddSeparator", "View")
+	nm.call(&"AddItem", "View", "▶ Launch Player Window", 23)
+
+	# Session
+	nm.call(&"AddMenu", "Session")
+	nm.call(&"AddItem", "Session", "Share Player Link…", 30)
+
+	nm.call(&"Build")
+
+	# Route native menu signals to the existing handlers
+	nm.connect(&"MenuItemPressed", _on_native_menu_pressed)
+
+
+func _on_native_menu_pressed(menu_name: String, item_id: int) -> void:
+	match menu_name:
+		"File": _on_file_menu_id(item_id)
+		"Edit": _on_edit_menu_id(item_id)
+		"View": _on_view_menu_id(item_id)
+		"GridType": _on_grid_submenu_id(item_id)
+		"Session": _on_session_menu_id(item_id)
+
+
+func _nm_set_checked(menu: String, id: int, checked: bool) -> void:
+	if _native_menu:
+		_native_menu.call(&"SetItemChecked", menu, id, checked)
+
+
+func _nm_set_disabled(menu: String, id: int, disabled: bool) -> void:
+	if _native_menu:
+		_native_menu.call(&"SetItemDisabled", menu, id, disabled)
+
+
+func _nm_set_text(menu: String, id: int, text: String) -> void:
+	if _native_menu:
+		_native_menu.call(&"SetItemText", menu, id, text)
