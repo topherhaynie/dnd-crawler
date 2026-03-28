@@ -83,6 +83,7 @@ var _palette: PanelContainer = null ## Photoshop-style tool palette (ToolPalette
 var _view_menu: PopupMenu = null ## kept for checkmark management
 var _edit_menu: PopupMenu = null ## kept for undo/redo label updates
 var _grid_submenu: PopupMenu = null ## Grid Type submenu in View menu
+var _theme_submenu: PopupMenu = null ## UI Theme submenu in View menu
 var _grid_type_selected: int = MapData.GridType.SQUARE ## tracks current grid type
 var _palette_window: Window = null ## non-null when palette is undocked
 var _palette_floating: bool = false
@@ -213,6 +214,7 @@ var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which
 var _prev_player_positions: Dictionary = {} ## {player_id: Vector2} — previous frame positions for swept-path
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
+var _bg_chrome_layer: CanvasLayer = null ## background chrome behind MapView
 
 # ── Effect panel ─────────────────────────────────────────────────────────────
 var _effect_panel: PanelContainer = null
@@ -283,6 +285,9 @@ func _ready() -> void:
 		if _r != null and _r.history != null:
 			_r.history.clear())
 	_apply_ui_scale()
+	# Auto-open the save browser so the DM can quickly resume a session.
+	# Wait one frame so the node tree finishes setting up children first.
+	get_tree().process_frame.connect(_open_save_browser, CONNECT_ONE_SHOT)
 	print("DMWindow: ready")
 
 
@@ -605,6 +610,20 @@ func _process(delta: float) -> void:
 # ---------------------------------------------------------------------------
 
 func _build_ui() -> void:
+	# ── Background chrome layer (behind everything) ─────────────────────────
+	var _bg_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _bg_reg == null:
+		var _bg_boot := get_node_or_null("/root/ServiceBootstrap")
+		if _bg_boot != null and _bg_boot.get("registry") != null:
+			_bg_reg = _bg_boot.registry as ServiceRegistry
+	if _bg_reg != null and _bg_reg.ui_theme != null:
+		_bg_chrome_layer = CanvasLayer.new()
+		_bg_chrome_layer.name = "BGChromeLayer"
+		_bg_chrome_layer.layer = -1
+		add_child(_bg_chrome_layer)
+		var bg_rect: ColorRect = _bg_reg.ui_theme.create_background_chrome()
+		_bg_chrome_layer.add_child(bg_rect)
+
 	# ── MapView ─────────────────────────────────────────────────────────────
 	_map_view = MapViewScene.instantiate() as MapView
 	_map_view.name = "MapView"
@@ -760,6 +779,26 @@ func _build_ui() -> void:
 	_view_menu.add_child(_grid_submenu)
 	_view_menu.add_submenu_node_item("Grid Type", _grid_submenu)
 
+	# UI Theme submenu
+	_theme_submenu = PopupMenu.new()
+	_theme_submenu.name = "UITheme"
+	for preset_id: int in UIThemeData.get_all_presets():
+		_theme_submenu.add_radio_check_item(UIThemeData.get_display_name(preset_id), preset_id)
+	_theme_submenu.set_item_checked(0, true) # default checked = FLAT_DARK
+	_theme_submenu.id_pressed.connect(_on_theme_submenu_id)
+	_view_menu.add_child(_theme_submenu)
+	_view_menu.add_submenu_node_item("UI Theme", _theme_submenu)
+
+	# Sync theme submenu checkmarks to persisted theme
+	var _theme_reg2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _theme_reg2 == null:
+		var _bootstrap2 := get_node_or_null("/root/ServiceBootstrap")
+		if _bootstrap2 != null and _bootstrap2.get("registry") != null:
+			_theme_reg2 = _bootstrap2.registry as ServiceRegistry
+	if _theme_reg2 != null and _theme_reg2.ui_theme != null:
+		var current_preset: int = _theme_reg2.ui_theme.get_theme()
+		_sync_theme_submenu_checks(current_preset)
+
 	_view_menu.add_separator()
 	_view_menu.add_item("▶ Launch Player Window", 23)
 	_view_menu.id_pressed.connect(_on_view_menu_id)
@@ -796,7 +835,11 @@ func _build_ui() -> void:
 	_palette.anchor_top = 0.0
 	_palette.anchor_bottom = 1.0
 	_palette.grow_horizontal = Control.GROW_DIRECTION_END
-	_palette.setup(_get_ui_scale_mgr())
+	var _tm_ref: UIThemeManager = null
+	var _sr: ServiceRegistry = get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _sr != null:
+		_tm_ref = _sr.ui_theme
+	_palette.setup(_get_ui_scale_mgr(), _tm_ref)
 	_ui_layer.add_child(_palette)
 	_apply_palette_size()
 
@@ -831,6 +874,38 @@ func _build_ui() -> void:
 	_build_freeze_panel()
 	_build_effect_panel()
 	_build_passage_panel()
+
+	# ── Apply chrome theme backgrounds to all panels ────────────────────────
+	var _theme_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _theme_reg == null:
+		var _bootstrap := get_node_or_null("/root/ServiceBootstrap")
+		if _bootstrap != null and _bootstrap.get("registry") != null:
+			_theme_reg = _bootstrap.registry as ServiceRegistry
+	if _theme_reg != null and _theme_reg.ui_theme != null:
+		var tm: UIThemeManager = _theme_reg.ui_theme
+		if _palette is PanelContainer:
+			tm.apply_chrome(_palette as PanelContainer)
+		if _freeze_panel is PanelContainer:
+			tm.apply_chrome(_freeze_panel as PanelContainer)
+		if _effect_panel is PanelContainer:
+			tm.apply_chrome(_effect_panel as PanelContainer)
+		if _passage_panel is PanelContainer:
+			tm.apply_chrome(_passage_panel as PanelContainer)
+		# Signal subscription: IUIThemeService extends Node; signals live on the
+		# Node instance.  RefCounted manager cannot re-emit — approved exception.
+		if tm.service != null:
+			tm.service.theme_changed.connect(_on_ui_theme_changed)
+		# Theme all existing buttons/panels in the UI tree in one pass
+		tm.theme_control_tree(_ui_root, _ui_scale())
+		# Overlay panels live on _ui_layer (not _ui_root) — theme them too
+		if _palette != null:
+			tm.theme_control_tree(_palette, _ui_scale())
+		if _freeze_panel != null:
+			tm.theme_control_tree(_freeze_panel, _ui_scale())
+		if _effect_panel != null:
+			tm.theme_control_tree(_effect_panel, _ui_scale())
+		if _passage_panel != null:
+			tm.theme_control_tree(_passage_panel, _ui_scale())
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -1059,6 +1134,9 @@ func _build_ui() -> void:
 	_map_view.set_viewport_indicator(Rect2())
 	_map_view.viewport_indicator_moved.connect(_on_viewport_indicator_moved)
 	_map_view.viewport_indicator_resized.connect(_on_viewport_indicator_resized)
+
+	# ── Apply dialog theming ────────────────────────────────────────────────
+	_apply_dialog_themes()
 
 
 # ---------------------------------------------------------------------------
@@ -1563,9 +1641,13 @@ func _undock_palette() -> void:
 	_palette.set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	_palette_window.close_requested.connect(_dock_palette)
+	# Theme floating window chrome + buttons
+	var _uw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _uw_reg != null and _uw_reg.ui_theme != null:
+		_uw_reg.ui_theme.theme_control_tree(_palette_window, _ui_scale())
 	var _pm := _get_ui_scale_mgr()
 	if _pm != null:
-		_pm.popup_fitted(_palette_window, 80.0, 500.0)
+		_pm.popup_fitted(_palette_window, 48.0, 500.0)
 	else:
 		_palette_window.popup_centered()
 
@@ -1727,7 +1809,7 @@ func _refresh_freeze_panel() -> void:
 		chk.button_pressed = not locked # pressed = can move (green)
 		chk.focus_mode = Control.FOCUS_NONE
 		var icon_px := roundi(32.0 * _ui_scale())
-		chk.custom_minimum_size = Vector2(icon_px * 2.4, icon_px * 1.3)
+		chk.custom_minimum_size = Vector2(0, icon_px * 1.3)
 		chk.tooltip_text = "Toggle: green = can move, red = paused"
 		# Scale the toggle icons to match the desired display size once in scene tree.
 		chk.ready.connect(func() -> void:
@@ -1761,6 +1843,10 @@ func _refresh_freeze_panel() -> void:
 		var lpid := p.id
 		light_btn.toggled.connect(func(off: bool) -> void: _on_player_light_toggled(lpid, off))
 		status_box.add_child(light_btn)
+		# Theme dynamically-created freeze row controls
+		var _fr_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _fr_reg != null and _fr_reg.ui_theme != null:
+			_fr_reg.ui_theme.theme_control_tree(row, _ui_scale())
 
 		_freeze_rows.add_child(row)
 		_freeze_row_buttons[p.id] = chk
@@ -1912,6 +1998,10 @@ func _undock_freeze_panel() -> void:
 	_freeze_panel.offset_bottom = 0.0
 
 	_freeze_panel_window.close_requested.connect(_dock_freeze_panel)
+	# Theme floating window chrome + buttons
+	var _fw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _fw_reg != null and _fw_reg.ui_theme != null:
+		_fw_reg.ui_theme.theme_control_tree(_freeze_panel_window, _ui_scale())
 	var _fm := _get_ui_scale_mgr()
 	if _fm != null:
 		_fm.popup_fitted(_freeze_panel_window, 220.0, 400.0)
@@ -1964,7 +2054,9 @@ func _dock_freeze_panel() -> void:
 
 func _build_effect_panel() -> void:
 	_effect_panel = EffectPanelScript.new() as PanelContainer
-	_effect_panel.setup(_get_ui_scale_mgr())
+	var _ep_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var _ep_tm: UIThemeManager = _ep_reg.ui_theme if _ep_reg != null else null
+	_effect_panel.setup(_get_ui_scale_mgr(), _ep_tm)
 	_effect_panel.visible = false
 
 	# Anchor to right edge, offset to the left of the freeze panel.
@@ -2070,9 +2162,13 @@ func _undock_effect_panel() -> void:
 	_effect_panel.offset_bottom = 0.0
 
 	_effect_panel_window.close_requested.connect(_dock_effect_panel)
+	# Theme floating window chrome + buttons
+	var _ew_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _ew_reg != null and _ew_reg.ui_theme != null:
+		_ew_reg.ui_theme.theme_control_tree(_effect_panel_window, _ui_scale())
 	var _fm := _get_ui_scale_mgr()
 	if _fm != null:
-		_fm.popup_fitted(_effect_panel_window, 200.0, 500.0)
+		_fm.popup_fitted(_effect_panel_window, 200.0, 550.0)
 	else:
 		_effect_panel_window.popup_centered()
 
@@ -2202,6 +2298,70 @@ func _on_view_menu_id(id: int) -> void:
 			_open_measure_panel()
 		23: # Launch player display process
 			_launch_player_process()
+
+
+# ---------------------------------------------------------------------------
+# UI Theme switching
+# ---------------------------------------------------------------------------
+
+func _apply_dialog_themes() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.ui_theme == null:
+		return
+	var tm: UIThemeManager = reg.ui_theme
+	var s: float = _ui_scale()
+	var dialogs: Array[Window] = []
+	if _cal_dialog != null:
+		dialogs.append(_cal_dialog)
+	if _manual_scale_dialog != null:
+		dialogs.append(_manual_scale_dialog)
+	if _offset_dialog != null:
+		dialogs.append(_offset_dialog)
+	if _token_editor_dialog != null:
+		dialogs.append(_token_editor_dialog)
+	if _profiles_dialog != null:
+		dialogs.append(_profiles_dialog)
+	if _share_dialog != null:
+		dialogs.append(_share_dialog)
+	if _map_browser != null and _map_browser is Window:
+		dialogs.append(_map_browser as Window)
+	if _save_browser != null and _save_browser is Window:
+		dialogs.append(_save_browser as Window)
+	for dlg: Window in dialogs:
+		# Theme the window chrome + recursively style every child control
+		tm.theme_control_tree(dlg, s)
+
+
+func _on_theme_submenu_id(id: int) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.ui_theme != null:
+		registry.ui_theme.set_theme(id)
+
+
+func _on_ui_theme_changed(preset: int) -> void:
+	_sync_theme_submenu_checks(preset)
+	_apply_dialog_themes()
+	# Refresh panel button/label colours
+	var tp: ToolPalette = _palette as ToolPalette
+	if tp != null:
+		tp.refresh_theme()
+	var ep: EffectPanel = _effect_panel as EffectPanel
+	if ep != null:
+		ep.refresh_theme()
+	# Refresh freeze panel label tint
+	var _tc_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _tc_reg != null and _tc_reg.ui_theme != null:
+		var tint: Color = _tc_reg.ui_theme.get_label_tint()
+		if _freeze_panel_title != null:
+			_freeze_panel_title.add_theme_color_override("font_color", tint)
+
+
+func _sync_theme_submenu_checks(preset: int) -> void:
+	if _theme_submenu == null:
+		return
+	for i: int in _theme_submenu.item_count:
+		var item_id: int = _theme_submenu.get_item_id(i)
+		_theme_submenu.set_item_checked(i, item_id == preset)
 
 
 # ---------------------------------------------------------------------------
@@ -4046,6 +4206,11 @@ func _build_token_editor_dialog() -> void:
 	_puzzle_notes_add_btn.pressed.connect(_on_puzzle_note_add_pressed)
 	vbox.add_child(_puzzle_notes_add_btn)
 
+	# Theme the token editor dialog
+	var _te_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _te_reg != null and _te_reg.ui_theme != null:
+		_te_reg.ui_theme.theme_control_tree(_token_editor_dialog, _ui_scale())
+
 
 func _apply_token_context_menu_theme() -> void:
 	_apply_token_context_menu_theme_to(_token_context_menu)
@@ -4131,6 +4296,10 @@ func _add_puzzle_note_row(text: String, revealed: bool) -> void:
 	var mgr: UIScaleManager = _get_ui_scale_mgr()
 	if mgr != null:
 		mgr.scale_control_fonts(row)
+	# Theme dynamically-added puzzle note row controls
+	var _pnr_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _pnr_reg != null and _pnr_reg.ui_theme != null:
+		_pnr_reg.ui_theme.theme_control_tree(row, _ui_scale())
 
 
 func _remove_puzzle_note_row(row: HBoxContainer) -> void:
@@ -4655,6 +4824,10 @@ func _open_measure_panel() -> void:
 		if _measure_panel != null: _measure_panel.hide())
 	add_child(_measure_panel)
 	_build_measure_panel_contents()
+	# Theme the measurement panel window + all its child controls
+	var _mp_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _mp_reg != null and _mp_reg.ui_theme != null:
+		_mp_reg.ui_theme.theme_control_tree(_measure_panel, _ui_scale())
 	var mgr := _get_ui_scale_mgr()
 	if mgr != null:
 		mgr.popup_fitted(_measure_panel, 260.0, 420.0)
@@ -5185,6 +5358,9 @@ func _open_map_browser() -> void:
 		_map_browser.browse_mode = "map"
 		add_child(_map_browser)
 		_map_browser.bundle_selected.connect(_on_map_bundle_selected)
+		var _mb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _mb_reg != null and _mb_reg.ui_theme != null:
+			_mb_reg.ui_theme.theme_control_tree(_map_browser, _ui_scale())
 	_map_browser.populate()
 	_map_browser.popup_centered_ratio(0.85)
 
@@ -5198,6 +5374,9 @@ func _open_save_browser() -> void:
 		_save_browser.browse_mode = "save"
 		add_child(_save_browser)
 		_save_browser.bundle_selected.connect(_on_load_game_path_selected)
+		var _sb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _sb_reg != null and _sb_reg.ui_theme != null:
+			_sb_reg.ui_theme.theme_control_tree(_save_browser, _ui_scale())
 	_save_browser.populate()
 	_save_browser.popup_centered_ratio(0.85)
 
@@ -6306,6 +6485,10 @@ func _show_share_player_link() -> void:
 	if mgr != null:
 		mgr.scale_button(_share_dialog.get_ok_button())
 	add_child(_share_dialog)
+	# Theme window chrome + all child buttons
+	var _sd_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _sd_reg != null and _sd_reg.ui_theme != null:
+		_sd_reg.ui_theme.theme_control_tree(_share_dialog, _ui_scale())
 	_share_dialog.reset_size()
 	_share_dialog.popup_centered()
 

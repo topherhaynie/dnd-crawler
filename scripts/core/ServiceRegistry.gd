@@ -25,6 +25,7 @@ var history: HistoryManager = null
 var measurement: MeasurementManager = null
 var effect: EffectManager = null
 var ui_scale: UIScaleManager = null
+var ui_theme: UIThemeManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.

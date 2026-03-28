@@ -34,6 +34,7 @@ const _CARD_PAD: float = 8.0
 
 ## Style
 var _normal_style: StyleBoxFlat = null
+var _hover_style: StyleBoxFlat = null
 var _selected_style: StyleBoxFlat = null
 
 
@@ -113,17 +114,32 @@ func _build_ui() -> void:
 	_open_btn.pressed.connect(_on_open_pressed)
 	btn_row.add_child(_open_btn)
 
+	# ── Theme self (window chrome + all child buttons) ───────────────────
+	var _bt_reg := _get_registry()
+	if _bt_reg != null and _bt_reg.ui_theme != null:
+		_bt_reg.ui_theme.theme_control_tree(self, scale)
+
 	# ── Card styles ──────────────────────────────────────────────────────
+	var _bb_accent: Dictionary = {}
+	if _bt_reg != null and _bt_reg.ui_theme != null:
+		_bb_accent = _bt_reg.ui_theme.get_accent_palette()
 	_normal_style = StyleBoxFlat.new()
-	_normal_style.bg_color = Color(0.18, 0.18, 0.20, 1.0)
+	_normal_style.bg_color = _bb_accent.get("normal_bg", Color(0.18, 0.18, 0.20, 1.0)) as Color
 	_normal_style.set_corner_radius_all(roundi(6.0 * scale))
 	_normal_style.set_content_margin_all(roundi(6.0 * scale))
 
+	_hover_style = StyleBoxFlat.new()
+	_hover_style.bg_color = (_bb_accent.get("normal_bg", Color(0.18, 0.18, 0.20, 1.0)) as Color).lightened(0.15)
+	_hover_style.set_corner_radius_all(roundi(6.0 * scale))
+	_hover_style.set_content_margin_all(roundi(6.0 * scale))
+	_hover_style.border_color = _bb_accent.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	_hover_style.set_border_width_all(1)
+
 	_selected_style = StyleBoxFlat.new()
-	_selected_style.bg_color = Color(0.25, 0.35, 0.55, 1.0)
+	_selected_style.bg_color = _bb_accent.get("selected_bg", Color(0.25, 0.35, 0.55, 1.0)) as Color
 	_selected_style.set_corner_radius_all(roundi(6.0 * scale))
 	_selected_style.set_content_margin_all(roundi(6.0 * scale))
-	_selected_style.border_color = Color(0.4, 0.6, 1.0)
+	_selected_style.border_color = _bb_accent.get("selected_border", Color(0.4, 0.6, 1.0)) as Color
 	_selected_style.set_border_width_all(roundi(2.0 * scale))
 
 	# Recalculate columns on resize
@@ -219,9 +235,12 @@ func _build_card(index: int, data: Dictionary, card_w: float, thumb_h: float, sc
 	card.add_theme_stylebox_override("panel", _normal_style)
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.set_meta("card_index", index)
+	card.set_meta(UIThemeManager.SKIP_AUTO_THEME, true)
 
-	# Click handling
+	# Click / hover handling
 	card.gui_input.connect(_on_card_gui_input.bind(index, card))
+	card.mouse_entered.connect(_on_card_hover.bind(card, true))
+	card.mouse_exited.connect(_on_card_hover.bind(card, false))
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", roundi(4.0 * scale))
@@ -319,6 +338,12 @@ func _on_card_gui_input(event: InputEvent, index: int, card: PanelContainer) -> 
 				_on_open_pressed()
 			else:
 				_select_card(index, card)
+
+
+func _on_card_hover(card: PanelContainer, entered: bool) -> void:
+	if card.has_meta("card_index") and int(card.get_meta("card_index")) == _selected_index:
+		return
+	card.add_theme_stylebox_override("panel", _hover_style if entered else _normal_style)
 
 
 func _select_card(index: int, card: PanelContainer) -> void:

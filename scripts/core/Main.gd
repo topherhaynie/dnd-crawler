@@ -36,11 +36,12 @@ func _network_manager() -> INetworkService:
 
 
 func _ready() -> void:
-	_size_window()
 	if _is_player_mode():
 		_start_player_mode()
 	else:
 		_start_dm_mode()
+	# Defer maximize so the root viewport isn't mid-layout while children are added.
+	call_deferred("_size_window")
 
 
 # ---------------------------------------------------------------------------
@@ -60,18 +61,10 @@ func _is_player_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 func _size_window() -> void:
-	var screen_size := DisplayServer.screen_get_size()
-	var win_size := Vector2i(
-		int(screen_size.x * 0.85),
-		int(screen_size.y * 0.85))
-	DisplayServer.window_set_size(win_size)
-	var center_pos := Vector2i(
-		int((screen_size.x - win_size.x) * 0.5),
-		int((screen_size.y - win_size.y) * 0.5))
-	# Offset the player window so both are visible side-by-side on start.
-	if _is_player_mode():
-		center_pos += Vector2i(80, 80)
-	DisplayServer.window_set_position(center_pos)
+	# Maximized fills the available screen area while keeping the native macOS
+	# menu bar and Dock visible.  True native fullscreen (green-button Space)
+	# isn't exposed by Godot's DisplayServer — users can trigger it manually.
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
 
 
 # ---------------------------------------------------------------------------

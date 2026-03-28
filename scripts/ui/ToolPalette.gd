@@ -46,6 +46,7 @@ var _flyout_vbox: VBoxContainer = null
 var _tool_group: ButtonGroup = null
 var _active_tool_key: String = "select"
 var _ui_scale_mgr: UIScaleManager = null ## set by DMWindow during setup
+var _ui_theme_mgr: UIThemeManager = null ## set by DMWindow during setup
 var _flyout_anchor_node: Control = null ## the button the flyout should align to
 
 # Stacked button state
@@ -79,9 +80,45 @@ const _SMALL_FONT: float = 11.0
 const _HEADER_FONT: float = 8.0
 
 
-func setup(ui_scale_mgr: UIScaleManager = null) -> void:
+func setup(ui_scale_mgr: UIScaleManager = null, ui_theme_mgr: UIThemeManager = null) -> void:
 	_ui_scale_mgr = ui_scale_mgr
+	_ui_theme_mgr = ui_theme_mgr
 	_build()
+
+
+func refresh_theme() -> void:
+	## Update all button/panel styles when the active theme changes.
+	if _ui_theme_mgr == null:
+		return
+	var palette: Dictionary = _ui_theme_mgr.get_accent_palette()
+	# Panel background
+	var panel_sb: Variant = get_theme_stylebox("panel")
+	if panel_sb is StyleBoxFlat:
+		(panel_sb as StyleBoxFlat).bg_color = palette.get("panel_bg", Color(0.18, 0.18, 0.18)) as Color
+	# Rebuild shared button styles from the manager
+	var s := _s()
+	var new_styles: Dictionary = _ui_theme_mgr.create_button_styles(s)
+	if _compact_btn_styles.size() >= 4:
+		_compact_btn_styles[0] = new_styles["normal"]
+		_compact_btn_styles[1] = new_styles["hover"]
+		_compact_btn_styles[2] = new_styles["disabled"]
+		_compact_btn_styles[3] = new_styles["pressed"]
+	# Update the shared pressed indicator
+	if _pressed_stylebox != null:
+		var new_pressed: StyleBoxFlat = _ui_theme_mgr.create_pressed_style(s)
+		_pressed_stylebox.bg_color = new_pressed.bg_color
+		_pressed_stylebox.border_color = new_pressed.border_color
+	# Re-apply styles to all buttons in the palette
+	_ui_theme_mgr.theme_control_tree(self, s)
+	# Re-apply pressed stylebox to toggle buttons (theme_control_tree sets
+	# the standard pressed style, but toggles need the shared indicator)
+	for btn: Variant in [select_btn, pan_btn, fog_btn, _wall_stack_btn, token_btn, _effect_stack_btn]:
+		if btn is Button:
+			(btn as Button).add_theme_stylebox_override("pressed", _pressed_stylebox)
+	# Section header label tints
+	var hdr_tint: Color = _ui_theme_mgr.get_header_tint()
+	for child: Node in get_children():
+		_refresh_labels_recursive(child, hdr_tint)
 
 
 func _s() -> float:
@@ -99,7 +136,9 @@ func _build() -> void:
 
 	# Override PanelContainer's own panel stylebox to remove built-in padding
 	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+	var _palette_accent: Dictionary = UIThemeData.get_accent_palette(
+		_ui_theme_mgr.get_theme() if _ui_theme_mgr != null else 0)
+	panel_style.bg_color = _palette_accent.get("panel_bg", Color(0.18, 0.18, 0.18, 1.0)) as Color
 	panel_style.set_content_margin_all(0)
 	add_theme_stylebox_override("panel", panel_style)
 
@@ -107,31 +146,44 @@ func _build() -> void:
 	var palette_w := roundi(34.0 * s)
 	custom_minimum_size = Vector2(palette_w, 0)
 
-	# Compact button base style (overrides Godot's padded default theme)
-	var _compact_normal := StyleBoxFlat.new()
-	_compact_normal.bg_color = Color(0.22, 0.22, 0.22, 1.0)
-	_compact_normal.set_content_margin_all(roundi(1.0 * s))
-	_compact_normal.set_corner_radius_all(roundi(2.0 * s))
+	# Button StyleBoxes from theme manager (or fallback to defaults)
+	if _ui_theme_mgr != null:
+		var _theme_styles: Dictionary = _ui_theme_mgr.create_button_styles(s)
+		var _compact_normal_sb: StyleBoxFlat = _theme_styles["normal"] as StyleBoxFlat
+		var _compact_hover_sb: StyleBoxFlat = _theme_styles["hover"] as StyleBoxFlat
+		var _compact_disabled_sb: StyleBoxFlat = _theme_styles["disabled"] as StyleBoxFlat
+		var _compact_pressed_sb: StyleBoxFlat = _theme_styles["pressed"] as StyleBoxFlat
+		_compact_btn_styles = [_compact_normal_sb, _compact_hover_sb, _compact_disabled_sb, _compact_pressed_sb]
+		_pressed_stylebox = _ui_theme_mgr.create_pressed_style(s)
+	else:
+		var _compact_normal := StyleBoxFlat.new()
+		_compact_normal.bg_color = Color(0.22, 0.22, 0.22, 1.0)
+		_compact_normal.set_content_margin_all(roundi(4.0 * s))
+		_compact_normal.set_corner_radius_all(roundi(6.0 * s))
 
-	var _compact_hover := StyleBoxFlat.new()
-	_compact_hover.bg_color = Color(0.28, 0.28, 0.28, 1.0)
-	_compact_hover.set_content_margin_all(roundi(1.0 * s))
-	_compact_hover.set_corner_radius_all(roundi(2.0 * s))
+		var _compact_hover := StyleBoxFlat.new()
+		_compact_hover.bg_color = Color(0.28, 0.28, 0.28, 1.0)
+		_compact_hover.set_content_margin_all(roundi(4.0 * s))
+		_compact_hover.set_corner_radius_all(roundi(6.0 * s))
 
-	var _compact_disabled := StyleBoxFlat.new()
-	_compact_disabled.bg_color = Color(0.18, 0.18, 0.18, 1.0)
-	_compact_disabled.set_content_margin_all(roundi(1.0 * s))
-	_compact_disabled.set_corner_radius_all(roundi(2.0 * s))
+		var _compact_disabled := StyleBoxFlat.new()
+		_compact_disabled.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		_compact_disabled.set_content_margin_all(roundi(4.0 * s))
+		_compact_disabled.set_corner_radius_all(roundi(6.0 * s))
 
-	_compact_btn_styles = [_compact_normal, _compact_hover, _compact_disabled]
+		var _compact_pressed := StyleBoxFlat.new()
+		_compact_pressed.bg_color = Color(0.3, 0.55, 0.9, 0.35)
+		_compact_pressed.set_content_margin_all(roundi(4.0 * s))
+		_compact_pressed.set_corner_radius_all(roundi(6.0 * s))
 
-	# Pressed highlight style
-	_pressed_stylebox = StyleBoxFlat.new()
-	_pressed_stylebox.bg_color = Color(0.3, 0.55, 0.9, 0.35)
-	_pressed_stylebox.border_color = Color(0.4, 0.65, 1.0, 0.7)
-	_pressed_stylebox.border_width_left = roundi(2.0 * s)
-	_pressed_stylebox.set_corner_radius_all(roundi(2.0 * s))
-	_pressed_stylebox.set_content_margin_all(roundi(1.0 * s))
+		_compact_btn_styles = [_compact_normal, _compact_hover, _compact_disabled, _compact_pressed]
+
+		_pressed_stylebox = StyleBoxFlat.new()
+		_pressed_stylebox.bg_color = Color(0.3, 0.55, 0.9, 0.35)
+		_pressed_stylebox.border_color = Color(0.4, 0.65, 1.0, 0.7)
+		_pressed_stylebox.border_width_left = roundi(2.0 * s)
+		_pressed_stylebox.set_corner_radius_all(roundi(6.0 * s))
+		_pressed_stylebox.set_content_margin_all(roundi(4.0 * s))
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", roundi(1.0 * s))
@@ -245,8 +297,10 @@ func _build() -> void:
 	fog_visible_check.focus_mode = Control.FOCUS_NONE
 	fog_visible_check.tooltip_text = "Show/hide DM fog overlay"
 	fog_visible_check.custom_minimum_size = Vector2(0, roundi(_BTN_SIZE * s))
-	fog_visible_check.add_theme_font_size_override("font_size", roundi(8.0 * s))
+	fog_visible_check.add_theme_font_size_override("font_size", roundi(_SMALL_FONT * s))
 	fog_visible_check.toggled.connect(func(enabled: bool) -> void: dm_fog_visible_toggled.emit(enabled))
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.apply_check_style(fog_visible_check, s)
 	palette_vbox.add_child(fog_visible_check)
 
 	var flashlights_check := CheckBox.new()
@@ -255,8 +309,10 @@ func _build() -> void:
 	flashlights_check.focus_mode = Control.FOCUS_NONE
 	flashlights_check.tooltip_text = "Flashlights only — disable LOS history, show only live vision cones"
 	flashlights_check.custom_minimum_size = Vector2(0, roundi(_BTN_SIZE * s))
-	flashlights_check.add_theme_font_size_override("font_size", roundi(8.0 * s))
+	flashlights_check.add_theme_font_size_override("font_size", roundi(_SMALL_FONT * s))
 	flashlights_check.toggled.connect(func(on: bool) -> void: flashlights_only_toggled.emit(on))
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.apply_check_style(flashlights_check, s)
 	palette_vbox.add_child(flashlights_check)
 
 	var fog_reset_btn := _make_action_btn("↺", "Reset fog to fully hidden (covers entire map)")
@@ -425,7 +481,8 @@ func _build_fog_context() -> void:
 	var mode_label := Label.new()
 	mode_label.text = "Mode"
 	mode_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	mode_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	var _lbl_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
+	mode_label.add_theme_color_override("font_color", _lbl_tint)
 	_fog_context.add_child(mode_label)
 
 	fog_tool_option = OptionButton.new()
@@ -443,7 +500,8 @@ func _build_fog_context() -> void:
 	var brush_label := Label.new()
 	brush_label.text = "Brush"
 	brush_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	brush_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	var _brush_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
+	brush_label.add_theme_color_override("font_color", _brush_tint)
 	_fog_context.add_child(brush_label)
 
 	fog_brush_spin = SpinBox.new()
@@ -466,7 +524,8 @@ func _build_spawn_context() -> void:
 	var profile_label := Label.new()
 	profile_label.text = "Profile"
 	profile_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	profile_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	var _prof_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
+	profile_label.add_theme_color_override("font_color", _prof_tint)
 	_spawn_context.add_child(profile_label)
 
 	spawn_profile_option = OptionButton.new()
@@ -484,6 +543,7 @@ func _build_spawn_context() -> void:
 	spawn_auto_assign_btn.custom_minimum_size = Vector2(roundi(120.0 * s), roundi(26.0 * s))
 	spawn_auto_assign_btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
 	spawn_auto_assign_btn.pressed.connect(func() -> void: spawn_auto_assign_requested.emit())
+	_apply_compact_style(spawn_auto_assign_btn)
 	_spawn_context.add_child(spawn_auto_assign_btn)
 
 
@@ -663,10 +723,13 @@ func is_effect_burst_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 func _apply_compact_style(btn: Button) -> void:
-	if _compact_btn_styles.size() >= 3:
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.apply_button_style(btn, _s())
+	elif _compact_btn_styles.size() >= 4:
 		btn.add_theme_stylebox_override("normal", _compact_btn_styles[0])
 		btn.add_theme_stylebox_override("hover", _compact_btn_styles[1])
 		btn.add_theme_stylebox_override("disabled", _compact_btn_styles[2])
+		btn.add_theme_stylebox_override("pressed", _compact_btn_styles[3])
 		btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 
@@ -719,6 +782,16 @@ func _add_section_header(parent: Control, text: String) -> void:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	lbl.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55))
+	var header_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.55, 0.55, 0.55)
+	lbl.add_theme_color_override("font_color", header_tint)
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	parent.add_child(lbl)
+
+
+func _refresh_labels_recursive(node: Node, tint: Color) -> void:
+	if node is Label:
+		var l: Label = node as Label
+		if l.has_theme_color_override("font_color"):
+			l.add_theme_color_override("font_color", tint)
+	for child: Node in node.get_children():
+		_refresh_labels_recursive(child, tint)

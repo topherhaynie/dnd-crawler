@@ -38,11 +38,34 @@ var _size_label: Label = null
 var _undock_btn: Button = null
 var _title_label: Label = null
 var _ui_scale_mgr: UIScaleManager = null
+var _ui_theme_mgr: UIThemeManager = null
 
 
-func setup(mgr: UIScaleManager) -> void:
+func setup(mgr: UIScaleManager, theme_mgr: UIThemeManager = null) -> void:
 	_ui_scale_mgr = mgr
+	_ui_theme_mgr = theme_mgr
 	_build()
+
+
+func refresh_theme() -> void:
+	## Update all button/panel/header styles when the active theme changes.
+	if _ui_theme_mgr == null:
+		return
+	var palette: Dictionary = _ui_theme_mgr.get_accent_palette()
+	var panel_bg: Color = palette.get("panel_bg", Color(0.15, 0.15, 0.15, 0.95)) as Color
+	var panel_border: Color = palette.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	var hdr_tint: Color = _ui_theme_mgr.get_header_tint()
+	# Panel background
+	var bg_sb: Variant = get_theme_stylebox("panel")
+	if bg_sb is StyleBoxFlat:
+		(bg_sb as StyleBoxFlat).bg_color = panel_bg
+		(bg_sb as StyleBoxFlat).border_color = panel_border
+	# Re-theme all child controls via the manager's tree walk
+	_ui_theme_mgr.theme_control_tree(self, _s())
+	# Header label tints
+	for child: Node in _vbox.get_children():
+		if child is Label and (child as Label).text in ["SHAPE", "PALETTE", "SIZE"]:
+			(child as Label).add_theme_color_override("font_color", hdr_tint)
 
 
 func _s() -> float:
@@ -56,10 +79,12 @@ func _build() -> void:
 	name = "EffectPanel"
 
 	# Dark background
+	var _ep_accent: Dictionary = UIThemeData.get_accent_palette(
+		_ui_theme_mgr.get_theme() if _ui_theme_mgr != null else 0)
 	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.15, 0.15, 0.15, 0.95)
+	bg.bg_color = _ep_accent.get("panel_bg", Color(0.15, 0.15, 0.15, 0.95)) as Color
 	bg.border_width_left = 1
-	bg.border_color = Color(0.3, 0.3, 0.3)
+	bg.border_color = _ep_accent.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
 	add_theme_stylebox_override("panel", bg)
 
 	var margin := MarginContainer.new()
@@ -82,6 +107,8 @@ func _build() -> void:
 	_undock_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * s))
 	_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * s))
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.apply_button_style(_undock_btn, s)
 	_vbox.add_child(_undock_btn)
 
 	_vbox.add_child(HSeparator.new())
@@ -108,9 +135,8 @@ func _build() -> void:
 		btn.custom_minimum_size = Vector2(0, roundi(26.0 * s))
 		btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		var pressed_style := StyleBoxFlat.new()
-		pressed_style.bg_color = Color(0.3, 0.5, 0.8, 0.6)
-		btn.add_theme_stylebox_override("pressed", pressed_style)
+		if _ui_theme_mgr != null:
+			_ui_theme_mgr.apply_button_style(btn, s)
 		var type_idx: int = idx
 		btn.pressed.connect(func() -> void: _on_type_pressed(type_idx))
 		_vbox.add_child(btn)
@@ -124,7 +150,8 @@ func _build() -> void:
 	shape_header.text = "SHAPE"
 	shape_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	shape_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
-	shape_header.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	var _hdr_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
+	shape_header.add_theme_color_override("font_color", _hdr_tint)
 	_vbox.add_child(shape_header)
 
 	_shape_group = ButtonGroup.new()
@@ -141,9 +168,8 @@ func _build() -> void:
 		sbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sbtn.custom_minimum_size = Vector2(0, roundi(24.0 * s))
 		sbtn.add_theme_font_size_override("font_size", roundi(11.0 * s))
-		var pressed_style := StyleBoxFlat.new()
-		pressed_style.bg_color = Color(0.3, 0.5, 0.8, 0.6)
-		sbtn.add_theme_stylebox_override("pressed", pressed_style)
+		if _ui_theme_mgr != null:
+			_ui_theme_mgr.apply_button_style(sbtn, s)
 		var shape_idx: int = sidx
 		sbtn.pressed.connect(func() -> void: _on_shape_pressed(shape_idx))
 		_shape_container.add_child(sbtn)
@@ -159,7 +185,8 @@ func _build() -> void:
 	_palette_header.text = "PALETTE"
 	_palette_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_palette_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
-	_palette_header.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	var _pal_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
+	_palette_header.add_theme_color_override("font_color", _pal_tint)
 	_vbox.add_child(_palette_header)
 
 	_palette_group = ButtonGroup.new()
@@ -184,6 +211,7 @@ func _build() -> void:
 		pbtn.focus_mode = Control.FOCUS_NONE
 		pbtn.custom_minimum_size = Vector2(roundi(28.0 * s), roundi(24.0 * s))
 		pbtn.add_theme_font_size_override("font_size", roundi(10.0 * s))
+		pbtn.set_meta(UIThemeManager.SKIP_AUTO_THEME, true)
 		var p_normal := StyleBoxFlat.new()
 		p_normal.bg_color = palette_colors[pidx]
 		p_normal.corner_radius_top_left = 3
@@ -225,7 +253,8 @@ func _build() -> void:
 	size_header.text = "SIZE"
 	size_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	size_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
-	size_header.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	var _sz_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
+	size_header.add_theme_color_override("font_color", _sz_tint)
 	_vbox.add_child(size_header)
 
 	_size_slider = HSlider.new()

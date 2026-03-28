@@ -582,6 +582,11 @@ func _build_puzzle_notes_panel() -> void:
 	grip.gui_input.connect(_on_notes_resize_gui_input)
 	outer.add_child(grip)
 
+	# Theme all buttons/panels in the notes panel tree.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.ui_theme != null:
+		reg.ui_theme.theme_control_tree(_notes_panel, 1.0)
+
 
 func _handle_puzzle_notes_state(notes: Array) -> void:
 	if _notes_panel == null or _notes_vbox == null:
