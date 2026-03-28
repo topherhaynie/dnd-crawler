@@ -11,14 +11,16 @@ class_name EffectPanel
 
 signal effect_type_selected(effect_type: int)
 signal shape_changed(shape: int)
+signal palette_changed(palette: int)
 signal burst_mode_changed(enabled: bool)
 signal size_changed(size_px: float)
 
 var _selected_effect_type: int = 0
 var _selected_shape: int = EffectData.EffectShape.CIRCLE
+var _selected_palette: int = 0
 var _burst_mode: bool = false
-var _effect_size: float = 128.0
-var _px_per_foot: float = 0.0 ## 0 = uncalibrated, display in px
+var _effect_size_ft: float = 20.0 ## Size in feet (slider unit)
+var _px_per_foot: float = 0.0 ## 0 = uncalibrated
 
 var _vbox: VBoxContainer = null
 var _type_buttons: Array[Button] = []
@@ -26,6 +28,10 @@ var _type_group: ButtonGroup = null
 var _shape_buttons: Array[Button] = []
 var _shape_group: ButtonGroup = null
 var _shape_container: HBoxContainer = null
+var _palette_header: Label = null
+var _palette_container: HBoxContainer = null
+var _palette_buttons: Array[Button] = []
+var _palette_group: ButtonGroup = null
 var _burst_check: CheckBox = null
 var _size_slider: HSlider = null
 var _size_label: Label = null
@@ -91,7 +97,7 @@ func _build() -> void:
 
 	# Effect type buttons
 	_type_group = ButtonGroup.new()
-	var icons: Array[String] = ["🔥", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]
+	var icons: Array[String] = ["🔥", "🔥○", "🔥▬", "🔥│", "🔥↓", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]
 	for idx in EffectData.EFFECT_LABELS.size():
 		var btn := Button.new()
 		btn.toggle_mode = true
@@ -148,6 +154,72 @@ func _build() -> void:
 
 	_vbox.add_child(HSeparator.new())
 
+	# Palette selector row (only visible for palette-enabled effects)
+	_palette_header = Label.new()
+	_palette_header.text = "PALETTE"
+	_palette_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_palette_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
+	_palette_header.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	_vbox.add_child(_palette_header)
+
+	_palette_group = ButtonGroup.new()
+	_palette_container = HBoxContainer.new()
+	_palette_container.add_theme_constant_override("separation", roundi(2.0 * s))
+	_palette_container.alignment = BoxContainer.ALIGNMENT_CENTER
+	var palette_colors: Array[Color] = [
+		Color(1.0, 0.5, 0.0), # Orange
+		Color(0.9, 0.1, 0.1), # Red
+		Color(0.2, 0.8, 0.1), # Green
+		Color(0.2, 0.4, 1.0), # Blue
+		Color(0.7, 0.15, 0.85), # Violet
+		Color(1.0, 0.9, 0.0), # Yellow
+		Color(0.2, 0.1, 0.08), # Black
+	]
+	for pidx in EffectData.PALETTE_LABELS.size():
+		var pbtn := Button.new()
+		pbtn.toggle_mode = true
+		pbtn.text = " "
+		pbtn.tooltip_text = EffectData.PALETTE_LABELS[pidx]
+		pbtn.button_group = _palette_group
+		pbtn.focus_mode = Control.FOCUS_NONE
+		pbtn.custom_minimum_size = Vector2(roundi(28.0 * s), roundi(24.0 * s))
+		pbtn.add_theme_font_size_override("font_size", roundi(10.0 * s))
+		var p_normal := StyleBoxFlat.new()
+		p_normal.bg_color = palette_colors[pidx]
+		p_normal.corner_radius_top_left = 3
+		p_normal.corner_radius_top_right = 3
+		p_normal.corner_radius_bottom_left = 3
+		p_normal.corner_radius_bottom_right = 3
+		pbtn.add_theme_stylebox_override("normal", p_normal)
+		var p_hover := StyleBoxFlat.new()
+		p_hover.bg_color = palette_colors[pidx].lightened(0.2)
+		p_hover.corner_radius_top_left = 3
+		p_hover.corner_radius_top_right = 3
+		p_hover.corner_radius_bottom_left = 3
+		p_hover.corner_radius_bottom_right = 3
+		pbtn.add_theme_stylebox_override("hover", p_hover)
+		var p_pressed := StyleBoxFlat.new()
+		p_pressed.bg_color = palette_colors[pidx].lightened(0.15)
+		p_pressed.border_width_bottom = 3
+		p_pressed.border_width_top = 3
+		p_pressed.border_width_left = 3
+		p_pressed.border_width_right = 3
+		p_pressed.border_color = Color.WHITE
+		p_pressed.corner_radius_top_left = 3
+		p_pressed.corner_radius_top_right = 3
+		p_pressed.corner_radius_bottom_left = 3
+		p_pressed.corner_radius_bottom_right = 3
+		pbtn.add_theme_stylebox_override("pressed", p_pressed)
+		var pal_idx: int = pidx
+		pbtn.pressed.connect(func() -> void: _on_palette_pressed(pal_idx))
+		_palette_container.add_child(pbtn)
+		_palette_buttons.append(pbtn)
+	_palette_buttons[0].button_pressed = true
+	_vbox.add_child(_palette_container)
+	_refresh_palette_visibility()
+
+	_vbox.add_child(HSeparator.new())
+
 	# Size section
 	var size_header := Label.new()
 	size_header.text = "SIZE"
@@ -157,17 +229,17 @@ func _build() -> void:
 	_vbox.add_child(size_header)
 
 	_size_slider = HSlider.new()
-	_size_slider.min_value = 32.0
-	_size_slider.max_value = 512.0
-	_size_slider.step = 8.0
-	_size_slider.value = _effect_size
+	_size_slider.min_value = 5.0
+	_size_slider.max_value = 200.0
+	_size_slider.step = 5.0
+	_size_slider.value = _effect_size_ft
 	_size_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_size_slider.custom_minimum_size = Vector2(0, roundi(20.0 * s))
 	_size_slider.value_changed.connect(_on_size_changed)
 	_vbox.add_child(_size_slider)
 
 	_size_label = Label.new()
-	_size_label.text = _format_size(_effect_size)
+	_size_label.text = _format_size(_effect_size_ft)
 	_size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_size_label.add_theme_font_size_override("font_size", roundi(11.0 * s))
 	_vbox.add_child(_size_label)
@@ -185,6 +257,7 @@ func _build() -> void:
 func _on_type_pressed(idx: int) -> void:
 	_selected_effect_type = idx
 	_refresh_shape_buttons()
+	_refresh_palette_visibility()
 	effect_type_selected.emit(idx)
 
 
@@ -194,9 +267,9 @@ func _on_shape_pressed(idx: int) -> void:
 
 
 func _on_size_changed(val: float) -> void:
-	_effect_size = val
+	_effect_size_ft = val
 	_size_label.text = _format_size(val)
-	size_changed.emit(val)
+	size_changed.emit(_get_size_px())
 
 
 func _on_burst_toggled(enabled: bool) -> void:
@@ -204,10 +277,13 @@ func _on_burst_toggled(enabled: bool) -> void:
 	burst_mode_changed.emit(enabled)
 
 
-func _format_size(size_px: float) -> String:
-	if _px_per_foot > 0.0:
-		return "%d ft" % int(size_px / _px_per_foot)
-	return "%d px" % int(size_px)
+func _on_palette_pressed(idx: int) -> void:
+	_selected_palette = idx
+	palette_changed.emit(idx)
+
+
+func _format_size(size_ft: float) -> String:
+	return "%d ft" % int(size_ft)
 
 
 func _refresh_shape_buttons() -> void:
@@ -230,10 +306,16 @@ func _refresh_shape_buttons() -> void:
 		shape_changed.emit(_selected_shape)
 
 
+func _refresh_palette_visibility() -> void:
+	var show_palette: bool = EffectData.PALETTE_ENABLED.has(_selected_effect_type)
+	if _palette_header != null:
+		_palette_header.visible = show_palette
+	if _palette_container != null:
+		_palette_container.visible = show_palette
+
+
 func set_px_per_foot(val: float) -> void:
 	_px_per_foot = val
-	if _size_label != null:
-		_size_label.text = _format_size(_effect_size)
 
 
 func get_selected_shape() -> int:
@@ -249,11 +331,23 @@ func is_burst_mode() -> bool:
 
 
 func get_effect_size() -> float:
-	return _effect_size
+	return _get_size_px()
+
+
+func _get_size_px() -> float:
+	if _px_per_foot > 0.0:
+		return _effect_size_ft * _px_per_foot
+	# Fallback: assume 1 px per foot when uncalibrated
+	return _effect_size_ft
+
+
+func get_selected_palette() -> int:
+	return _selected_palette
 
 
 func set_effect_size(val: float) -> void:
-	_effect_size = val
+	## Accepts a value in feet.
+	_effect_size_ft = val
 	if _size_slider != null:
 		_size_slider.value = val
 	if _size_label != null:

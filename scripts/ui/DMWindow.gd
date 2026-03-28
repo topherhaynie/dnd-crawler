@@ -1435,6 +1435,7 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 				_map_view.effect_place_size = _effect_panel.get_effect_size()
 				_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
 				_map_view.effect_place_shape = _effect_panel.get_selected_shape()
+				_map_view.effect_place_palette = _effect_panel.get_selected_palette()
 			var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
 			var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
 			_set_status("Effect tool — %s — click to place" % eff_label)
@@ -1455,6 +1456,7 @@ func _on_palette_effect_tool_activated(_effect_type: int) -> void:
 		_map_view.effect_place_size = _effect_panel.get_effect_size()
 		_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
 		_map_view.effect_place_shape = _effect_panel.get_selected_shape()
+		_map_view.effect_place_palette = _effect_panel.get_selected_palette()
 
 	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else _effect_type
 	var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
@@ -1975,6 +1977,7 @@ func _build_effect_panel() -> void:
 	_apply_effect_panel_size()
 
 	# Wire signals
+	_effect_panel.palette_changed.connect(_on_effect_panel_palette_changed)
 	_effect_panel.effect_type_selected.connect(_on_effect_panel_type_selected)
 	_effect_panel.shape_changed.connect(_on_effect_panel_shape_changed)
 	_effect_panel.burst_mode_changed.connect(_on_effect_panel_burst_changed)
@@ -2019,6 +2022,11 @@ func _on_effect_panel_burst_changed(enabled: bool) -> void:
 func _on_effect_panel_size_changed(size_px: float) -> void:
 	if _map_view != null:
 		_map_view.effect_place_size = size_px
+
+
+func _on_effect_panel_palette_changed(palette_idx: int) -> void:
+	if _map_view != null:
+		_map_view.effect_place_palette = palette_idx
 
 
 func _update_effect_panel_calibration() -> void:
@@ -3666,6 +3674,7 @@ func _on_effect_burst_started(effect_type: int, world_pos: Vector2, size_px: flo
 	var data: EffectData = EffectData.create(effect_type, world_pos, size_px, -1.0)
 	data.id = "__burst__"
 	data.shape = _effect_panel.get_selected_shape() if _effect_panel != null else 0
+	data.palette = _effect_panel.get_selected_palette() if _effect_panel != null else 0
 	_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": data.to_dict()})
 
 
@@ -4555,6 +4564,7 @@ func _on_effect_place_requested(world_pos: Vector2) -> void:
 	var shape: int = _effect_panel.get_selected_shape() if _effect_panel != null else 0
 	var data: EffectData = EffectData.create(eff_type, world_pos, size_px, -1.0)
 	data.shape = shape
+	data.palette = _effect_panel.get_selected_palette() if _effect_panel != null else 0
 	var snapshot: Dictionary = data.to_dict()
 	var id: String = data.id
 	_effect_apply_add(data)
@@ -4575,9 +4585,13 @@ func _on_effect_shape_place_requested(world_pos: Vector2, world_end: Vector2, sh
 	var data: EffectData = EffectData.create(eff_type, world_pos, size_px, -1.0)
 	data.shape = shape
 	data.world_end = world_end
-	# For CIRCLE, size_px = diameter from drag distance
+	data.palette = _effect_panel.get_selected_palette() if _effect_panel != null else 0
+	# For CIRCLE, size_px = diameter from drag distance; rotation = drag direction
 	if shape == EffectData.EffectShape.CIRCLE:
 		data.size_px = world_pos.distance_to(world_end) * 2.0
+		var drag_dir: Vector2 = world_end - world_pos
+		if drag_dir.length() > 1.0:
+			data.rotation_deg = rad_to_deg(drag_dir.angle() + PI * 0.5)
 	var snapshot: Dictionary = data.to_dict()
 	var id: String = data.id
 	_effect_apply_add(data)

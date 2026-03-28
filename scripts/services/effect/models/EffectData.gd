@@ -13,14 +13,18 @@ class_name EffectData
 
 enum EffectType {
 	FIRE = 0,
-	LIGHTNING_BOLT = 1,
-	LIGHTNING_BOLT_WILD = 2,
-	LIGHTNING_BALL = 3,
-	FROST = 4,
-	BLIZZARD = 5,
-	POISON_CLOUD = 6,
-	HOLY_RADIANCE = 7,
-	MAGIC_AURA = 8,
+	RING_OF_FIRE = 1,
+	FIRE_WALL = 2,
+	PILLAR_OF_FIRE = 3,
+	RAIN_OF_FIRE = 4,
+	LIGHTNING_BOLT = 5,
+	LIGHTNING_BOLT_WILD = 6,
+	LIGHTNING_BALL = 7,
+	FROST = 8,
+	BLIZZARD = 9,
+	POISON_CLOUD = 10,
+	HOLY_RADIANCE = 11,
+	MAGIC_AURA = 12,
 }
 
 enum EffectShape {
@@ -31,6 +35,10 @@ enum EffectShape {
 
 const EFFECT_LABELS: Array[String] = [
 	"Fire",
+	"Ring of Fire",
+	"Fire Wall",
+	"Pillar of Fire",
+	"Rain of Fire",
 	"Lightning Bolt",
 	"Lightning Bolt (Wild)",
 	"Lightning Ball",
@@ -47,14 +55,18 @@ const SHAPE_LABELS: Array[String] = ["Circle", "Line", "Cone"]
 ## Key = EffectType value, Value = Array[int] of EffectShape values.
 const AVAILABLE_SHAPES: Dictionary = {
 	0: [0, 2], # Fire: Circle, Cone
-	1: [0, 1], # Lightning Bolt: Circle, Line
-	2: [0, 1], # Lightning Bolt (Wild): Circle, Line
-	3: [0], # Lightning Ball: Circle only
-	4: [0, 2], # Frost: Circle, Cone
-	5: [0, 2], # Blizzard: Circle, Cone
-	6: [0, 2], # Poison Cloud: Circle, Cone
-	7: [0, 2], # Holy Radiance: Circle, Cone
-	8: [0, 2], # Magic Aura: Circle, Cone
+	1: [0], # Ring of Fire: Circle only
+	2: [1], # Fire Wall: Line only
+	3: [1], # Pillar of Fire: Line only
+	4: [0], # Rain of Fire: Circle only
+	5: [0, 1], # Lightning Bolt: Circle, Line
+	6: [0, 1], # Lightning Bolt (Wild): Circle, Line
+	7: [0], # Lightning Ball: Circle only
+	8: [0, 2], # Frost: Circle, Cone
+	9: [0, 2], # Blizzard: Circle, Cone
+	10: [0, 2], # Poison Cloud: Circle, Cone
+	11: [0, 2], # Holy Radiance: Circle, Cone
+	12: [0], # Magic Aura: Circle only
 }
 
 # --- Identity --------------------------------------------------------------
@@ -75,6 +87,27 @@ var duration_sec: float = -1.0
 # --- Appearance ------------------------------------------------------------
 var color_tint: Color = Color(1.0, 1.0, 1.0, 1.0)
 var intensity: float = 1.0
+var palette: int = 0 ## Colour palette index (effect-specific, 0 = default).
+
+const PALETTE_LABELS: Array[String] = [
+	"Orange",
+	"Red",
+	"Green",
+	"Blue",
+	"Violet",
+	"Yellow",
+	"Black",
+]
+
+## Which effect types support palette selection.
+## Key = EffectType value, Value = true.
+const PALETTE_ENABLED: Dictionary = {
+	0: true, # Fire
+	1: true, # Ring of Fire
+	2: true, # Fire Wall
+	3: true, # Pillar of Fire
+	4: true, # Rain of Fire
+}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +144,7 @@ func to_dict() -> Dictionary:
 		"duration_sec": duration_sec,
 		"color_tint": {"r": color_tint.r, "g": color_tint.g, "b": color_tint.b, "a": color_tint.a},
 		"intensity": intensity,
+		"palette": palette,
 	}
 
 
@@ -133,4 +167,5 @@ static func from_dict(d: Dictionary) -> EffectData:
 		float(ct.get("b", 1.0)),
 		float(ct.get("a", 1.0)))
 	e.intensity = float(d.get("intensity", 1.0))
+	e.palette = int(d.get("palette", 0))
 	return e

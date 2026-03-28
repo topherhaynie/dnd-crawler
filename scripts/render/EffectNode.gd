@@ -12,14 +12,18 @@ class_name EffectNode
 signal effect_finished(id: String)
 
 const FIRE_SHADER: Shader = preload("res://assets/effects/fire.gdshader")
+const RING_OF_FIRE_SHADER: Shader = preload("res://assets/effects/ring_of_fire.gdshader")
+const FIRE_WALL_SHADER: Shader = preload("res://assets/effects/fire_wall.gdshader")
+const PILLAR_OF_FIRE_SHADER: Shader = preload("res://assets/effects/pillar_of_fire.gdshader")
+const RAIN_OF_FIRE_SHADER: Shader = preload("res://assets/effects/rain_of_fire.gdshader")
 const LIGHTNING_BOLT_SHADER: Shader = preload("res://assets/effects/lightning_bolt.gdshader")
+const LIGHTNING_BOLT_WILD_SHADER: Shader = preload("res://assets/effects/lightning_bolt_wild.gdshader")
 const LIGHTNING_BALL_SHADER: Shader = preload("res://assets/effects/lightning_ball.gdshader")
 const FROST_SHADER: Shader = preload("res://assets/effects/frost.gdshader")
+const BLIZZARD_SHADER: Shader = preload("res://assets/effects/blizzard.gdshader")
 const POISON_CLOUD_SHADER: Shader = preload("res://assets/effects/poison_cloud.gdshader")
 const HOLY_RADIANCE_SHADER: Shader = preload("res://assets/effects/holy_radiance.gdshader")
 const MAGIC_AURA_SHADER: Shader = preload("res://assets/effects/magic_aura.gdshader")
-const LIGHTNING_BOLT_WILD_SHADER: Shader = preload("res://assets/effects/lightning_bolt_wild.gdshader")
-const BLIZZARD_SHADER: Shader = preload("res://assets/effects/blizzard.gdshader")
 
 ## D&D 5e cone half-angle: width = length at the open end.
 const CONE_HALF_ANGLE: float = 0.4636476090008172 ## atan(0.5) radians
@@ -32,6 +36,7 @@ var _material: ShaderMaterial = null
 var _elapsed: float = 0.0
 var _duration: float = -1.0 ## Negative = looping
 var _is_one_shot: bool = false
+var _time_offset: float = -1.0 ## Randomised once; preserved across apply_from_data calls
 
 ## 1×1 white pixel image reused for all effect quads.
 static var _white_texture: ImageTexture = null
@@ -64,7 +69,12 @@ func apply_from_data(data: EffectData) -> void:
 	_material.set_shader_parameter("intensity", data.intensity)
 	_material.set_shader_parameter("color_tint", data.color_tint)
 	_material.set_shader_parameter("progress", 1.0)
-	_material.set_shader_parameter("time_offset", randf() * 100.0)
+	# Preserve time_offset across re-applies (drag preview calls this every frame)
+	if _time_offset < 0.0:
+		_time_offset = randf() * 100.0
+	_material.set_shader_parameter("time_offset", _time_offset)
+	if data.palette > 0:
+		_material.set_shader_parameter("palette_index", data.palette)
 
 	match data.shape:
 		EffectData.EffectShape.LINE:
@@ -151,5 +161,13 @@ func _shader_for_type(effect_type: int) -> Shader:
 			return LIGHTNING_BOLT_WILD_SHADER
 		EffectData.EffectType.BLIZZARD:
 			return BLIZZARD_SHADER
+		EffectData.EffectType.RING_OF_FIRE:
+			return RING_OF_FIRE_SHADER
+		EffectData.EffectType.FIRE_WALL:
+			return FIRE_WALL_SHADER
+		EffectData.EffectType.PILLAR_OF_FIRE:
+			return PILLAR_OF_FIRE_SHADER
+		EffectData.EffectType.RAIN_OF_FIRE:
+			return RAIN_OF_FIRE_SHADER
 		_:
 			return FIRE_SHADER

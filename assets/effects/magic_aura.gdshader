@@ -46,31 +46,64 @@ void fragment() {
 	float angle = atan(uv.y, uv.x);
 
 	float t = TIME + time_offset;
-	// Orbiting energy wisps — polar noise rotating over time
-	float wisp_angle = angle + t * 0.6;
-	float wisp = fbm(vec2(wisp_angle * 2.0, dist * 3.0 + t * 0.5));
-	wisp = smoothstep(0.4, 0.7, wisp);
 
-	// Inner aura glow
-	float inner = exp(-dist * dist * 3.0) * 0.6;
+	// ── Inward-spiralling vortex ──────────────────────────────────────────
+	// Warp angle by distance → spiral arms. +t rotates inward.
+	// Wiggle the spiral coordinate with noise so the arms squirm.
+	float wiggle = noise(vec2(dist * 4.0 + t * 0.8, angle * 2.0 + t * 0.3)) * 0.5;
+	float spiral = angle + dist * 6.0 + t * 1.5 + wiggle;
 
-	// Outer glow ring
+	// Seamless polar noise along the spiral coordinate
+	float r_noise = 3.5;
+	vec2 sp_uv = vec2(cos(spiral) * r_noise, sin(spiral) * r_noise) + dist * 1.5;
+
+	// Primary vortex arms
+	float vortex = fbm(sp_uv);
+	// Second layer at different scale for chaotic variation
+	float vortex2 = fbm(sp_uv * 1.7 + vec2(4.3, -2.1) + t * 0.2);
+	vortex = mix(vortex, vortex2, 0.35);
+
+	// Lightning-like crackling variation — high-frequency noise displacement
+	float crack1 = noise(sp_uv * 6.0 + t * 0.8) * 0.4;
+	float crack2 = noise(sp_uv * 13.0 - t * 0.5) * 0.2;
+	vortex += (crack1 + crack2) * smoothstep(1.0, 0.2, dist);
+
+	// Sharpen into narrow arm-like bands — tight range for high contrast
+	vortex = smoothstep(0.48, 0.72, vortex);
+	// Boost contrast: crush darks and push brights
+	vortex = vortex * vortex * (3.0 - 2.0 * vortex);
+
+	// Intensify toward the centre (everything feeds inward)
+	float center_pull = smoothstep(1.0, 0.1, dist);
+	vortex *= center_pull;
+
+	// Small-scale turbulence for organic feel
+	vec2 turb_uv = uv * 5.0 + vec2(t * 0.4, -t * 0.3);
+	float turbulence = fbm(turb_uv) * 0.15 * center_pull;
+
+	// Inner core glow — dimmer
+	float inner = exp(-dist * dist * 4.0) * 0.35;
+
+	// Outer glow ring — subtler
 	float ring_dist = abs(dist - 0.55);
-	float ring = exp(-ring_dist * ring_dist * 25.0) * 0.5;
+	float ring = exp(-ring_dist * ring_dist * 25.0) * 0.2;
 
-	// Sparkle field
-	float sparkle_uv_scale = 20.0;
-	vec2 sparkle_cell = floor(UV * sparkle_uv_scale);
-	float sparkle_hash = hash(sparkle_cell + floor(vec2(t * 3.0)));
-	float sparkle = step(0.95, sparkle_hash) * (0.5 + 0.5 * sin(t * 10.0 + sparkle_hash * 50.0));
+	// Combine — lower vortex contribution for darker gaps
+	float total = (inner + ring + vortex * 0.45 + turbulence) * intensity;
 
-	// Combine
-	float total = (inner + ring + wisp * 0.5) * intensity;
-
-	// Colour: use tint as base, brighten toward centre
-	vec3 col = color_tint.rgb;
-	col = mix(col, col * 1.5 + vec3(0.2), smoothstep(0.5, 0.0, dist));
-	col += vec3(sparkle) * 0.4;
+	// Colour: dark base with violet/blue layering
+	vec3 col = color_tint.rgb * 0.35;
+	col = mix(col, color_tint.rgb * 1.5, smoothstep(0.6, 0.0, dist) * vortex);
+	// Violet wash in the spiral arms
+	vec3 violet = vec3(0.45, 0.15, 0.7);
+	col = mix(col, violet, vortex * 0.5);
+	// Deep blue accent toward the outer edges
+	vec3 deep_blue = vec3(0.05, 0.1, 0.45);
+	col = mix(col, deep_blue, smoothstep(0.2, 0.7, dist) * 0.5);
+	// Bright cyan-violet crackling at the hottest peaks
+	col += vec3(0.35, 0.2, 0.65) * smoothstep(0.5, 1.0, vortex) * center_pull;
+	// Electric blue shimmer in the turbulence
+	col += vec3(0.05, 0.12, 0.3) * turbulence * 2.0;
 
 	// Pulsing
 	float pulse = 0.9 + 0.1 * sin(t * 2.0);
@@ -79,7 +112,7 @@ void fragment() {
 	// Boundary
 	float boundary = 1.0 - smoothstep(0.7, 1.0, dist);
 
-	float alpha = clamp(total + sparkle * 0.3, 0.0, 1.0) * boundary * progress * color_tint.a;
+	float alpha = clamp(total, 0.0, 1.0) * boundary * progress * color_tint.a;
 
 	// Cone mask: apex at UV (0.5, 0.0), full width at UV.y = 1.0
 	if (shape_mode == 1) {

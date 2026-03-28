@@ -298,6 +298,7 @@ var effect_burst_mode: bool = false
 var effect_place_type: int = 0
 var effect_place_size: float = 128.0
 var effect_place_shape: int = 0 ## EffectData.EffectShape
+var effect_place_palette: int = 0
 
 ## Click-and-drag shape placement state
 var _effect_drag_placing: bool = false
@@ -889,6 +890,7 @@ func _burst_start(world_pos: Vector2) -> void:
 	data.duration_sec = -1.0
 	data.intensity = 1.0
 	data.color_tint = Color.WHITE
+	data.palette = effect_place_palette
 	_burst_effect_node = EffectNode.new()
 	_burst_effect_node.name = "BurstEffect"
 	effect_layer.add_child(_burst_effect_node)
@@ -918,8 +920,9 @@ func _effect_drag_preview_start(world_pos: Vector2) -> void:
 	data.world_end = world_pos
 	data.size_px = effect_place_size
 	data.duration_sec = -1.0
-	data.intensity = 0.6
-	data.color_tint = Color(1.0, 1.0, 1.0, 0.6)
+	data.intensity = 0.9
+	data.color_tint = Color(1.0, 1.0, 1.0, 0.8)
+	data.palette = effect_place_palette
 	_effect_drag_preview = EffectNode.new()
 	_effect_drag_preview.name = "DragPreview"
 	effect_layer.add_child(_effect_drag_preview)
@@ -938,11 +941,15 @@ func _effect_drag_preview_update(world_pos: Vector2) -> void:
 	data.world_end = world_pos
 	data.size_px = effect_place_size
 	data.duration_sec = -1.0
-	data.intensity = 0.6
-	data.color_tint = Color(1.0, 1.0, 1.0, 0.6)
-	# For CIRCLE, size_px = diameter based on drag distance
+	data.intensity = 0.9
+	data.color_tint = Color(1.0, 1.0, 1.0, 0.8)
+	data.palette = effect_place_palette
+	# For CIRCLE, size_px = diameter based on drag distance; rotation = drag direction
 	if data.shape == EffectData.EffectShape.CIRCLE:
 		data.size_px = _effect_drag_start.distance_to(world_pos) * 2.0
+		var drag_dir: Vector2 = world_pos - _effect_drag_start
+		if drag_dir.length() > 1.0:
+			data.rotation_deg = rad_to_deg(drag_dir.angle() + PI * 0.5)
 	_effect_drag_preview.apply_from_data(data)
 
 
