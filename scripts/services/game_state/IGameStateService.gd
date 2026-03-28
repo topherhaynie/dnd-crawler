@@ -68,3 +68,23 @@ func list_sessions() -> Array:
 
 func reset_session() -> void:
 	push_error("IGameStateService.reset_session: not implemented")
+
+# --- Per-save profile assignment --------------------------------------------
+
+@warning_ignore("unused_signal")
+signal active_profiles_changed()
+
+func get_active_profile_ids() -> Array:
+	push_error("IGameStateService.get_active_profile_ids: not implemented")
+	return []
+
+func set_profile_active(_id: String, _active: bool) -> void:
+	push_error("IGameStateService.set_profile_active: not implemented")
+
+func is_profile_active(_id: String) -> bool:
+	push_error("IGameStateService.is_profile_active: not implemented")
+	return false
+
+func has_active_session() -> bool:
+	push_error("IGameStateService.has_active_session: not implemented")
+	return false

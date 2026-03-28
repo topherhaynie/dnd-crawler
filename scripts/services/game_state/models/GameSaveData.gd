@@ -33,6 +33,11 @@ var fog_image_path: String = "fog.png" ## Relative path within .sav bundle
 ## Format: {"<token_id>": {"is_visible_to_players": bool}}
 var token_states: Dictionary = {}
 
+# --- Session profile assignment --------------------------------------------
+## IDs of profiles that are active in this save. Empty = no session loaded
+## (all profiles behave as active for backward-compatibility).
+var active_profile_ids: Array = []
+
 # --- Timestamps -------------------------------------------------------------
 var created_at: String = ""
 var updated_at: String = ""
@@ -68,6 +73,7 @@ func to_dict() -> Dictionary:
 		"player_camera_rotation": player_camera_rotation,
 		"fog_image_path": fog_image_path,
 		"token_states": token_states,
+		"active_profile_ids": active_profile_ids.duplicate(),
 		"created_at": created_at,
 		"updated_at": updated_at,
 	}
@@ -103,6 +109,10 @@ static func from_dict(d: Dictionary) -> GameSaveData:
 	var raw_ts: Variant = d.get("token_states", {})
 	if raw_ts is Dictionary:
 		s.token_states = raw_ts as Dictionary
+	var raw_ids: Variant = d.get("active_profile_ids", [])
+	if raw_ids is Array:
+		for entry in (raw_ids as Array):
+			s.active_profile_ids.append(str(entry))
 	s.created_at = str(d.get("created_at", ""))
 	s.updated_at = str(d.get("updated_at", ""))
 	return s

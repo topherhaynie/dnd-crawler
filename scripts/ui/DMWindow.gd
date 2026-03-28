@@ -189,6 +189,7 @@ var _profiles_import_dialog: FileDialog = null
 var _profiles_export_dialog: FileDialog = null
 var _profiles_root: Control = null
 var _profile_color_btn: ColorPickerButton = null
+var _profile_active_check: CheckBox = null
 ## Legacy autoload reference removed — use registry-first `_network()` helper
 
 # ── Measurement panel ────────────────────────────────────────────────────────
@@ -308,6 +309,16 @@ func _ensure_game_state_bindings() -> void:
 		return
 	if not gs.is_connected("player_lock_changed", Callable(self , "_on_player_lock_changed_external")):
 		gs.player_lock_changed.connect(_on_player_lock_changed_external)
+	# Signal subscription: IGameStateService extends Node; signals live on the
+	# Node instance. Approved narrow exception to the view-must-call-manager rule.
+	var svc: IGameStateService = gs.service
+	if svc != null:
+		if not svc.is_connected("session_loaded", Callable(self , "_on_session_changed")):
+			svc.session_loaded.connect(_on_session_changed)
+		if not svc.is_connected("session_saved", Callable(self , "_on_session_changed")):
+			svc.session_saved.connect(_on_session_changed)
+		if not svc.is_connected("active_profiles_changed", Callable(self , "_on_profiles_changed")):
+			svc.active_profiles_changed.connect(_on_profiles_changed)
 	_refresh_freeze_panel()
 
 
@@ -1775,6 +1786,9 @@ func _refresh_freeze_panel() -> void:
 		if not raw_profile is PlayerProfile:
 			continue
 		var p := raw_profile as PlayerProfile
+		# Skip profiles not active in the current session (or when no session is loaded).
+		if gs != null and not gs.is_profile_active(p.id):
+			continue
 		var locked: bool = gs.is_locked(p.id) if gs != null else false
 
 		var row := HBoxContainer.new()
@@ -2736,6 +2750,20 @@ func _build_profiles_dialog() -> void:
 	ws_btn.pressed.connect(_on_bind_use_ws_pressed)
 	bind_row.add_child(ws_btn)
 
+	var session_sep := HSeparator.new()
+	right_panel.add_child(session_sep)
+
+	_profile_active_check = CheckBox.new()
+	_profile_active_check.text = "Active in current session"
+	_profile_active_check.disabled = true
+	_profile_active_check.toggled.connect(_on_profile_active_toggled)
+	right_panel.add_child(_profile_active_check)
+
+	var session_hint := Label.new()
+	session_hint.text = "(no effect when no session is loaded)"
+	session_hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	right_panel.add_child(session_hint)
+
 	var extras_lbl := Label.new()
 	extras_lbl.text = "Extras (JSON object):"
 	right_panel.add_child(extras_lbl)
@@ -2818,6 +2846,7 @@ func _open_profiles_editor() -> void:
 	_refresh_profiles_list()
 	_update_profile_action_state()
 	_apply_ui_scale()
+	_apply_dialog_themes()
 	_profiles_dialog.popup_centered_ratio(0.9)
 
 
@@ -2826,12 +2855,21 @@ func _refresh_profiles_list() -> void:
 		return
 	_profiles_list.clear()
 	var pm := _profile_service()
+	var gs := _game_state()
 	var profiles_arr: Array = pm.get_profiles() if pm != null else []
 	for profile in profiles_arr:
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
-		_profiles_list.add_item("%s (%s)" % [p.player_name, p.id.left(8)])
+		var label: String
+		if gs != null and not gs.is_profile_active(p.id):
+			label = "%s (%s) [not in session]" % [p.player_name, p.id.left(8)]
+		else:
+			label = "%s (%s)" % [p.player_name, p.id.left(8)]
+		_profiles_list.add_item(label)
+		if gs != null and not gs.is_profile_active(p.id):
+			var item_idx: int = _profiles_list.item_count - 1
+			_profiles_list.set_item_custom_fg_color(item_idx, Color(0.6, 0.6, 0.6))
 	if profiles_arr.is_empty():
 		_profile_selected_index = -1
 		_clear_profile_form()
@@ -2868,6 +2906,9 @@ func _clear_profile_form() -> void:
 	if _profile_orientation_spin:
 		_profile_orientation_spin.value = 0
 	_profile_extras_edit.text = "{}"
+	if _profile_active_check:
+		_profile_active_check.set_pressed_no_signal(false)
+		_profile_active_check.disabled = true
 	_on_profile_vision_selected(0)
 	_update_profile_action_state()
 
@@ -2910,6 +2951,16 @@ func _load_selected_profile_into_form(index: int) -> void:
 		_profile_orientation_spin.value = p.table_orientation
 	if _profile_color_btn:
 		_profile_color_btn.color = p.indicator_color
+	if _profile_active_check:
+		var gs := _game_state()
+		var has_session: bool = gs != null and gs.has_active_session()
+		_profile_active_check.disabled = _profile_is_new_draft or not has_session
+		# Use set_pressed_no_signal to avoid triggering _on_profile_active_toggled
+		# (and the binding rebuild cascade) when merely loading the form.
+		if has_session:
+			_profile_active_check.set_pressed_no_signal(gs.is_profile_active(p.id))
+		else:
+			_profile_active_check.set_pressed_no_signal(false)
 	_on_profile_vision_selected(_profile_vision_option.selected)
 	_update_profile_action_state()
 
@@ -3157,6 +3208,10 @@ func _apply_profile_bindings() -> void:
 			continue
 		var p := profile as PlayerProfile
 		p.ensure_id()
+		# When a session is loaded, skip profiles not assigned to it.
+		# When no session is loaded, skip all — no players active on a fresh map.
+		if gs != null and not gs.is_profile_active(p.id):
+			continue
 		if gs != null:
 			gs.register_player(p.id)
 		match p.input_type:
@@ -3205,6 +3260,33 @@ func _on_profiles_changed() -> void:
 		_refresh_profiles_list()
 	_update_profile_action_state()
 	_refresh_freeze_panel()
+
+
+func _on_profile_active_toggled(active: bool) -> void:
+	if _profile_is_new_draft:
+		return
+	var pm := _profile_service()
+	if pm == null or _profile_selected_index < 0:
+		return
+	var arr := pm.get_profiles()
+	if _profile_selected_index >= arr.size():
+		return
+	var item = arr[_profile_selected_index]
+	if not item is PlayerProfile:
+		return
+	var gs := _game_state()
+	if gs == null or not gs.has_active_session():
+		return
+	gs.set_profile_active((item as PlayerProfile).id, active)
+	# Rebuild bindings immediately so input follows the new assignment.
+	_apply_profile_bindings()
+	_refresh_profiles_list()
+
+
+func _on_session_changed(_save_name: String) -> void:
+	_on_profiles_changed()
+	if _profiles_dialog != null and _profiles_dialog.visible and _profile_selected_index >= 0:
+		_load_selected_profile_into_form(_profile_selected_index)
 
 
 func _on_token_drag_started(token_id: Variant) -> void:
@@ -5340,12 +5422,19 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = img_dest_abs
 	_active_map_bundle_path = bundle_path
+	# Clear all tokens from any previous session BEFORE saving the new bundle.
+	# _save_map_data calls save_to_bundle → _flush_tokens_to_map, which would
+	# otherwise write stale TokenService state into the brand-new map.json.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.token != null:
+		reg.token.clear_tokens()
 	_save_map_data(map)
-	_apply_map(map)
-	# Keep map manager model in sync if available
+	# Load via the service to emit map_loaded and run _sync_tokens_from_map.
+	# map.tokens is [] here (saved clean above), so TokenService stays empty.
 	var ms := _map_service()
 	if ms != null:
-		ms.update(map)
+		ms.load(map)
+	_apply_map(map)
 	_nm_broadcast_map(map)
 	_generate_thumbnail(bundle_path, img_dest_abs)
 	_set_status("New map: %s" % map.map_name)
@@ -5743,6 +5832,7 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	_grid_type_selected = map.grid_type
 	_update_grid_submenu_checks()
 	_update_effect_panel_calibration()
+	_refresh_freeze_panel()
 
 
 func _simulate_player_movement(delta: float) -> bool:
@@ -5958,10 +6048,13 @@ func _refresh_spawn_profile_option() -> void:
 		opt.disabled = true
 		return
 	var profiles: Array = registry.profile.get_profiles()
+	var gs_spawn := _game_state()
 	for i in range(profiles.size()):
 		var p: Variant = profiles[i]
 		if p is PlayerProfile:
 			var pp := p as PlayerProfile
+			if gs_spawn != null and not gs_spawn.is_profile_active(pp.id):
+				continue
 			opt.add_item(pp.player_name, i + 1)
 			opt.set_item_metadata(opt.item_count - 1, pp.id)
 	var sel_idx: int = _map_view._selected_spawn_index if _map_view != null else -1
@@ -6003,15 +6096,24 @@ func _on_spawn_auto_assign() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.profile == null:
 		return
-	var profiles: Array = registry.profile.get_profiles()
 	var spawns: Array = _map_view._map.spawn_points
-	if spawns.is_empty() or profiles.is_empty():
+	if spawns.is_empty():
+		return
+	# Build a list of profiles that are active in the current session (or all if no session).
+	var gs_auto := _game_state()
+	var active_profiles: Array = []
+	for raw in registry.profile.get_profiles():
+		if not raw is PlayerProfile:
+			continue
+		var pp := raw as PlayerProfile
+		if gs_auto != null and not gs_auto.is_profile_active(pp.id):
+			continue
+		active_profiles.append(pp)
+	if active_profiles.is_empty():
 		return
 	for i in range(spawns.size()):
-		if i < profiles.size():
-			var p: Variant = profiles[i]
-			if p is PlayerProfile:
-				(spawns[i] as Dictionary)["profile_id"] = (p as PlayerProfile).id
+		if i < active_profiles.size():
+			(spawns[i] as Dictionary)["profile_id"] = (active_profiles[i] as PlayerProfile).id
 		else:
 			(spawns[i] as Dictionary)["profile_id"] = ""
 	_map_view._rebuild_spawn_markers(_map_view._map)

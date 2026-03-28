@@ -228,3 +228,54 @@ func reset_session() -> void:
 	_model.player_camera_zoom = 1.0
 	_model.player_camera_rotation = 0
 	_model.active_save = null
+
+
+# ---------------------------------------------------------------------------
+# Per-save profile assignment
+# ---------------------------------------------------------------------------
+
+func get_active_profile_ids() -> Array:
+	if _model == null or _model.active_save == null:
+		return []
+	return (_model.active_save as GameSaveData).active_profile_ids.duplicate()
+
+
+func set_profile_active(id: String, active: bool) -> void:
+	if _model == null or _model.active_save == null:
+		return
+	var save := _model.active_save as GameSaveData
+	var idx: int = save.active_profile_ids.find(id)
+	if active and idx == -1:
+		save.active_profile_ids.append(id)
+	elif not active and idx != -1:
+		save.active_profile_ids.remove_at(idx)
+	else:
+		return # no change
+	emit_signal("active_profiles_changed")
+	_save_session_state_only()
+
+
+func is_profile_active(id: String) -> bool:
+	if _model == null or _model.active_save == null:
+		return false # no session loaded → no profiles active
+	return id in (_model.active_save as GameSaveData).active_profile_ids
+
+
+func has_active_session() -> bool:
+	return _model != null and _model.active_save != null
+
+
+func _save_session_state_only() -> void:
+	if _model == null or _model.active_save == null:
+		return
+	var save := _model.active_save as GameSaveData
+	save.updated_at = Time.get_datetime_string_from_system(true)
+	var bundle_path := "user://data/saves/%s.sav" % save.save_name
+	var abs_bundle := ProjectSettings.globalize_path(bundle_path)
+	var state_path := abs_bundle.path_join("state.json")
+	var fa := FileAccess.open(state_path, FileAccess.WRITE)
+	if fa == null:
+		push_error("GameStateService._save_session_state_only: cannot write state.json at '%s'" % state_path)
+		return
+	fa.store_string(JSON.stringify(save.to_dict(), "\t"))
+	fa.close()

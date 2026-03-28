@@ -56,6 +56,19 @@ func configure(map_view: MapView) -> void:
 	_map_view = map_view
 
 
+func _active_profiles() -> Array:
+	## Returns only the profiles active in the current session.
+	## With no session loaded this returns empty — no tokens on a fresh map.
+	var gs := _game_state()
+	if gs == null:
+		return []
+	var out: Array = []
+	for raw in gs.list_profiles():
+		if raw is PlayerProfile and gs.is_profile_active((raw as PlayerProfile).id):
+			out.append(raw)
+	return out
+
+
 func reset_for_new_map() -> void:
 	_spawn_initialized = false
 	_force_los_reveal = true
@@ -69,7 +82,7 @@ func sync_profiles() -> void:
 	if _map_view == null:
 		return
 	var active: Dictionary = {}
-	for profile in _game_state().list_profiles():
+	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -103,7 +116,7 @@ func step(delta: float) -> bool:
 	if _map_view.map_image and _map_view.map_image.texture:
 		max_bounds = _map_view.map_image.texture.get_size()
 
-	for profile in _game_state().list_profiles():
+	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -197,7 +210,7 @@ func build_player_state_payload() -> Array:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	var im: InputManager = registry.input if registry != null and registry.input != null else null
 	var gs_mgr: GameStateManager = _game_state()
-	for profile in gs_mgr.list_profiles():
+	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -282,7 +295,7 @@ func move_all_to_spawns() -> void:
 			unbound_spawns.append(spawn_pts[sp_idx])
 
 	var rr_idx := 0
-	for profile in gs.list_profiles():
+	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
@@ -338,7 +351,7 @@ func _ensure_spawn_positions() -> void:
 			unbound_spawns.append(spawn_pts[sp_idx])
 
 	var rr_idx := 0
-	for profile in gs.list_profiles():
+	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile

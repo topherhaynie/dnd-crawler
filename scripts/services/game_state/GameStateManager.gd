@@ -193,3 +193,30 @@ func list_sessions() -> Array:
 func reset_session() -> void:
 	if service != null:
 		service.reset_session()
+
+
+# ---------------------------------------------------------------------------
+# Per-save profile assignment
+# ---------------------------------------------------------------------------
+
+func get_active_profile_ids() -> Array:
+	if service == null:
+		return []
+	return service.get_active_profile_ids()
+
+
+func set_profile_active(id: String, active: bool) -> void:
+	if service != null:
+		service.set_profile_active(id, active)
+
+
+func is_profile_active(id: String) -> bool:
+	if service == null:
+		return false
+	return service.is_profile_active(id)
+
+
+func has_active_session() -> bool:
+	if service == null:
+		return false
+	return service.has_active_session()
