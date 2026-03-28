@@ -95,28 +95,41 @@ void fragment() {
 	float angle = atan(centered.y, centered.x);
 	float t = TIME + time_offset;
 
+	// Subtle slow rotation — spin the whole ring
+	float rot_speed = 0.15;
+	float rot_angle = t * rot_speed;
+	float ca = cos(rot_angle);
+	float sa = sin(rot_angle);
+	centered = vec2(ca * centered.x - sa * centered.y,
+	                sa * centered.x + ca * centered.y);
+	dist = length(centered);
+	angle = atan(centered.y, centered.x);
+
 	// Annular ring mask — flames live between inner and outer radius.
-	// Inner edge ~0.45, outer edge ~1.0 of the circle.
 	float inner_radius = 0.45;
 	float outer_radius = 1.0;
 	float ring_band = smoothstep(inner_radius - 0.08, inner_radius + 0.08, dist)
 	                 * (1.0 - smoothstep(outer_radius - 0.25, outer_radius, dist));
 
-	// Radial flame noise — use angle + time for rotation, dist for radial variation.
-	// Convert angle to linear coord so noise tiles around the ring.
-	float angle_coord = (angle / TAU + 0.5); // [0, 1]
-	vec2 noise_uv = vec2(angle_coord * 8.0, dist * 4.0);
+	// Seamless tiling noise: sample on a circular path in noise-space so the
+	// start and end of the ring meet without a seam.
+	float loop_r = 1.3;
+	float nx = cos(angle) * loop_r;
+	float ny = sin(angle) * loop_r;
+	vec2 noise_uv = vec2(nx + dist * 3.0, ny + dist * 3.0);
 
-	// Flames lick outward (scroll in negative dist direction) and rotate slowly.
-	noise_uv.y -= t * 3.0;
-	noise_uv.x += t * 0.3; // slow rotation
+	// Flames scroll outward with slow angular drift
+	float radial_scroll = dist * 4.0 - t * 3.0;
+	noise_uv -= vec2(t * 0.9, t * 0.9);
 
-	// Flicker
-	noise_uv.x += sin(t * 1.2 + dist * 3.0) * 0.18;
+	// Flicker wobble
+	float wobble = sin(t * 1.2 + dist * 3.0) * 0.18;
+	noise_uv.x += wobble;
 
-	float n = fbm(noise_uv);
+	// Two-layer FBM for richer seamless flames
+	float n = fbm(noise_uv) * 0.6 + fbm(noise_uv * 1.7 + vec2(radial_scroll, wobble)) * 0.4;
+
 	// Bias intensity toward outer edge (flames lick outward from ring center)
-	float ring_center = (inner_radius + outer_radius) * 0.5;
 	float radial_bias = smoothstep(inner_radius, outer_radius, dist);
 	float flame = n * (0.5 + 0.5 * radial_bias);
 	flame = clamp(flame * 2.2 * intensity, 0.0, 1.0);
