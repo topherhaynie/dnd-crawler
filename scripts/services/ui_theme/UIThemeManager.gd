@@ -22,12 +22,12 @@ const _INPUT_META: String = "ui_theme_input"
 var service: IUIThemeService = null
 
 ## Tracked items for live theme switching.
-var _styled_panels: Array = []  ## Array of WeakRef → PanelContainer
+var _styled_panels: Array = [] ## Array of WeakRef → PanelContainer
 var _styled_buttons: Array = [] ## Array of WeakRef → BaseButton
-var _bg_rects: Array = []       ## Array of WeakRef → ColorRect (standalone bgs)
+var _bg_rects: Array = [] ## Array of WeakRef → ColorRect (standalone bgs)
 var _styled_windows: Array = [] ## Array of WeakRef → Window
-var _themed_trees: Array = []   ## Array of { "ref": WeakRef → Node, "scale": float }
-var _styled_inputs: Array = []  ## Array of WeakRef → LineEdit
+var _themed_trees: Array = [] ## Array of { "ref": WeakRef → Node, "scale": float }
+var _styled_inputs: Array = [] ## Array of WeakRef → LineEdit
 
 
 # ---------------------------------------------------------------------------

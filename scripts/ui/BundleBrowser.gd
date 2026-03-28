@@ -117,7 +117,7 @@ func _build_ui() -> void:
 	# ── Theme self (window chrome + all child buttons) ───────────────────
 	var _bt_reg := _get_registry()
 	if _bt_reg != null and _bt_reg.ui_theme != null:
-		_bt_reg.ui_theme.theme_control_tree(self, scale)
+		_bt_reg.ui_theme.theme_control_tree(self , scale)
 
 	# ── Card styles ──────────────────────────────────────────────────────
 	var _bb_accent: Dictionary = {}

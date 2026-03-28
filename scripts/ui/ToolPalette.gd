@@ -109,7 +109,7 @@ func refresh_theme() -> void:
 		_pressed_stylebox.bg_color = new_pressed.bg_color
 		_pressed_stylebox.border_color = new_pressed.border_color
 	# Re-apply styles to all buttons in the palette
-	_ui_theme_mgr.theme_control_tree(self, s)
+	_ui_theme_mgr.theme_control_tree(self , s)
 	# Re-apply pressed stylebox to toggle buttons (theme_control_tree sets
 	# the standard pressed style, but toggles need the shared indicator)
 	for btn: Variant in [select_btn, pan_btn, fog_btn, _wall_stack_btn, token_btn, _effect_stack_btn]:

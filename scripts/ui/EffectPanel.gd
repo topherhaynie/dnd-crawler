@@ -61,7 +61,7 @@ func refresh_theme() -> void:
 		(bg_sb as StyleBoxFlat).bg_color = panel_bg
 		(bg_sb as StyleBoxFlat).border_color = panel_border
 	# Re-theme all child controls via the manager's tree walk
-	_ui_theme_mgr.theme_control_tree(self, _s())
+	_ui_theme_mgr.theme_control_tree(self , _s())
 	# Header label tints
 	for child: Node in _vbox.get_children():
 		if child is Label and (child as Label).text in ["SHAPE", "PALETTE", "SIZE"]:
