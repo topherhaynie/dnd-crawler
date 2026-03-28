@@ -900,6 +900,10 @@ func _build_ui() -> void:
 		# Overlay panels live on _ui_layer (not _ui_root) — theme them too
 		if _palette != null:
 			tm.theme_control_tree(_palette, _ui_scale())
+		# Flyout is on _ui_layer (not a child of palette) — theme it separately
+		var _flyout: PanelContainer = _palette.get_flyout() if _palette != null else null
+		if _flyout != null:
+			tm.theme_control_tree(_flyout, _ui_scale())
 		if _freeze_panel != null:
 			tm.theme_control_tree(_freeze_panel, _ui_scale())
 		if _effect_panel != null:
@@ -4219,10 +4223,14 @@ func _apply_token_context_menu_theme() -> void:
 func _apply_token_context_menu_theme_to(menu: PopupMenu) -> void:
 	if menu == null:
 		return
-	var scale := _ui_scale()
-	menu.add_theme_font_size_override("font_size", roundi(16.0 * scale))
-	menu.add_theme_constant_override("v_separation", roundi(6 * scale))
-	menu.add_theme_constant_override("h_separation", roundi(12 * scale))
+	var _cm_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _cm_reg != null and _cm_reg.ui_theme != null:
+		_cm_reg.ui_theme.apply_popup_style(menu, _ui_scale())
+	else:
+		var scale := _ui_scale()
+		menu.add_theme_font_size_override("font_size", roundi(16.0 * scale))
+		menu.add_theme_constant_override("v_separation", roundi(6 * scale))
+		menu.add_theme_constant_override("h_separation", roundi(12 * scale))
 
 
 func _on_token_category_changed(idx: int) -> void:

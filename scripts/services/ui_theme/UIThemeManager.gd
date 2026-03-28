@@ -18,6 +18,7 @@ const _CHROME_SHADER: String = "res://assets/effects/chrome_ui.gdshader"
 ## Public — set on controls that should be skipped by theme_control_tree.
 const SKIP_AUTO_THEME: String = "ui_theme_skip_auto"
 const _INPUT_META: String = "ui_theme_input"
+const _POPUP_META: String = "ui_theme_popup"
 
 var service: IUIThemeService = null
 
@@ -28,6 +29,7 @@ var _bg_rects: Array = [] ## Array of WeakRef → ColorRect (standalone bgs)
 var _styled_windows: Array = [] ## Array of WeakRef → Window
 var _themed_trees: Array = [] ## Array of { "ref": WeakRef → Node, "scale": float }
 var _styled_inputs: Array = [] ## Array of WeakRef → LineEdit
+var _styled_popups: Array = [] ## Array of WeakRef → PopupMenu
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +378,47 @@ func apply_dialog_panel_style(dialog: Window) -> void:
 
 
 # ---------------------------------------------------------------------------
+# PopupMenu theming
+# ---------------------------------------------------------------------------
+
+func apply_popup_style(popup: PopupMenu, scale: float) -> void:
+	## Apply themed panel + font styling to a PopupMenu.  Idempotent.
+	if popup == null:
+		return
+	var palette: Dictionary = get_accent_palette()
+	var bg: Color = palette.get("panel_bg", Color(0.15, 0.15, 0.15)) as Color
+	var border: Color = palette.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	var font_col: Color = palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
+	var hover_bg: Color = palette.get("hover_bg", Color(0.28, 0.28, 0.28)) as Color
+
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_border_width_all(1)
+	sb.border_color = border
+	sb.set_corner_radius_all(4)
+	sb.set_content_margin_all(roundi(4.0 * scale))
+	popup.add_theme_stylebox_override("panel", sb)
+
+	var hover_sb := StyleBoxFlat.new()
+	hover_sb.bg_color = hover_bg
+	hover_sb.set_corner_radius_all(3)
+	hover_sb.set_content_margin_all(roundi(4.0 * scale))
+	popup.add_theme_stylebox_override("hover", hover_sb)
+
+	popup.add_theme_color_override("font_color", font_col)
+	popup.add_theme_color_override("font_hover_color", font_col.lightened(0.15))
+	popup.add_theme_color_override("font_disabled_color", font_col.darkened(0.4))
+	popup.add_theme_color_override("font_separator_color", font_col.darkened(0.3))
+	popup.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	popup.add_theme_constant_override("v_separation", roundi(6 * scale))
+	popup.add_theme_constant_override("h_separation", roundi(12 * scale))
+
+	if not popup.has_meta(_POPUP_META):
+		popup.set_meta(_POPUP_META, true)
+		_styled_popups.append(weakref(popup))
+
+
+# ---------------------------------------------------------------------------
 # Recursive tree theming — style every button/panel/window in a subtree
 # ---------------------------------------------------------------------------
 
@@ -401,6 +444,12 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 		# Buttons
 		if node is CheckBox or node is CheckButton:
 			apply_check_style(node as BaseButton, scale)
+		elif node is OptionButton:
+			apply_button_style(node as BaseButton, scale)
+			# Theme the internal dropdown popup
+			var ob_popup: PopupMenu = (node as OptionButton).get_popup()
+			if ob_popup != null:
+				apply_popup_style(ob_popup, scale)
 		elif node is BaseButton:
 			apply_button_style(node as BaseButton, scale)
 		# Input controls
@@ -413,8 +462,10 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 		# Panels
 		if node is PanelContainer:
 			apply_chrome(node as PanelContainer)
-		# Windows (background created inside _apply_window_style)
-		if node is Window:
+		# PopupMenu — style panel + font; do NOT insert bg ColorRect
+		if node is PopupMenu:
+			apply_popup_style(node as PopupMenu, scale)
+		elif node is Window:
 			apply_window_chrome(node as Window)
 
 	# Always recurse into children — include internal for Windows so we
@@ -434,6 +485,7 @@ func on_theme_changed(_preset: int) -> void:
 	_refresh_windows()
 	_refresh_styled_buttons()
 	_refresh_inputs()
+	_refresh_popups()
 	_refresh_themed_trees()
 
 
@@ -507,6 +559,23 @@ func _refresh_styled_buttons() -> void:
 		btn.add_theme_color_override("font_pressed_color", font_col.lightened(0.25))
 		btn.add_theme_color_override("font_disabled_color", font_col.darkened(0.4))
 	_styled_buttons = live
+
+
+func _refresh_popups() -> void:
+	var live: Array = []
+	for wr: WeakRef in _styled_popups:
+		var popup: PopupMenu = wr.get_ref() as PopupMenu
+		if popup == null or not is_instance_valid(popup):
+			continue
+		live.append(wr)
+		var existing: Variant = popup.get_theme_stylebox("panel")
+		var scale: float = 1.0
+		if existing is StyleBoxFlat:
+			var cm: int = roundi((existing as StyleBoxFlat).content_margin_left)
+			if cm > 0:
+				scale = float(cm) / 4.0
+		apply_popup_style(popup, scale)
+	_styled_popups = live
 
 
 func _refresh_inputs() -> void:

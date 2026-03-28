@@ -59,8 +59,8 @@ const AVAILABLE_SHAPES: Dictionary = {
 	2: [1], # Fire Wall: Line only
 	3: [1], # Pillar of Fire: Line only
 	4: [0], # Rain of Fire: Circle only
-	5: [0, 1], # Lightning Bolt: Circle, Line
-	6: [0, 1], # Lightning Bolt (Wild): Circle, Line
+	5: [1, 2], # Lightning Bolt: Line, Cone
+	6: [1, 2], # Lightning Bolt (Wild): Line, Cone
 	7: [0], # Lightning Ball: Circle only
 	8: [0, 2], # Frost: Circle, Cone
 	9: [0, 2], # Blizzard: Circle, Cone

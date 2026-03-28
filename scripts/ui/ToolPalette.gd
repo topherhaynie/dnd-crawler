@@ -63,6 +63,7 @@ var _selected_effect_type: int = 0 ## EffectData.EffectType value
 # Long-press tracking
 var _long_press_timer: Timer = null
 var _long_press_target: Button = null
+var _long_press_activated: bool = false
 
 # Button styles
 var _pressed_stylebox: StyleBoxFlat = null
@@ -238,7 +239,6 @@ func _build() -> void:
 	_add_section_header(palette_vbox, "CAMERA")
 
 	_dm_cam_stack_btn = _make_action_btn("+", "Zoom in (scroll up)")
-	_dm_cam_stack_btn.pressed.connect(func() -> void: action_fired.emit("dm_zoom_in"))
 	palette_vbox.add_child(_dm_cam_stack_btn)
 
 	# Small triangle indicator for stack
@@ -262,7 +262,6 @@ func _build() -> void:
 	_add_section_header(palette_vbox, "PLAYER")
 
 	_player_view_stack_btn = _make_action_btn("▣+", "Zoom player viewport in")
-	_player_view_stack_btn.pressed.connect(func() -> void: _fire_player_view_action())
 	palette_vbox.add_child(_player_view_stack_btn)
 
 	var pv_indicator := _make_stack_indicator()
@@ -607,14 +606,32 @@ func _handle_stack_input(ev: InputEvent, btn: Button, popup: PopupMenu) -> void:
 			_show_stack_popup(btn, popup)
 			btn.accept_event()
 		elif mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			_long_press_activated = false
 			_long_press_target = btn
 			_long_press_timer.start(_LONG_PRESS_SEC)
+			# Consume the press for ALL stack buttons. For toggle buttons this
+			# prevents false DRAW_PRESSED highlight during the hold window. For
+			# action buttons this also prevents the button getting stuck in
+			# DRAW_PRESSED when the popup opens and grabs input (so mouse-up
+			# never arrives back through gui_input).
+			btn.accept_event()
 		elif mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 			_long_press_timer.stop()
+			if _long_press_activated:
+				# Popup was shown — native handling already suppressed by
+				# consuming the press; nothing more to do.
+				pass
+			else:
+				# Quick click — press was consumed, so fire the action manually.
+				_fire_stack_quick_action(btn)
+			_long_press_activated = false
 			_long_press_target = null
 
 
 func _on_long_press_timeout() -> void:
+	# Set flag before showing popup so the arriving mouse-up event is
+	# suppressed and doesn't spuriously toggle the button state.
+	_long_press_activated = true
 	if _long_press_target == _dm_cam_stack_btn:
 		_show_stack_popup(_dm_cam_stack_btn, _dm_cam_popup)
 	elif _long_press_target == _player_view_stack_btn:
@@ -691,8 +708,32 @@ func _on_wall_popup_selected(id: int) -> void:
 	_wall_stack_btn.text = _wall_labels[id]
 	_wall_stack_btn.tooltip_text = _wall_tips[id]
 	# Activate the wall tool with the new mode
-	_wall_stack_btn.button_pressed = true
+	_set_active_toggle_btn(_wall_stack_btn)
 	_activate_wall_tool()
+
+
+func _set_active_toggle_btn(btn: Button) -> void:
+	## Explicitly sync the tool ButtonGroup: set btn pressed, all others not pressed.
+	## Uses set_pressed_no_signal to avoid emitting 'pressed' (activation is
+	## handled by the caller directly), and to reliably deselect other buttons
+	## regardless of ButtonGroup internals in the current Godot version.
+	for b: Button in _tool_group.get_buttons():
+		b.set_pressed_no_signal(b == btn)
+
+
+func _fire_stack_quick_action(btn: Button) -> void:
+	## Called on quick-click release of any stack button when the press was
+	## consumed to prevent DRAW_PRESSED from getting stuck.
+	if btn == _wall_stack_btn:
+		_set_active_toggle_btn(btn)
+		_activate_wall_tool()
+	elif btn == _effect_stack_btn:
+		_set_active_toggle_btn(btn)
+		_activate_effect_tool()
+	elif btn == _dm_cam_stack_btn:
+		action_fired.emit(_dm_cam_action_keys[_dm_cam_current])
+	elif btn == _player_view_stack_btn:
+		_fire_player_view_action()
 
 
 func _activate_effect_tool() -> void:
@@ -706,7 +747,7 @@ func _on_effect_popup_selected(id: int) -> void:
 	_selected_effect_type = id
 	var label: String = EffectData.EFFECT_LABELS[id] if id < EffectData.EFFECT_LABELS.size() else "FX"
 	_effect_stack_btn.tooltip_text = "Magic effect tool — %s" % label
-	_effect_stack_btn.button_pressed = true
+	_set_active_toggle_btn(_effect_stack_btn)
 	_activate_effect_tool()
 
 
