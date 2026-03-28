@@ -35,6 +35,8 @@ func load_map(map: Object) -> void:
 	_sync_tokens_from_map(map)
 	# Sync measurement state from the bundle into the MeasurementService.
 	_sync_measurements_from_map(map)
+	# Sync effect state from the bundle into the EffectService.
+	_sync_effects_from_map(map)
 	emit_signal("map_loaded", _current_map)
 
 func update_map(map: Object) -> void:
@@ -56,6 +58,8 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 	_flush_tokens_to_map(_current_map)
 	# Flush current measurement state back into the map model before serialising.
 	_flush_measurements_to_map(_current_map)
+	# Flush current effect state back into the map model before serialising.
+	_flush_effects_to_map(_current_map)
 	var json_path := bundle_path.path_join("map.json")
 	var fa := FileAccess.open(json_path, FileAccess.WRITE)
 	if fa == null:
@@ -132,3 +136,33 @@ func _flush_measurements_to_map(map: Object) -> void:
 		if md != null:
 			serialised.append(md.to_dict())
 	(map as MapData).measurements = serialised
+
+
+# ---------------------------------------------------------------------------
+# Effect sync helpers
+# ---------------------------------------------------------------------------
+
+## Load EffectData dicts from the map bundle into the EffectService (if present).
+func _sync_effects_from_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null or registry.effect.service == null:
+		return
+	registry.effect.service.load_effects((map as MapData).effects)
+
+
+## Serialise current EffectService state back into the map model for persistence.
+func _flush_effects_to_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null or registry.effect.service == null:
+		return
+	var all_effects: Array = registry.effect.service.get_all_effects()
+	var serialised: Array = []
+	for raw in all_effects:
+		var ed: EffectData = raw as EffectData
+		if ed != null:
+			serialised.append(ed.to_dict())
+	(map as MapData).effects = serialised

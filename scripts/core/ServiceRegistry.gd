@@ -23,6 +23,7 @@ var input: InputManager = null
 var token: TokenManager = null
 var history: HistoryManager = null
 var measurement: MeasurementManager = null
+var effect: EffectManager = null
 var ui_scale: UIScaleManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.

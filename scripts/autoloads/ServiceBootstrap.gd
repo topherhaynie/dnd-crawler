@@ -44,6 +44,9 @@ func _ready() -> void:
 	var measurement_svc := MeasurementService.new()
 	measurement_svc.name = "MeasurementService"
 
+	var effect_svc := EffectService.new()
+	effect_svc.name = "EffectService"
+
 	var ui_scale_svc := UIScaleService.new()
 	ui_scale_svc.name = "UIScaleService"
 
@@ -100,6 +103,10 @@ func _ready() -> void:
 	measurement_mgr.service = measurement_svc
 	registry.measurement = measurement_mgr
 
+	var effect_mgr := EffectManager.new()
+	effect_mgr.service = effect_svc
+	registry.effect = effect_mgr
+
 	var ui_scale_mgr := UIScaleManager.new()
 	ui_scale_mgr.service = ui_scale_svc
 	registry.ui_scale = ui_scale_mgr
@@ -120,6 +127,7 @@ func _ready() -> void:
 	root.call_deferred("add_child", token_svc)
 	root.call_deferred("add_child", history_svc)
 	root.call_deferred("add_child", measurement_svc)
+	root.call_deferred("add_child", effect_svc)
 	root.call_deferred("add_child", ui_scale_svc)
 
 	print("ServiceBootstrap: all services registered")

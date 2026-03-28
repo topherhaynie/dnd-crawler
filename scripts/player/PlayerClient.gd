@@ -219,6 +219,8 @@ func _handle_packet(raw: String) -> void:
 		"measurement_state", "measurement_added", "measurement_removed", \
 		"measurement_moved", "measurement_updated":
 			state_received.emit(data)
+		"effect_state", "effect_spawn", "effect_remove", "effect_burst_move":
+			state_received.emit(data)
 		"state":
 			# Full render-state snapshot (Phase 4 will flesh this out)
 			state_received.emit(data)

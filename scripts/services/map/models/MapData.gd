@@ -66,6 +66,11 @@ var tokens: Array = []
 # Persisted in map.json so measurement overlays survive map bundle reloads.
 var measurements: Array = []
 
+# --- Effects --------------------------------------------------------------
+# Array of serialised EffectData dictionaries (see EffectData.to_dict()).
+# Persisted in map.json so placed magic effects survive map bundle reloads.
+var effects: Array = []
+
 # --- Viewport state (optional, remembered across sessions) -----------------
 var camera_position: Vector2 = Vector2.ZERO
 var camera_zoom: float = 1.0
@@ -90,6 +95,7 @@ func to_dict() -> Dictionary:
 		"map_objects": map_objects.duplicate(true),
 		"tokens": tokens.duplicate(true),
 		"measurements": measurements.duplicate(true),
+		"effects": effects.duplicate(true),
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
 		"camera_rotation": camera_rotation,
@@ -111,6 +117,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.map_objects = d.get("map_objects", []).duplicate(true)
 	m.tokens = d.get("tokens", []).duplicate(true)
 	m.measurements = d.get("measurements", []).duplicate(true)
+	m.effects = d.get("effects", []).duplicate(true)
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
 	m.camera_zoom = float(d.get("camera_zoom", 1.0))

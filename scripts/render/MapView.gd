@@ -45,6 +45,7 @@ enum Tool {
 	MEASURE_CONE,
 	MEASURE_SQUARE,
 	MEASURE_RECT,
+	PLACE_EFFECT,
 }
 
 const ZOOM_MIN: float = 0.1
@@ -67,6 +68,7 @@ const ROT_HANDLE_DIST_PX: float = 22.0 ## distance above bounding box top for th
 @onready var object_layer: Node2D = get_node_or_null("ObjectLayer") as Node2D
 @onready var fog_overlay: FogSystem = $FogSystem as FogSystem
 @onready var token_layer: Node2D = $TokenLayer
+@onready var effect_layer: Node2D = $EffectLayer
 
 enum RenderLayer {
 	BACKGROUND,
@@ -228,6 +230,23 @@ signal token_right_clicked(token_id: String, screen_pos: Vector2)
 signal background_right_clicked(world_pos: Vector2, screen_pos: Vector2)
 signal token_selected(token_id: String)
 signal token_trigger_radius_changed(token_id: String, new_radius_px: float)
+signal effect_place_requested(world_pos: Vector2)
+@warning_ignore("unused_signal")
+signal effect_shape_place_requested(world_pos: Vector2, world_end: Vector2, shape: int)
+@warning_ignore("unused_signal")
+signal effect_selected(effect_id: String)
+@warning_ignore("unused_signal")
+signal effect_drag_completed(effect_id: String, new_world_pos: Vector2)
+@warning_ignore("unused_signal")
+signal effect_resize_completed(effect_id: String, new_size_px: float)
+@warning_ignore("unused_signal")
+signal effect_delete_requested(effect_id: String)
+@warning_ignore("unused_signal")
+signal effect_burst_started(effect_type: int, world_pos: Vector2, size_px: float)
+@warning_ignore("unused_signal")
+signal effect_burst_moved(world_pos: Vector2)
+@warning_ignore("unused_signal")
+signal effect_burst_ended
 @warning_ignore("unused_signal")
 signal passage_paths_committed(token_id: String, paths: Array, width_px: float)
 
@@ -261,6 +280,29 @@ var _rotate_start_angle: float = 0.0
 var _rotate_start_mouse_angle: float = 0.0
 var _trigger_radius_dragging_id: Variant = null
 var _trigger_radius_drag_node: Node2D = null
+
+## Effect selection / drag / resize state (DM-view only)
+var _selected_effect_id: String = ""
+var _dragging_effect_id: String = ""
+var _dragging_effect_node: EffectNode = null
+var _dragging_effect_offset: Vector2 = Vector2.ZERO
+var _resizing_effect_id: String = ""
+var _resizing_effect_node: EffectNode = null
+var _resize_effect_start_size: float = 96.0
+
+## Burst mode: temporary effect that plays while mouse is held
+var _burst_effect_node: EffectNode = null
+var _burst_active: bool = false
+## External configuration — set by DMWindow from EffectPanel state
+var effect_burst_mode: bool = false
+var effect_place_type: int = 0
+var effect_place_size: float = 128.0
+var effect_place_shape: int = 0  ## EffectData.EffectShape
+
+## Click-and-drag shape placement state
+var _effect_drag_placing: bool = false
+var _effect_drag_start: Vector2 = Vector2.ZERO
+var _effect_drag_preview: EffectNode = null
 
 ## Dedicated child Node2D added LAST so it renders on top of MapImage etc.
 var _indicator_overlay: Node2D = null
@@ -338,6 +380,16 @@ func reset_transient_state() -> void:
 	_meas_dragging = false
 	_meas_move_dragging = false
 	_meas_edit_dragging = false
+
+	# ── Effect interaction ──
+	_selected_effect_id = ""
+	_dragging_effect_id = ""
+	_dragging_effect_node = null
+	_resizing_effect_id = ""
+	_resizing_effect_node = null
+	_effect_drag_placing = false
+	_effect_drag_preview_clear()
+	_burst_stop()
 
 	# ── Fog interaction ──
 	_fog_rect_dragging = false
@@ -439,6 +491,7 @@ func load_map(map: MapData) -> void:
 	if measurement_overlay != null:
 		measurement_overlay.set_scale_px(_pixels_per_5ft(map))
 		_reload_measurement_overlay()
+	_reload_effects()
 
 
 func _pixels_per_5ft(map: MapData) -> float:
@@ -462,6 +515,21 @@ func _reload_measurement_overlay() -> void:
 		measurement_overlay.load_measurements(dicts)
 	else:
 		measurement_overlay.load_measurements(_map.measurements)
+
+
+func _reload_effects() -> void:
+	clear_effect_nodes()
+	if _map == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.effect != null:
+		var all_e: Array = registry.effect.get_all()
+		for raw in all_e:
+			var ed: EffectData = raw as EffectData
+			if ed != null:
+				add_effect_node(ed)
+	else:
+		load_effect_nodes(_map.effects)
 
 
 func get_map() -> MapData:
@@ -722,6 +790,178 @@ func set_token_detected(token_id: String, detected: bool) -> void:
 		if ts != null and ts.token_id == token_id:
 			ts.set_detected(detected)
 			return
+
+
+# ---------------------------------------------------------------------------
+# Effect layer management (DM-placed magic effects)
+# ---------------------------------------------------------------------------
+
+## Add a single effect node from EffectData.
+func add_effect_node(data: EffectData) -> void:
+	remove_effect_node(data.id)
+	var node := EffectNode.new()
+	node.name = "Effect_%s" % data.id
+	effect_layer.add_child(node)
+	node.apply_from_data(data)
+	node.effect_finished.connect(_on_effect_finished)
+
+
+## Remove the effect node for the given id.
+func remove_effect_node(id: String) -> void:
+	for child in effect_layer.get_children():
+		var en: EffectNode = child as EffectNode
+		if en != null and en.effect_id == id:
+			en.queue_free()
+			break
+
+
+## Move an existing effect node to a new world position.
+func move_effect_node(id: String, world_pos: Vector2) -> void:
+	for child in effect_layer.get_children():
+		var en: EffectNode = child as EffectNode
+		if en != null and en.effect_id == id:
+			en.position = world_pos
+			break
+
+
+## Replace all effect nodes from an array of serialised dicts.
+func load_effect_nodes(dicts: Array) -> void:
+	clear_effect_nodes()
+	for raw in dicts:
+		if raw is Dictionary:
+			var data: EffectData = EffectData.from_dict(raw as Dictionary)
+			add_effect_node(data)
+
+
+## Remove all effect nodes.
+func clear_effect_nodes() -> void:
+	for child in effect_layer.get_children():
+		child.queue_free()
+
+
+## Hit-test: return the EffectData id at the given world position, or empty string.
+func hit_test_effect(world_pos: Vector2) -> String:
+	for child in effect_layer.get_children():
+		var en: EffectNode = child as EffectNode
+		if en == null:
+			continue
+		var dist: float = world_pos.distance_to(en.position)
+		# Use half the sprite scale as the hit radius
+		var half: float = en._sprite.scale.x * 0.5 if en._sprite != null else 48.0
+		if dist <= half:
+			return en.effect_id
+	return ""
+
+
+## Return the EffectNode with the given id, or null.
+func _get_effect_node(id: String) -> EffectNode:
+	for child in effect_layer.get_children():
+		var en: EffectNode = child as EffectNode
+		if en != null and en.effect_id == id:
+			return en
+	return null
+
+
+func _on_effect_finished(id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.effect != null:
+		registry.effect.remove(id)
+
+
+## Returns true if the click is in the outer 30% ring of the effect (resize zone).
+func _is_effect_edge_hit(node: EffectNode, world_pos: Vector2) -> bool:
+	if node._sprite == null:
+		return false
+	var half_size: float = node._sprite.scale.x * 0.5
+	var dist: float = world_pos.distance_to(node.position)
+	return dist > half_size * 0.7
+
+
+## Start a burst effect — temporary visual that follows the mouse while held.
+func _burst_start(world_pos: Vector2) -> void:
+	_burst_stop()
+	var data := EffectData.new()
+	data.id = "__burst__"
+	data.effect_type = effect_place_type
+	data.shape = effect_place_shape
+	data.world_pos = world_pos
+	data.size_px = effect_place_size
+	data.duration_sec = -1.0
+	data.intensity = 1.0
+	data.color_tint = Color.WHITE
+	_burst_effect_node = EffectNode.new()
+	_burst_effect_node.name = "BurstEffect"
+	effect_layer.add_child(_burst_effect_node)
+	_burst_effect_node.apply_from_data(data)
+	_burst_active = true
+	effect_burst_started.emit(effect_place_type, world_pos, effect_place_size)
+
+
+## Stop the active burst effect immediately.
+func _burst_stop() -> void:
+	if _burst_effect_node != null and is_instance_valid(_burst_effect_node):
+		_burst_effect_node.queue_free()
+	_burst_effect_node = null
+	if _burst_active:
+		_burst_active = false
+		effect_burst_ended.emit()
+
+
+## Begin a click-and-drag effect placement preview at the click origin.
+func _effect_drag_preview_start(world_pos: Vector2) -> void:
+	_effect_drag_preview_clear()
+	var data := EffectData.new()
+	data.id = "__drag_preview__"
+	data.effect_type = effect_place_type
+	data.shape = effect_place_shape
+	data.world_pos = world_pos
+	data.world_end = world_pos
+	data.size_px = effect_place_size
+	data.duration_sec = -1.0
+	data.intensity = 0.6
+	data.color_tint = Color(1.0, 1.0, 1.0, 0.6)
+	_effect_drag_preview = EffectNode.new()
+	_effect_drag_preview.name = "DragPreview"
+	effect_layer.add_child(_effect_drag_preview)
+	_effect_drag_preview.apply_from_data(data)
+
+
+## Update the drag preview to stretch from start to current mouse position.
+func _effect_drag_preview_update(world_pos: Vector2) -> void:
+	if _effect_drag_preview == null:
+		return
+	var data := EffectData.new()
+	data.id = "__drag_preview__"
+	data.effect_type = effect_place_type
+	data.shape = effect_place_shape
+	data.world_pos = _effect_drag_start
+	data.world_end = world_pos
+	data.size_px = effect_place_size
+	data.duration_sec = -1.0
+	data.intensity = 0.6
+	data.color_tint = Color(1.0, 1.0, 1.0, 0.6)
+	# For CIRCLE, size_px = diameter based on drag distance
+	if data.shape == EffectData.EffectShape.CIRCLE:
+		data.size_px = _effect_drag_start.distance_to(world_pos) * 2.0
+	_effect_drag_preview.apply_from_data(data)
+
+
+## Finalize the drag: emit the placement signal with proper shape data.
+func _effect_drag_finish(world_pos: Vector2) -> void:
+	_effect_drag_preview_clear()
+	_effect_drag_placing = false
+	var dist: float = _effect_drag_start.distance_to(world_pos)
+	# If barely dragged, fall back to single-click placement
+	if dist < 4.0:
+		effect_place_requested.emit(_effect_drag_start)
+		return
+	effect_shape_place_requested.emit(_effect_drag_start, world_pos, effect_place_shape)
+
+
+func _effect_drag_preview_clear() -> void:
+	if _effect_drag_preview != null and is_instance_valid(_effect_drag_preview):
+		_effect_drag_preview.queue_free()
+	_effect_drag_preview = null
 
 
 ## Update wall / passthrough state for a DOOR or SECRET_PASSAGE token.
@@ -1682,6 +1922,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				_selected_meas_id = ""
 				get_viewport().set_input_as_handled()
 				return
+			# Delete selected effect in SELECT or PLACE_EFFECT mode
+			if (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT) and _selected_effect_id != "":
+				effect_delete_requested.emit(_selected_effect_id)
+				_selected_effect_id = ""
+				get_viewport().set_input_as_handled()
+				return
 
 	# Fix: Deselect wall tools when SELECT or PAN is chosen
 	if active_tool == Tool.SELECT or active_tool == Tool.PAN:
@@ -1706,9 +1952,27 @@ func _unhandled_input(event: InputEvent) -> void:
 		var btn_event := event as InputEventMouseButton
 		match btn_event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
+				if _selected_effect_id != "" and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT):
+					var sel_node: EffectNode = _get_effect_node(_selected_effect_id)
+					if sel_node != null and sel_node._sprite != null:
+						var cur: float = sel_node._sprite.scale.x
+						var new_size: float = clampf(cur + 16.0, 24.0, 1024.0)
+						sel_node._sprite.scale = Vector2(new_size, new_size)
+						effect_resize_completed.emit(_selected_effect_id, new_size)
+						get_viewport().set_input_as_handled()
+						return
 				_zoom_camera(ZOOM_STEP, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_WHEEL_DOWN:
+				if _selected_effect_id != "" and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT):
+					var sel_node: EffectNode = _get_effect_node(_selected_effect_id)
+					if sel_node != null and sel_node._sprite != null:
+						var cur: float = sel_node._sprite.scale.x
+						var new_size: float = clampf(cur - 16.0, 24.0, 1024.0)
+						sel_node._sprite.scale = Vector2(new_size, new_size)
+						effect_resize_completed.emit(_selected_effect_id, new_size)
+						get_viewport().set_input_as_handled()
+						return
 				_zoom_camera(-ZOOM_STEP, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_MIDDLE:
@@ -1771,6 +2035,36 @@ func _unhandled_input(event: InputEvent) -> void:
 						token_place_requested.emit(pt_world)
 						get_viewport().set_input_as_handled()
 						return
+					# PLACE_EFFECT — click existing to select/drag/resize, else place new or burst.
+					if active_tool == Tool.PLACE_EFFECT:
+						var eff_world := get_global_mouse_position()
+						var eff_hit: String = hit_test_effect(eff_world)
+						if not eff_hit.is_empty():
+							_selected_effect_id = eff_hit
+							effect_selected.emit(eff_hit)
+							var eff_node: EffectNode = _get_effect_node(eff_hit)
+							if eff_node != null:
+								if _is_effect_edge_hit(eff_node, eff_world):
+									_resizing_effect_id = eff_hit
+									_resizing_effect_node = eff_node
+									_resize_effect_start_size = eff_node._sprite.scale.x if eff_node._sprite != null else 96.0
+								else:
+									_dragging_effect_id = eff_hit
+									_dragging_effect_node = eff_node
+									_dragging_effect_offset = eff_node.position - eff_world
+							get_viewport().set_input_as_handled()
+							return
+						if effect_burst_mode:
+							# Burst: spawn temporary visual that follows mouse
+							_burst_start(eff_world)
+							get_viewport().set_input_as_handled()
+							return
+						# Start click-and-drag shape placement
+						_effect_drag_placing = true
+						_effect_drag_start = eff_world
+						_effect_drag_preview_start(eff_world)
+						get_viewport().set_input_as_handled()
+						return
 					# Token interaction — handle hit (resize/rotate) takes priority over body move.
 					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
 						var world_pos := get_global_mouse_position()
@@ -1816,6 +2110,25 @@ func _unhandled_input(event: InputEvent) -> void:
 								_update_cursor(world_pos)
 								get_viewport().set_input_as_handled()
 								return
+						# Effect hit-test — select / drag / resize existing effect.
+						var eff_sel_id: String = hit_test_effect(world_pos)
+						if not eff_sel_id.is_empty():
+							_selected_effect_id = eff_sel_id
+							effect_selected.emit(eff_sel_id)
+							var eff_sel_node: EffectNode = _get_effect_node(eff_sel_id)
+							if eff_sel_node != null:
+								if _is_effect_edge_hit(eff_sel_node, world_pos):
+									_resizing_effect_id = eff_sel_id
+									_resizing_effect_node = eff_sel_node
+									_resize_effect_start_size = eff_sel_node._sprite.scale.x if eff_sel_node._sprite != null else 96.0
+								else:
+									_dragging_effect_id = eff_sel_id
+									_dragging_effect_node = eff_sel_node
+									_dragging_effect_offset = eff_sel_node.position - world_pos
+							get_viewport().set_input_as_handled()
+							return
+						# Deselect effect when clicking empty space
+						_selected_effect_id = ""
 						# Handle resize takes priority over body-drag
 						if _viewport_indicator != Rect2() and _indicator_overlay != null:
 							var handle_idx: int = _indicator_overlay.get_handle_at(world_pos)
@@ -1837,6 +2150,14 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					return
 				else:
+					if _burst_active:
+						_burst_stop()
+						get_viewport().set_input_as_handled()
+						return
+					if _effect_drag_placing:
+						_effect_drag_finish(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+						return
 					if _trigger_radius_dragging_id != null:
 						var final_radius: float = 96.0
 						var tr_ts := _trigger_radius_drag_node as TokenSprite
@@ -1881,6 +2202,19 @@ func _unhandled_input(event: InputEvent) -> void:
 						_dragging_token_offset = Vector2.ZERO
 						_update_cursor(get_global_mouse_position())
 						get_viewport().set_input_as_handled()
+					elif _dragging_effect_node != null:
+						effect_drag_completed.emit(_dragging_effect_id, _dragging_effect_node.position)
+						_dragging_effect_id = ""
+						_dragging_effect_node = null
+						_dragging_effect_offset = Vector2.ZERO
+						get_viewport().set_input_as_handled()
+					elif _resizing_effect_node != null:
+						var final_size: float = _resizing_effect_node._sprite.scale.x if _resizing_effect_node._sprite != null else _resize_effect_start_size
+						effect_resize_completed.emit(_resizing_effect_id, final_size)
+						_resizing_effect_id = ""
+						_resizing_effect_node = null
+						_resize_effect_start_size = 96.0
+						get_viewport().set_input_as_handled()
 					elif _resizing_indicator:
 						_resizing_indicator = false
 						get_viewport().set_input_as_handled()
@@ -1891,7 +2225,7 @@ func _unhandled_input(event: InputEvent) -> void:
 						_panning = false
 						get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_RIGHT:
-				if btn_event.pressed and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_TOKEN):
+				if btn_event.pressed and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_TOKEN or active_tool == Tool.PLACE_EFFECT):
 					var world_pos_r := get_global_mouse_position()
 					var hit_id_r: Variant = _hit_test_tokens(world_pos_r)
 					if hit_id_r != null:
@@ -1905,6 +2239,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	# --- Mouse motion (panning + indicator drag) ----------------------------
 	if event is InputEventMouseMotion:
 		var motion_world_pos := get_global_mouse_position()
+		if _effect_drag_placing and _effect_drag_preview != null:
+			_effect_drag_preview_update(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
+		if _burst_active and _burst_effect_node != null:
+			_burst_effect_node.position = motion_world_pos
+			effect_burst_moved.emit(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
 		if _trigger_radius_dragging_id != null and _trigger_radius_drag_node != null:
 			var local_mouse: Vector2 = _trigger_radius_drag_node.to_local(motion_world_pos)
 			var new_radius: float = maxf(24.0, local_mouse.length())
@@ -1948,6 +2291,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _dragging_token_node != null:
 			_dragging_token_node.global_position = motion_world_pos + _dragging_token_offset
 			_update_cursor(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
+		if _dragging_effect_node != null:
+			_dragging_effect_node.position = motion_world_pos + _dragging_effect_offset
+			get_viewport().set_input_as_handled()
+			return
+		if _resizing_effect_node != null and _resizing_effect_node._sprite != null:
+			var dist_to_center: float = motion_world_pos.distance_to(_resizing_effect_node.position)
+			var new_size: float = clampf(dist_to_center * 2.0, 24.0, 1024.0)
+			_resizing_effect_node._sprite.scale = Vector2(new_size, new_size)
 			get_viewport().set_input_as_handled()
 			return
 		_update_cursor(motion_world_pos)
@@ -2843,6 +3196,8 @@ func apply_render_profile(profile: int) -> void:
 		wall_layer.z_index = RenderLayer.WALL
 	# In DM view, tokens render above fog so the DM can always see them.
 	token_layer.z_index = (RenderLayer.FOG + 2) if is_dm_view else RenderLayer.PLAYER
+	# Effects always render above fog (both DM and player).
+	effect_layer.z_index = RenderLayer.FOG + 4
 	if spawn_point_layer:
 		spawn_point_layer.visible = is_dm_view
 	_refresh_fog_overlay()
@@ -2868,6 +3223,7 @@ func _apply_layer_order() -> void:
 	if object_layer:
 		object_layer.z_index = RenderLayer.OBJECT
 	token_layer.z_index = RenderLayer.PLAYER
+	effect_layer.z_index = RenderLayer.FOG + 4
 	fog_overlay.z_index = RenderLayer.FOG
 	if _indicator_overlay:
 		_indicator_overlay.z_index = RenderLayer.PLAYER_VIEWPORT

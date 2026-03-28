@@ -30,3 +30,5 @@ script = ExtResource("2_GridOverlay")
 script = ExtResource("3_FogOverlay")
 
 [node name="TokenLayer" type="Node2D" parent="."]
+
+[node name="EffectLayer" type="Node2D" parent="."]

@@ -27,6 +27,7 @@ const ToolPaletteScript = preload("res://scripts/ui/ToolPalette.gd")
 const BundleBrowserScript = preload("res://scripts/ui/BundleBrowser.gd")
 const NetworkUtilsScript = preload("res://scripts/utils/NetworkUtils.gd")
 const QRCodeScript = preload("res://scripts/utils/QRCode.gd")
+const EffectPanelScript = preload("res://scripts/ui/EffectPanel.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SAVE_DIR := "user://data/saves/"
@@ -146,6 +147,7 @@ var _token_clipboard: Dictionary = {}
 var _background_right_click_pos: Vector2 = Vector2.ZERO
 ## Background context menu (right-click on empty map space).
 var _background_context_menu: PopupMenu = null
+var _background_right_click_effect_id: String = ""
 
 # ── Passage paint panel ────────────────────────────────────────────────────
 var _passage_panel: PanelContainer = null
@@ -211,6 +213,11 @@ var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which
 var _prev_player_positions: Dictionary = {} ## {player_id: Vector2} — previous frame positions for swept-path
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
 var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
+
+# ── Effect panel ─────────────────────────────────────────────────────────────
+var _effect_panel: PanelContainer = null
+var _effect_panel_window: Window = null
+var _effect_panel_floating: bool = false
 
 # ── Share player link dialog ────────────────────────────────────────────────
 var _share_dialog: AcceptDialog = null
@@ -620,6 +627,14 @@ func _build_ui() -> void:
 	_map_view.background_right_clicked.connect(_on_background_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
 	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
+	_map_view.effect_place_requested.connect(_on_effect_place_requested)
+	_map_view.effect_shape_place_requested.connect(_on_effect_shape_place_requested)
+	_map_view.effect_drag_completed.connect(_on_effect_drag_completed)
+	_map_view.effect_resize_completed.connect(_on_effect_resize_completed)
+	_map_view.effect_delete_requested.connect(_on_effect_delete_requested)
+	_map_view.effect_burst_started.connect(_on_effect_burst_started)
+	_map_view.effect_burst_moved.connect(_on_effect_burst_moved)
+	_map_view.effect_burst_ended.connect(_on_effect_burst_ended)
 	_wire_measure_signals()
 	_backend = BackendRuntimeScript.new() as BackendRuntime
 	_backend.name = "BackendRuntime"
@@ -719,6 +734,8 @@ func _build_ui() -> void:
 	_view_menu.set_item_checked(0, true)
 	_view_menu.add_check_item("Player Freeze Panel", 25)
 	_view_menu.set_item_checked(1, true)
+	_view_menu.add_check_item("Effect Panel", 29)
+	_view_menu.set_item_checked(_view_menu.get_item_index(29), false)
 	_view_menu.add_check_item("Grid Overlay", 21)
 	_view_menu.set_item_checked(2, true)
 	_view_menu.add_separator()
@@ -794,6 +811,7 @@ func _build_ui() -> void:
 	_palette.play_mode_toggled.connect(_on_palette_play_mode_toggled)
 	_palette.dm_fog_visible_toggled.connect(_on_dm_fog_visible_toggled)
 	_palette.flashlights_only_toggled.connect(_on_flashlights_only_toggled)
+	_palette.effect_tool_activated.connect(_on_palette_effect_tool_activated)
 	_palette.undock_btn.pressed.connect(_on_undock_btn_pressed)
 
 	# Add flyout panel to ui layer (not ui_root) for HiDPI stability
@@ -811,6 +829,7 @@ func _build_ui() -> void:
 	# Added directly to _ui_layer (not _ui_root) so _ui_root.scale does not
 	# push it off-screen on HiDPI / Retina displays.
 	_build_freeze_panel()
+	_build_effect_panel()
 	_build_passage_panel()
 
 	_status_label = Label.new()
@@ -1117,6 +1136,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_broadcast_token_state()
 	_broadcast_puzzle_notes_state()
 	_broadcast_measurement_state()
+	_broadcast_effect_state()
 	# Send current fog overlay state so the player matches the DM.
 	var overlay_idx := _view_menu.get_item_index(28)
 	_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": _view_menu.is_item_checked(overlay_idx)})
@@ -1404,6 +1424,43 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 			_map_view.set_fog_tool(0, 64.0)
 			_map_view._set_active_tool(_map_view.Tool.PLACE_TOKEN)
 			_set_status("Token tool — click to place, click existing to select, right-click to edit")
+		"effect":
+			_map_view.set_fog_tool(0, 64.0)
+			_map_view._set_active_tool(_map_view.Tool.PLACE_EFFECT)
+			if _effect_panel != null:
+				_effect_panel.visible = true
+				if _view_menu != null:
+					_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+				_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
+				_map_view.effect_place_size = _effect_panel.get_effect_size()
+				_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
+				_map_view.effect_place_shape = _effect_panel.get_selected_shape()
+			var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
+			var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
+			_set_status("Effect tool — %s — click to place" % eff_label)
+
+
+func _on_palette_effect_tool_activated(_effect_type: int) -> void:
+	if _map_view == null:
+		return
+	_map_view.set_fog_tool(0, 64.0)
+	_map_view._set_active_tool(_map_view.Tool.PLACE_EFFECT)
+
+	# Auto-show the effect panel and sync state to MapView
+	if _effect_panel != null:
+		_effect_panel.visible = true
+		if _view_menu != null:
+			_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+		_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
+		_map_view.effect_place_size = _effect_panel.get_effect_size()
+		_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
+		_map_view.effect_place_shape = _effect_panel.get_selected_shape()
+
+	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else _effect_type
+	var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
+	var burst: bool = _effect_panel.is_burst_mode() if _effect_panel != null else false
+	var suffix: String = " (burst)" if burst else ""
+	_set_status("Effect tool — %s%s — click to place" % [eff_label, suffix])
 
 
 func _on_palette_action_fired(action_key: String) -> void:
@@ -1900,6 +1957,148 @@ func _dock_freeze_panel() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Effect panel — build, undock/redock
+# ---------------------------------------------------------------------------
+
+func _build_effect_panel() -> void:
+	_effect_panel = EffectPanelScript.new() as PanelContainer
+	_effect_panel.setup(_get_ui_scale_mgr())
+	_effect_panel.visible = false
+
+	# Anchor to right edge, offset to the left of the freeze panel.
+	_effect_panel.anchor_left = 1.0
+	_effect_panel.anchor_right = 1.0
+	_effect_panel.anchor_top = 0.0
+	_effect_panel.anchor_bottom = 1.0
+	_effect_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_ui_layer.add_child(_effect_panel)
+	_apply_effect_panel_size()
+
+	# Wire signals
+	_effect_panel.effect_type_selected.connect(_on_effect_panel_type_selected)
+	_effect_panel.shape_changed.connect(_on_effect_panel_shape_changed)
+	_effect_panel.burst_mode_changed.connect(_on_effect_panel_burst_changed)
+	_effect_panel.size_changed.connect(_on_effect_panel_size_changed)
+	_effect_panel._undock_btn.pressed.connect(_on_effect_undock_btn_pressed)
+
+
+func _apply_effect_panel_size() -> void:
+	if _effect_panel == null:
+		return
+	var scale := _ui_scale()
+	var panel_w := roundi(170.0 * scale)
+	var freeze_w := roundi(200.0 * scale) if (_freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating) else 0
+	_effect_panel.offset_left = float(-(panel_w + freeze_w))
+	_effect_panel.offset_right = float(-freeze_w)
+	_effect_panel.offset_top = _menu_bar_screen_height()
+	_effect_panel.offset_bottom = 0.0
+
+
+func _on_effect_panel_type_selected(effect_type: int) -> void:
+	if _map_view != null:
+		_map_view.effect_place_type = effect_type
+	var label: String = EffectData.EFFECT_LABELS[effect_type] if effect_type < EffectData.EFFECT_LABELS.size() else "FX"
+	var burst: bool = _effect_panel.is_burst_mode() if _effect_panel != null else false
+	var suffix: String = " (burst)" if burst else ""
+	_set_status("Effect tool — %s%s — click to place" % [label, suffix])
+
+
+func _on_effect_panel_shape_changed(shape: int) -> void:
+	if _map_view != null:
+		_map_view.effect_place_shape = shape
+
+
+func _on_effect_panel_burst_changed(enabled: bool) -> void:
+	if _map_view != null:
+		_map_view.effect_burst_mode = enabled
+	var label: String = EffectData.EFFECT_LABELS[_map_view.effect_place_type] if _map_view != null and _map_view.effect_place_type < EffectData.EFFECT_LABELS.size() else "FX"
+	var suffix: String = " (burst)" if enabled else ""
+	_set_status("Effect tool — %s%s — click to place" % [label, suffix])
+
+
+func _on_effect_panel_size_changed(size_px: float) -> void:
+	if _map_view != null:
+		_map_view.effect_place_size = size_px
+
+
+func _update_effect_panel_calibration() -> void:
+	if _effect_panel == null:
+		return
+	var px_per_5ft: float = _pixels_per_5ft_current()
+	_effect_panel.set_px_per_foot(px_per_5ft / 5.0)
+
+
+func _on_effect_undock_btn_pressed() -> void:
+	if _effect_panel_floating:
+		_dock_effect_panel()
+	else:
+		_undock_effect_panel()
+
+
+func _undock_effect_panel() -> void:
+	if _effect_panel_floating or _effect_panel == null:
+		return
+	_effect_panel_floating = true
+	if _effect_panel._undock_btn:
+		_effect_panel._undock_btn.text = "⇱"
+		_effect_panel._undock_btn.tooltip_text = "Re-dock effect panel"
+
+	_effect_panel_window = Window.new()
+	_effect_panel_window.title = "Effects"
+	_effect_panel_window.popup_window = false
+	_effect_panel_window.exclusive = false
+	add_child(_effect_panel_window)
+
+	var old_parent: Node = _effect_panel.get_parent()
+	if old_parent:
+		old_parent.remove_child(_effect_panel)
+	_effect_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_effect_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_effect_panel_window.add_child(_effect_panel)
+	_effect_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_effect_panel.offset_left = 0.0
+	_effect_panel.offset_right = 0.0
+	_effect_panel.offset_top = 0.0
+	_effect_panel.offset_bottom = 0.0
+
+	_effect_panel_window.close_requested.connect(_dock_effect_panel)
+	var _fm := _get_ui_scale_mgr()
+	if _fm != null:
+		_fm.popup_fitted(_effect_panel_window, 200.0, 500.0)
+	else:
+		_effect_panel_window.popup_centered()
+
+	if _view_menu != null:
+		_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+
+
+func _dock_effect_panel() -> void:
+	if not _effect_panel_floating or _effect_panel == null:
+		return
+	_effect_panel_floating = false
+	if _effect_panel._undock_btn:
+		_effect_panel._undock_btn.text = "⇲"
+		_effect_panel._undock_btn.tooltip_text = "Detach / re-dock effect panel"
+
+	if _effect_panel_window:
+		_effect_panel_window.remove_child(_effect_panel)
+
+	_effect_panel.anchor_left = 1.0
+	_effect_panel.anchor_right = 1.0
+	_effect_panel.anchor_top = 0.0
+	_effect_panel.anchor_bottom = 1.0
+	_effect_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+
+	if _ui_layer != null:
+		_ui_layer.add_child(_effect_panel)
+		_apply_effect_panel_size()
+
+	if _effect_panel_window:
+		_effect_panel_window.queue_free()
+		_effect_panel_window = null
+
+
+# ---------------------------------------------------------------------------
 # Menu handlers
 # ---------------------------------------------------------------------------
 
@@ -1966,6 +2165,10 @@ func _on_view_menu_id(id: int) -> void:
 				_freeze_panel.visible = !_freeze_panel.visible
 				_view_menu.set_item_checked(1, _freeze_panel.visible)
 				_nm_set_checked("View", 25, _freeze_panel.visible)
+		29: # Toggle effect panel
+			if _effect_panel != null:
+				_effect_panel.visible = !_effect_panel.visible
+				_view_menu.set_item_checked(_view_menu.get_item_index(29), _effect_panel.visible)
 		21: # Toggle grid overlay
 			if _map_view:
 				var go: Node2D = _map_view.grid_overlay
@@ -2111,6 +2314,7 @@ func _on_calibration_done(map: MapData) -> void:
 	_map_view.grid_overlay.apply_map_data(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
+	_update_effect_panel_calibration()
 	var detail := ("cell_px=%.1f" % map.cell_px) if map.grid_type == MapData.GridType.SQUARE else ("hex_size=%.1f" % map.hex_size)
 	_set_status("Calibrated: %s  offset=(%.0f, %.0f)" % [detail, map.grid_offset.x, map.grid_offset.y])
 
@@ -2148,6 +2352,7 @@ func _on_manual_scale_confirmed() -> void:
 	_map_view.grid_overlay.apply_map_data(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
+	_update_effect_panel_calibration()
 	_set_status("Scale set: %.1f px = %.0f ft" % [px_per_cell, ft_per_cell])
 
 
@@ -3339,9 +3544,7 @@ func _on_token_place_requested(world_pos: Vector2) -> void:
 
 
 func _on_background_right_clicked(world_pos: Vector2, screen_pos: Vector2) -> void:
-	## Right-click on empty map space — show background context menu with Paste.
-	if _token_clipboard.is_empty():
-		return
+	## Right-click on empty map space — show background context menu.
 	_background_right_click_pos = world_pos
 	if _background_context_menu == null:
 		_background_context_menu = PopupMenu.new()
@@ -3349,7 +3552,15 @@ func _on_background_right_clicked(world_pos: Vector2, screen_pos: Vector2) -> vo
 		add_child(_background_context_menu)
 	_apply_token_context_menu_theme_to(_background_context_menu)
 	_background_context_menu.clear()
-	_background_context_menu.add_item("Paste Token", 0)
+	# Check if right-click is on an active effect.
+	var eff_id: String = _map_view.hit_test_effect(world_pos) if _map_view != null else ""
+	if not eff_id.is_empty():
+		_background_right_click_effect_id = eff_id
+		_background_context_menu.add_item("Remove Effect", 1)
+	if not _token_clipboard.is_empty():
+		_background_context_menu.add_item("Paste Token", 0)
+	if _background_context_menu.item_count == 0:
+		return
 	_background_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
 
 
@@ -3357,6 +3568,113 @@ func _on_background_context_menu_id(id: int) -> void:
 	match id:
 		0: # Paste Token
 			_paste_token(_background_right_click_pos)
+		1: # Remove Effect
+			if not _background_right_click_effect_id.is_empty():
+				_delete_effect(_background_right_click_effect_id)
+				_background_right_click_effect_id = ""
+
+
+func _delete_effect(id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var existing: EffectData = registry.effect.get_by_id(id)
+	if existing == null:
+		return
+	var snapshot: Dictionary = existing.to_dict()
+	_effect_apply_remove(id)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Remove effect",
+			func() -> void: _effect_apply_add(EffectData.from_dict(snapshot)),
+			func() -> void: _effect_apply_remove(id))
+		registry.history.push_command(cmd)
+
+
+func _on_effect_delete_requested(id: String) -> void:
+	_delete_effect(id)
+
+
+func _on_effect_drag_completed(id: String, new_world_pos: Vector2) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var existing: EffectData = registry.effect.get_by_id(id)
+	if existing == null:
+		return
+	var old_pos: Vector2 = existing.world_pos
+	existing.world_pos = new_world_pos
+	_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": existing.to_dict()})
+	_mark_map_dirty_effects()
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Move effect",
+			func() -> void:
+				var e: EffectData = registry.effect.get_by_id(id)
+				if e != null:
+					e.world_pos = old_pos
+					if _map_view != null:
+						_map_view.remove_effect_node(id)
+						_map_view.add_effect_node(e)
+					_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": e.to_dict()})
+					_mark_map_dirty_effects(),
+			func() -> void:
+				var e: EffectData = registry.effect.get_by_id(id)
+				if e != null:
+					e.world_pos = new_world_pos
+					if _map_view != null:
+						_map_view.remove_effect_node(id)
+						_map_view.add_effect_node(e)
+					_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": e.to_dict()})
+					_mark_map_dirty_effects())
+		registry.history.push_command(cmd)
+
+
+func _on_effect_resize_completed(id: String, new_size_px: float) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var existing: EffectData = registry.effect.get_by_id(id)
+	if existing == null:
+		return
+	var old_size: float = existing.size_px
+	existing.size_px = new_size_px
+	_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": existing.to_dict()})
+	_mark_map_dirty_effects()
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Resize effect",
+			func() -> void:
+				var e: EffectData = registry.effect.get_by_id(id)
+				if e != null:
+					e.size_px = old_size
+					if _map_view != null:
+						_map_view.remove_effect_node(id)
+						_map_view.add_effect_node(e)
+					_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": e.to_dict()})
+					_mark_map_dirty_effects(),
+			func() -> void:
+				var e: EffectData = registry.effect.get_by_id(id)
+				if e != null:
+					e.size_px = new_size_px
+					if _map_view != null:
+						_map_view.remove_effect_node(id)
+						_map_view.add_effect_node(e)
+					_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": e.to_dict()})
+					_mark_map_dirty_effects())
+		registry.history.push_command(cmd)
+
+
+func _on_effect_burst_started(effect_type: int, world_pos: Vector2, size_px: float) -> void:
+	var data: EffectData = EffectData.create(effect_type, world_pos, size_px, -1.0)
+	data.id = "__burst__"
+	data.shape = _effect_panel.get_selected_shape() if _effect_panel != null else 0
+	_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": data.to_dict()})
+
+
+func _on_effect_burst_moved(world_pos: Vector2) -> void:
+	_nm_broadcast_to_displays({"msg": "effect_burst_move", "x": world_pos.x, "y": world_pos.y})
+
+
+func _on_effect_burst_ended() -> void:
+	_nm_broadcast_to_displays({"msg": "effect_remove", "effect_id": "__burst__"})
 
 
 func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
@@ -4207,6 +4525,106 @@ func _meas_apply_restore(snapshots: Array) -> void:
 	_broadcast_measurement_state()
 	_refresh_measure_shape_list()
 	_mark_map_dirty()
+
+
+# ---------------------------------------------------------------------------
+# Magic effect helpers
+# ---------------------------------------------------------------------------
+
+## Broadcast full effect state snapshot to all connected displays.
+func _broadcast_effect_state() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var all_e: Array = registry.effect.get_all()
+	var dicts: Array = []
+	for raw in all_e:
+		var ed: EffectData = raw as EffectData
+		if ed != null:
+			dicts.append(ed.to_dict())
+	_nm_broadcast_to_displays({"msg": "effect_state", "effects": dicts})
+
+
+## Called when the DM clicks on the map with the PLACE_EFFECT tool active.
+func _on_effect_place_requested(world_pos: Vector2) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
+	var size_px: float = _effect_panel.get_effect_size() if _effect_panel != null else 128.0
+	var shape: int = _effect_panel.get_selected_shape() if _effect_panel != null else 0
+	var data: EffectData = EffectData.create(eff_type, world_pos, size_px, -1.0)
+	data.shape = shape
+	var snapshot: Dictionary = data.to_dict()
+	var id: String = data.id
+	_effect_apply_add(data)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Spawn effect",
+			func() -> void: _effect_apply_remove(id),
+			func() -> void: _effect_apply_add(EffectData.from_dict(snapshot)))
+		registry.history.push_command(cmd)
+
+
+## Called when the DM click-drags on the map to define a shaped effect.
+func _on_effect_shape_place_requested(world_pos: Vector2, world_end: Vector2, shape: int) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
+	var size_px: float = _effect_panel.get_effect_size() if _effect_panel != null else 128.0
+	var data: EffectData = EffectData.create(eff_type, world_pos, size_px, -1.0)
+	data.shape = shape
+	data.world_end = world_end
+	# For CIRCLE, size_px = diameter from drag distance
+	if shape == EffectData.EffectShape.CIRCLE:
+		data.size_px = world_pos.distance_to(world_end) * 2.0
+	var snapshot: Dictionary = data.to_dict()
+	var id: String = data.id
+	_effect_apply_add(data)
+	if registry.history != null:
+		var cmd := HistoryCommand.create("Spawn effect",
+			func() -> void: _effect_apply_remove(id),
+			func() -> void: _effect_apply_add(EffectData.from_dict(snapshot)))
+		registry.history.push_command(cmd)
+
+
+func _effect_apply_add(data: EffectData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	registry.effect.spawn(data)
+	if _map_view != null:
+		_map_view.add_effect_node(data)
+	_nm_broadcast_to_displays({"msg": "effect_spawn", "effect": data.to_dict()})
+	_mark_map_dirty_effects()
+
+
+func _effect_apply_remove(id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	registry.effect.remove(id)
+	if _map_view != null:
+		_map_view.remove_effect_node(id)
+	_nm_broadcast_to_displays({"msg": "effect_remove", "effect_id": id})
+	_mark_map_dirty_effects()
+
+
+func _mark_map_dirty_effects() -> void:
+	## Flush effects into MapData so the next save includes them.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.map == null:
+		return
+	var map: MapData = registry.map.get_map() as MapData
+	if map == null:
+		return
+	var all_e: Array = []
+	if registry.effect != null:
+		for raw in registry.effect.get_all():
+			var ed: EffectData = raw as EffectData
+			if ed != null:
+				all_e.append(ed.to_dict())
+	map.effects = all_e
 
 
 # ---------------------------------------------------------------------------
@@ -5123,6 +5541,7 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	_broadcast_token_state()
 	_grid_type_selected = map.grid_type
 	_update_grid_submenu_checks()
+	_update_effect_panel_calibration()
 
 
 func _simulate_player_movement(delta: float) -> bool:
@@ -5715,6 +6134,8 @@ func _apply_ui_scale() -> void:
 		_ui_root.scale = Vector2(scale, scale)
 	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
 		_apply_freeze_panel_size()
+	if _effect_panel and _effect_panel.get_parent() == _ui_layer:
+		_apply_effect_panel_size()
 	if _passage_panel and _passage_panel.get_parent() == _ui_layer:
 		_apply_passage_panel_size()
 	# Update freeze panel static widget sizes and rebuild rows at new scale.

@@ -23,6 +23,7 @@ signal move_to_spawns_requested()
 signal play_mode_toggled(active: bool)
 signal dm_fog_visible_toggled(enabled: bool)
 signal flashlights_only_toggled(enabled: bool)
+signal effect_tool_activated(effect_type: int)
 
 # ── Public references (DMWindow reads these for state queries) ───────────────
 var select_btn: Button = null
@@ -54,6 +55,9 @@ var _player_view_stack_btn: Button = null
 var _player_view_popup: PopupMenu = null
 var _wall_stack_btn: Button = null
 var _wall_popup: PopupMenu = null
+var _effect_stack_btn: Button = null
+var _effect_popup: PopupMenu = null
+var _selected_effect_type: int = 0  ## EffectData.EffectType value
 
 # Long-press tracking
 var _long_press_timer: Timer = null
@@ -287,6 +291,25 @@ func _build() -> void:
 	token_btn.pressed.connect(func() -> void: _activate_tool("token"))
 	token_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(token_btn)
+
+	# Effect (stacked — right-click/hold selects effect type)
+	_effect_stack_btn = _make_toggle_btn("FX", "Magic effect tool — %s" % EffectData.EFFECT_LABELS[0], _tool_group)
+	_effect_stack_btn.pressed.connect(func() -> void: _activate_effect_tool())
+	_effect_stack_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
+	palette_vbox.add_child(_effect_stack_btn)
+
+	var fx_indicator := _make_stack_indicator()
+	_effect_stack_btn.add_child(fx_indicator)
+
+	_effect_popup = PopupMenu.new()
+	for idx in EffectData.EFFECT_LABELS.size():
+		_effect_popup.add_item(EffectData.EFFECT_LABELS[idx], idx)
+	_effect_popup.add_theme_font_size_override("font_size", roundi(13.0 * s))
+	_effect_popup.id_pressed.connect(_on_effect_popup_selected)
+	add_child(_effect_popup)
+
+	_effect_stack_btn.gui_input.connect(func(ev: InputEvent) -> void:
+		_handle_stack_input(ev, _effect_stack_btn, _effect_popup))
 
 	palette_vbox.add_child(HSeparator.new())
 
@@ -538,6 +561,8 @@ func _on_long_press_timeout() -> void:
 		_show_stack_popup(_player_view_stack_btn, _player_view_popup)
 	elif _long_press_target == _wall_stack_btn:
 		_show_stack_popup(_wall_stack_btn, _wall_popup)
+	elif _long_press_target == _effect_stack_btn:
+		_show_stack_popup(_effect_stack_btn, _effect_popup)
 	_long_press_target = null
 
 
@@ -608,6 +633,29 @@ func _on_wall_popup_selected(id: int) -> void:
 	# Activate the wall tool with the new mode
 	_wall_stack_btn.button_pressed = true
 	_activate_wall_tool()
+
+
+func _activate_effect_tool() -> void:
+	_active_tool_key = "effect"
+	tool_activated.emit("effect")
+	effect_tool_activated.emit(_selected_effect_type)
+	hide_flyout()
+
+
+func _on_effect_popup_selected(id: int) -> void:
+	_selected_effect_type = id
+	var label: String = EffectData.EFFECT_LABELS[id] if id < EffectData.EFFECT_LABELS.size() else "FX"
+	_effect_stack_btn.tooltip_text = "Magic effect tool — %s" % label
+	_effect_stack_btn.button_pressed = true
+	_activate_effect_tool()
+
+
+func get_selected_effect_type() -> int:
+	return _selected_effect_type
+
+
+func is_effect_burst_mode() -> bool:
+	return false
 
 
 # ---------------------------------------------------------------------------

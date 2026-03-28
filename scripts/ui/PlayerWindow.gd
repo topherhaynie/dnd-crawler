@@ -121,6 +121,15 @@ func on_state(data: Dictionary) -> void:
 			_handle_measurement_moved(data)
 		"measurement_updated":
 			_handle_measurement_added(data.get("measurement", {}) as Dictionary)
+		"effect_state":
+			_handle_effect_state(data.get("effects", []) as Array)
+		"effect_spawn":
+			_handle_effect_spawn(data.get("effect", {}) as Dictionary)
+		"effect_remove":
+			_handle_effect_remove(str(data.get("effect_id", "")))
+		"effect_burst_move":
+			if _map_view != null:
+				_map_view.move_effect_node("__burst__", Vector2(data.get("x", 0.0) as float, data.get("y", 0.0) as float))
 		_:
 			pass
 	# Puzzle notes piggyback on token messages (and standalone puzzle_notes_state).
@@ -700,3 +709,27 @@ func _handle_measurement_moved(data: Dictionary) -> void:
 		existing_md.world_start = Vector2(float(ws.get("x", 0.0)), float(ws.get("y", 0.0)))
 		existing_md.world_end = Vector2(float(we.get("x", 0.0)), float(we.get("y", 0.0)))
 		overlay.add_or_update(existing_md)
+
+
+# ---------------------------------------------------------------------------
+# Effect message handlers
+# ---------------------------------------------------------------------------
+
+func _handle_effect_state(effects: Array) -> void:
+	if _map_view == null:
+		return
+	_map_view.clear_effect_nodes()
+	_map_view.load_effect_nodes(effects)
+
+
+func _handle_effect_spawn(d: Dictionary) -> void:
+	if _map_view == null or d.is_empty():
+		return
+	var data: EffectData = EffectData.from_dict(d)
+	_map_view.add_effect_node(data)
+
+
+func _handle_effect_remove(id: String) -> void:
+	if _map_view == null or id.is_empty():
+		return
+	_map_view.remove_effect_node(id)
