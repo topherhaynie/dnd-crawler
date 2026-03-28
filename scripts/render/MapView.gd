@@ -297,7 +297,7 @@ var _burst_active: bool = false
 var effect_burst_mode: bool = false
 var effect_place_type: int = 0
 var effect_place_size: float = 128.0
-var effect_place_shape: int = 0  ## EffectData.EffectShape
+var effect_place_shape: int = 0 ## EffectData.EffectShape
 
 ## Click-and-drag shape placement state
 var _effect_drag_placing: bool = false

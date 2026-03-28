@@ -18,7 +18,7 @@ var _selected_effect_type: int = 0
 var _selected_shape: int = EffectData.EffectShape.CIRCLE
 var _burst_mode: bool = false
 var _effect_size: float = 128.0
-var _px_per_foot: float = 0.0  ## 0 = uncalibrated, display in px
+var _px_per_foot: float = 0.0 ## 0 = uncalibrated, display in px
 
 var _vbox: VBoxContainer = null
 var _type_buttons: Array[Button] = []
@@ -125,7 +125,7 @@ func _build() -> void:
 	_shape_container = HBoxContainer.new()
 	_shape_container.add_theme_constant_override("separation", roundi(4.0 * s))
 	_shape_container.alignment = BoxContainer.ALIGNMENT_CENTER
-	var shape_icons: Array[String] = ["\u25cf", "\u2500", "\u25e5"]  # Circle, Line, Cone
+	var shape_icons: Array[String] = ["\u25cf", "\u2500", "\u25e5"] # Circle, Line, Cone
 	for sidx in EffectData.SHAPE_LABELS.size():
 		var sbtn := Button.new()
 		sbtn.toggle_mode = true

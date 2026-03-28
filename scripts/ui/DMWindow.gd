@@ -1988,7 +1988,7 @@ func _apply_effect_panel_size() -> void:
 	var scale := _ui_scale()
 	var panel_w := roundi(170.0 * scale)
 	var freeze_w := roundi(200.0 * scale) if (_freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating) else 0
-	_effect_panel.offset_left = float(-(panel_w + freeze_w))
+	_effect_panel.offset_left = float(- (panel_w + freeze_w))
 	_effect_panel.offset_right = float(-freeze_w)
 	_effect_panel.offset_top = _menu_bar_screen_height()
 	_effect_panel.offset_bottom = 0.0

@@ -42,13 +42,13 @@ const SHAPE_LABELS: Array[String] = ["Circle", "Line", "Cone"]
 ## Which shapes are available for each effect type.
 ## Key = EffectType value, Value = Array[int] of EffectShape values.
 const AVAILABLE_SHAPES: Dictionary = {
-	0: [0, 2],       # Fire: Circle, Cone
-	1: [0, 1],       # Lightning Bolt: Circle, Line
-	2: [0],          # Lightning Ball: Circle only
-	3: [0, 2],       # Frost: Circle, Cone
-	4: [0, 2],       # Poison Cloud: Circle, Cone
-	5: [0, 2],       # Holy Radiance: Circle, Cone
-	6: [0, 2],       # Magic Aura: Circle, Cone
+	0: [0, 2], # Fire: Circle, Cone
+	1: [0, 1], # Lightning Bolt: Circle, Line
+	2: [0], # Lightning Ball: Circle only
+	3: [0, 2], # Frost: Circle, Cone
+	4: [0, 2], # Poison Cloud: Circle, Cone
+	5: [0, 2], # Holy Radiance: Circle, Cone
+	6: [0, 2], # Magic Aura: Circle, Cone
 }
 
 # --- Identity --------------------------------------------------------------
@@ -58,8 +58,8 @@ var id: String = ""
 var effect_type: int = EffectType.FIRE
 var shape: int = EffectShape.CIRCLE
 var world_pos: Vector2 = Vector2.ZERO
-var world_end: Vector2 = Vector2.ZERO    ## Second point for LINE (end) and CONE (tip direction).
-var size_px: float = 96.0         ## Circle: diameter. Line: width. Cone: unused (length = drag).
+var world_end: Vector2 = Vector2.ZERO ## Second point for LINE (end) and CONE (tip direction).
+var size_px: float = 96.0 ## Circle: diameter. Line: width. Cone: unused (length = drag).
 var rotation_deg: float = 0.0
 
 # --- Timing ----------------------------------------------------------------

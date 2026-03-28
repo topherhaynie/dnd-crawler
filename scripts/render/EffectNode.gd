@@ -28,7 +28,7 @@ var effect_shape: int = EffectData.EffectShape.CIRCLE
 var _sprite: Sprite2D = null
 var _material: ShaderMaterial = null
 var _elapsed: float = 0.0
-var _duration: float = -1.0  ## Negative = looping
+var _duration: float = -1.0 ## Negative = looping
 var _is_one_shot: bool = false
 
 ## 1×1 white pixel image reused for all effect quads.
@@ -89,7 +89,7 @@ func _apply_line(data: EffectData) -> void:
 	if length < 1.0:
 		length = 1.0
 	position = (data.world_pos + data.world_end) * 0.5
-	rotation = dir.angle() + PI * 0.5  # shader Y axis = along the line
+	rotation = dir.angle() + PI * 0.5 # shader Y axis = along the line
 	_sprite.scale = Vector2(data.size_px, length)
 	_material.set_shader_parameter("shape_mode", 0)
 
@@ -105,7 +105,7 @@ func _apply_cone(data: EffectData) -> void:
 	var mouth_width: float = length
 	# Sprite centre at midpoint of apex→tip, covering the full triangle
 	position = data.world_pos + dir * 0.5
-	rotation = dir.angle() - PI * 0.5  # shader Y=0 at apex (click), Y=1 at mouth (drag end)
+	rotation = dir.angle() - PI * 0.5 # shader Y=0 at apex (click), Y=1 at mouth (drag end)
 	_sprite.scale = Vector2(mouth_width, length)
 	_material.set_shader_parameter("shape_mode", 1)
 

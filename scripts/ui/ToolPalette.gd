@@ -57,7 +57,7 @@ var _wall_stack_btn: Button = null
 var _wall_popup: PopupMenu = null
 var _effect_stack_btn: Button = null
 var _effect_popup: PopupMenu = null
-var _selected_effect_type: int = 0  ## EffectData.EffectType value
+var _selected_effect_type: int = 0 ## EffectData.EffectType value
 
 # Long-press tracking
 var _long_press_timer: Timer = null
