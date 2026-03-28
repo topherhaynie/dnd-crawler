@@ -91,7 +91,7 @@ func _build() -> void:
 
 	# Effect type buttons
 	_type_group = ButtonGroup.new()
-	var icons: Array[String] = ["🔥", "⚡", "⚡●", "❄", "☁", "✦", "✧"]
+	var icons: Array[String] = ["🔥", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]
 	for idx in EffectData.EFFECT_LABELS.size():
 		var btn := Button.new()
 		btn.toggle_mode = true

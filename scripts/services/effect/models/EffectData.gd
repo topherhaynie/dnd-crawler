@@ -14,11 +14,13 @@ class_name EffectData
 enum EffectType {
 	FIRE = 0,
 	LIGHTNING_BOLT = 1,
-	LIGHTNING_BALL = 2,
-	FROST = 3,
-	POISON_CLOUD = 4,
-	HOLY_RADIANCE = 5,
-	MAGIC_AURA = 6,
+	LIGHTNING_BOLT_WILD = 2,
+	LIGHTNING_BALL = 3,
+	FROST = 4,
+	BLIZZARD = 5,
+	POISON_CLOUD = 6,
+	HOLY_RADIANCE = 7,
+	MAGIC_AURA = 8,
 }
 
 enum EffectShape {
@@ -30,8 +32,10 @@ enum EffectShape {
 const EFFECT_LABELS: Array[String] = [
 	"Fire",
 	"Lightning Bolt",
+	"Lightning Bolt (Wild)",
 	"Lightning Ball",
 	"Frost",
+	"Blizzard",
 	"Poison Cloud",
 	"Holy Radiance",
 	"Magic Aura",
@@ -44,11 +48,13 @@ const SHAPE_LABELS: Array[String] = ["Circle", "Line", "Cone"]
 const AVAILABLE_SHAPES: Dictionary = {
 	0: [0, 2], # Fire: Circle, Cone
 	1: [0, 1], # Lightning Bolt: Circle, Line
-	2: [0], # Lightning Ball: Circle only
-	3: [0, 2], # Frost: Circle, Cone
-	4: [0, 2], # Poison Cloud: Circle, Cone
-	5: [0, 2], # Holy Radiance: Circle, Cone
-	6: [0, 2], # Magic Aura: Circle, Cone
+	2: [0, 1], # Lightning Bolt (Wild): Circle, Line
+	3: [0], # Lightning Ball: Circle only
+	4: [0, 2], # Frost: Circle, Cone
+	5: [0, 2], # Blizzard: Circle, Cone
+	6: [0, 2], # Poison Cloud: Circle, Cone
+	7: [0, 2], # Holy Radiance: Circle, Cone
+	8: [0, 2], # Magic Aura: Circle, Cone
 }
 
 # --- Identity --------------------------------------------------------------

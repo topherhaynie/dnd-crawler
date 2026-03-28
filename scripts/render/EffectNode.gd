@@ -18,6 +18,8 @@ const FROST_SHADER: Shader = preload("res://assets/effects/frost.gdshader")
 const POISON_CLOUD_SHADER: Shader = preload("res://assets/effects/poison_cloud.gdshader")
 const HOLY_RADIANCE_SHADER: Shader = preload("res://assets/effects/holy_radiance.gdshader")
 const MAGIC_AURA_SHADER: Shader = preload("res://assets/effects/magic_aura.gdshader")
+const LIGHTNING_BOLT_WILD_SHADER: Shader = preload("res://assets/effects/lightning_bolt_wild.gdshader")
+const BLIZZARD_SHADER: Shader = preload("res://assets/effects/blizzard.gdshader")
 
 ## D&D 5e cone half-angle: width = length at the open end.
 const CONE_HALF_ANGLE: float = 0.4636476090008172 ## atan(0.5) radians
@@ -145,5 +147,9 @@ func _shader_for_type(effect_type: int) -> Shader:
 			return HOLY_RADIANCE_SHADER
 		EffectData.EffectType.MAGIC_AURA:
 			return MAGIC_AURA_SHADER
+		EffectData.EffectType.LIGHTNING_BOLT_WILD:
+			return LIGHTNING_BOLT_WILD_SHADER
+		EffectData.EffectType.BLIZZARD:
+			return BLIZZARD_SHADER
 		_:
 			return FIRE_SHADER
