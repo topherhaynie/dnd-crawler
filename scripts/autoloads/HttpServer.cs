@@ -2,7 +2,6 @@ using Godot;
 using System;
 using System.Net;
 using System.Text;
-using System.IO;
 using System.Threading;
 using System.Collections.Generic;
 using System.Net.Sockets;
@@ -14,8 +13,18 @@ public partial class HttpServer : Node
 	private volatile bool _running = false;
 	private const int HTTP_PORT = 8080;
 
+	// Cached on the main thread in _Ready(); served read-only from worker threads.
+	private byte[] _indexHtmlBytes;
+
 	public override void _Ready()
 	{
+		// Load index.html using Godot's virtual filesystem so this works in both
+		// the editor (res:// → project dir) and packaged exports (res:// → PCK).
+		using var fa = FileAccess.Open("res://assets/mobile_client/index.html", FileAccess.ModeFlags.Read);
+		if (fa != null)
+			_indexHtmlBytes = fa.GetBuffer((long)fa.GetLength());
+		else
+			GD.PushError("HttpServer: could not load res://assets/mobile_client/index.html");
 		StartServer();
 	}
 
@@ -100,17 +109,12 @@ public partial class HttpServer : Node
 
 			if (routePath == "/mobile_client/index.html")
 			{
-				// ProjectSettings.GlobalizePath works in both the editor and
-				// packaged exports — it resolves res:// to the real filesystem
-				// path regardless of platform.
-				var localPath = Godot.ProjectSettings.GlobalizePath("res://assets/mobile_client/index.html");
-				if (!File.Exists(localPath))
+				if (_indexHtmlBytes == null)
 				{
 					WriteResponse(stream, 404, "text/plain", Encoding.UTF8.GetBytes("Not Found"));
 					return;
 				}
-				var bytes = File.ReadAllBytes(localPath);
-				WriteResponse(stream, 200, "text/html; charset=utf-8", bytes);
+				WriteResponse(stream, 200, "text/html; charset=utf-8", _indexHtmlBytes);
 				return;
 			}
 
