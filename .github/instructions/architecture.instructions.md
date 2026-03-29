@@ -282,3 +282,81 @@ _my_dialog.popup_centered()  # auto-fits to content
 ### Refreshing on resize
 
 `UIScaleManager.refresh()` must be called when the viewport size changes. The service caches the scale and only emits `scale_changed` when the value actually changes. DMWindow calls `refresh()` in its `NOTIFICATION_WM_SIZE_CHANGED` handler.
+
+## Cross-Platform Menu Bar (Windows native menu)
+
+On Windows, Godot's `MenuBar` is hidden and replaced by a `NativeWin32MenuBar` (C# node, `scripts/ui/NativeWin32MenuBar.cs`) that attaches a real Win32 menu to the non-client area of the window. This keeps the OS look-and-feel but creates a **second parallel menu tree** that must be kept in sync with the Godot `PopupMenu` tree at all times.
+
+### The sync problem
+
+Any time a menu item is added, removed, renamed, or has a checkmark/disabled state changed, **both** trees must be updated or they drift apart silently — the Win32 menu shows stale state but no error is raised.
+
+### How to keep them in sync
+
+#### 1. Construction parity — `_build_native_menus()`
+
+`_build_native_menus()` in `DMWindow.gd` mirrors `_build_ui()` exactly. Every item added to a Godot `PopupMenu` must have a matching call in `_build_native_menus()`:
+
+| Godot call | Native equivalent |
+|---|---|
+| `add_item(label, id)` | `nm.call(&"AddItem", menu, label, id)` |
+| `add_check_item(label, id)` | `nm.call(&"AddCheckItem", menu, label, id, initial_bool)` |
+| `add_radio_check_item(label, id)` | `nm.call(&"AddRadioCheckItem", menu, label, id, initial_bool)` |
+| `add_separator()` | `nm.call(&"AddSeparator", menu)` |
+| `add_submenu_node_item(label, node)` | `nm.call(&"AddSubmenu", parent, submenu_name, label)` |
+| `set_item_disabled(idx, true)` | `nm.call(&"SetItemDisabled", menu, id, true)` |
+
+Submenus are registered with `nm.call(&"AddMenu", name)` **before** `nm.call(&"Build")` and skipped in `Build()` via the skip list in `NativeWin32MenuBar.cs`. Every submenu name must be added to both `_bases` (with a unique base offset that does not overlap with any other menu's range) and the `Build()` skip list.
+
+#### 2. ID base ranges — `NativeWin32MenuBar.cs`
+
+Win32 identifies items by a flat integer ID. `NativeWin32MenuBar` maps `(menuName, itemId)` → `flatId = _bases[menuName] + itemId`. Each menu/submenu must have its own non-overlapping 100-wide base slot:
+
+```
+File     = 1000
+Edit     = 1100
+View     = 1200
+GridType = 1300
+Session  = 1400
+UITheme  = 1500
+```
+
+When adding a new submenu, choose the next free block of 100 and add it to `_bases` **and** the `Build()` skip guard.
+
+#### 3. Dynamic state updates — use the helpers
+
+Never call `_view_menu.set_item_checked(...)` alone. Always use the helper so both menus update atomically:
+
+| What to update | Helper to call |
+|---|---|
+| Any View check item | `_set_view_checked(id, bool)` |
+| Edit item disabled/text | `_nm_set_disabled("Edit", id, bool)` + `_nm_set_text("Edit", id, text)` alongside the Godot call |
+| Grid Type radio | `_update_grid_submenu_checks()` (calls `SetRadioChecked` internally) |
+| UI Theme radio | `_sync_theme_submenu_checks(preset)` (calls `SetRadioChecked` internally) |
+
+When adding a new checkable item to the View menu, extend `_set_view_checked` or add a dedicated paired helper — never update only one tree.
+
+#### 4. Signal routing — `_on_native_menu_pressed`
+
+`NativeWin32MenuBar` emits `MenuItemPressed(menu_name: String, item_id: int)`. The handler in `DMWindow.gd` routes by `menu_name` to the same GDScript handler as the Godot menu:
+
+```gdscript
+func _on_native_menu_pressed(menu_name: String, item_id: int) -> void:
+    match menu_name:
+        "File":    _on_file_menu_id(item_id)
+        "Edit":    _on_edit_menu_id(item_id)
+        "View":    _on_view_menu_id(item_id)
+        "GridType": _on_grid_submenu_id(item_id)
+        "UITheme": _on_theme_submenu_id(item_id)
+        "Session": _on_session_menu_id(item_id)
+```
+
+When adding a new top-level menu or submenu that produces actions, add a route here pointing to the **same handler** the Godot `PopupMenu` already uses.
+
+#### 5. Checklist for adding a new menu item
+
+- [ ] Add the item to the Godot `PopupMenu` in `_build_ui()`
+- [ ] Add the matching item in `_build_native_menus()` with the same label, id, and initial state
+- [ ] If it's a submenu: add a base entry in `NativeWin32MenuBar._bases`, add its name to the `Build()` skip list, and route its signal in `_on_native_menu_pressed`
+- [ ] If it has dynamic state (checked, disabled, text): update or create a helper that writes both menus together
+- [ ] If the item's initial state comes from a persisted setting (e.g. current theme preset), sync it after `nm.call(&"Build")` before connecting signals

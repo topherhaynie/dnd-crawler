@@ -2424,6 +2424,8 @@ func _sync_theme_submenu_checks(preset: int) -> void:
 	for i: int in _theme_submenu.item_count:
 		var item_id: int = _theme_submenu.get_item_id(i)
 		_theme_submenu.set_item_checked(i, item_id == preset)
+	if _native_menu:
+		_native_menu.call(&"SetRadioChecked", "UITheme", 0, 4, preset)
 
 
 # ---------------------------------------------------------------------------
@@ -6726,6 +6728,15 @@ func _build_native_menus() -> void:
 	nm.call(&"AddRadioCheckItem", "GridType", "⬣  Hex Pointy-top", 2, false)
 	nm.call(&"AddSubmenu", "View", "GridType", "Grid Type")
 
+	# UI Theme submenu
+	nm.call(&"AddMenu", "UITheme")
+	nm.call(&"AddRadioCheckItem", "UITheme", "Flat Dark", 0, true)
+	nm.call(&"AddRadioCheckItem", "UITheme", "Steel Vault", 1, false)
+	nm.call(&"AddRadioCheckItem", "UITheme", "Silver Chrome", 2, false)
+	nm.call(&"AddRadioCheckItem", "UITheme", "Forged Iron", 3, false)
+	nm.call(&"AddRadioCheckItem", "UITheme", "Arcane", 4, false)
+	nm.call(&"AddSubmenu", "View", "UITheme", "UI Theme")
+
 	nm.call(&"AddSeparator", "View")
 	nm.call(&"AddItem", "View", "▶ Launch Player Window", 23)
 
@@ -6734,6 +6745,12 @@ func _build_native_menus() -> void:
 	nm.call(&"AddItem", "Session", "Share Player Link…", 30)
 
 	nm.call(&"Build")
+
+	# Sync initial theme checkmark to persisted setting
+	var _nm_theme_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _nm_theme_reg != null and _nm_theme_reg.ui_theme != null:
+		var _initial_preset: int = _nm_theme_reg.ui_theme.get_theme()
+		nm.call(&"SetRadioChecked", "UITheme", 0, 4, _initial_preset)
 
 	# Route native menu signals to the existing handlers
 	nm.connect(&"MenuItemPressed", _on_native_menu_pressed)
@@ -6745,6 +6762,7 @@ func _on_native_menu_pressed(menu_name: String, item_id: int) -> void:
 		"Edit": _on_edit_menu_id(item_id)
 		"View": _on_view_menu_id(item_id)
 		"GridType": _on_grid_submenu_id(item_id)
+		"UITheme": _on_theme_submenu_id(item_id)
 		"Session": _on_session_menu_id(item_id)
 
 

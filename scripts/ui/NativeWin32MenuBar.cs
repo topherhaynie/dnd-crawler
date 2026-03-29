@@ -111,6 +111,7 @@ public partial class NativeWin32MenuBar : Node
         ["View"] = 1200,
         ["GridType"] = 1300,
         ["Session"] = 1400,
+        ["UITheme"] = 1500,
     };
 
     private const nuint SubclassId = 42;
@@ -208,7 +209,7 @@ public partial class NativeWin32MenuBar : Node
         foreach (var name in _order)
         {
             // Submenus are already wired into their parent via AddSubmenu.
-            if (name == "GridType") continue;
+            if (name == "GridType" || name == "UITheme") continue;
             if (_popups.TryGetValue(name, out var h))
                 AppendMenuW(_hMenuBar, MF_STRING | MF_POPUP, (nuint)h, name);
         }
