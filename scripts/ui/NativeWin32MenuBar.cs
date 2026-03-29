@@ -319,7 +319,8 @@ public partial class NativeWin32MenuBar : Node
 
     private bool TryDecode(int flatId, out string menuName, out int itemId)
     {
-        // Walk bases from highest to lowest
+        // Walk bases from highest to lowest — must be kept in sync with _bases.
+        if (flatId >= 1500) { menuName = "UITheme"; itemId = flatId - 1500; return true; }
         if (flatId >= 1400) { menuName = "Session"; itemId = flatId - 1400; return true; }
         if (flatId >= 1300) { menuName = "GridType"; itemId = flatId - 1300; return true; }
         if (flatId >= 1200) { menuName = "View"; itemId = flatId - 1200; return true; }

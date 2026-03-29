@@ -1057,15 +1057,20 @@ func _build_ui() -> void:
 	add_child(_manual_scale_dialog)
 
 	# ── Open Map dialog — select a .map bundle (directory package) ──────────────
-	# Production: OPEN_FILE + *.map filter.  Info.plist UTType declares
-	# com.apple.package + public.data so .map dirs appear as opaque files.
-	# Dev: OPEN_ANY + *.map filter so .map dirs are selectable as folders.
+	# macOS standalone: Info.plist UTType declares com.apple.package so .map dirs
+	#   appear as opaque files → OPEN_FILE works.
+	# Windows standalone: .map dirs are plain directories; OPEN_FILE cannot select
+	#   them (Windows IFileOpenDialog navigates into dirs in file mode) → OPEN_DIR.
+	# Dev: OPEN_ANY so .map dirs are selectable as folders in Godot's built-in dialog.
 	_open_map_dialog = FileDialog.new()
 	_open_map_dialog.use_native_dialog = true
 	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_open_map_dialog.title = "Open Map Bundle"
 	if OS.has_feature("standalone"):
-		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		if OS.get_name() == "Windows":
+			_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+		else:
+			_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	else:
 		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_open_map_dialog.add_filter("*.map ; The Vault Map")
@@ -1094,14 +1099,20 @@ func _build_ui() -> void:
 	add_child(_save_game_dialog)
 
 	# ── Load Game dialog — select a .sav bundle ────────────────────────────────
-	# Production: OPEN_FILE + *.sav filter → .sav packages appear as opaque files.
+	# macOS standalone: Info.plist UTType declares com.apple.package so .sav dirs
+	#   appear as opaque files → OPEN_FILE works.
+	# Windows standalone: .sav dirs are plain directories; OPEN_FILE cannot select
+	#   them → OPEN_DIR so the native folder-picker lets the user select them.
 	# Dev: OPEN_ANY + *.sav filter → .sav dirs are selectable as folders.
 	_load_game_dialog = FileDialog.new()
 	_load_game_dialog.use_native_dialog = true
 	_load_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_load_game_dialog.title = "Load Game"
 	if OS.has_feature("standalone"):
-		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		if OS.get_name() == "Windows":
+			_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+		else:
+			_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	else:
 		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_load_game_dialog.add_filter("*.sav ; The Vault Save")

@@ -321,7 +321,12 @@ Session  = 1400
 UITheme  = 1500
 ```
 
-When adding a new submenu, choose the next free block of 100 and add it to `_bases` **and** the `Build()` skip guard.
+When adding a new submenu, choose the next free block of 100 and add it to **three** places in `NativeWin32MenuBar.cs`:
+1. `_bases` dictionary — maps the name to its base offset
+2. `Build()` skip guard — `if (name == "GridType" || name == "UITheme") continue;`
+3. `TryDecode()` — add a `if (flatId >= NNNN)` branch **above** all lower-numbered menus (highest-first order is required)
+
+Missing any one of the three will silently misroute or drop the WM_COMMAND message.
 
 #### 3. Dynamic state updates — use the helpers
 
