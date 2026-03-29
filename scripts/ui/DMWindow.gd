@@ -1158,6 +1158,10 @@ func _build_ui() -> void:
 	# Phase 3 profile management UI
 	_build_profiles_dialog()
 
+	# Share player link dialog — built eagerly so the window is in the scene
+	# tree and has a full layout pass before the user first opens it.
+	_build_share_player_link_dialog()
+
 	# Player viewport indicator — DM drags the green box on the main map
 	# to reposition what players see. Hidden until a map is loaded.
 	_map_view.set_viewport_indicator(Rect2())
@@ -1671,7 +1675,7 @@ func _undock_palette() -> void:
 	_palette_window.add_child(_palette)
 	_palette.set_anchors_preset(Control.PRESET_FULL_RECT)
 
-	_palette_window.close_requested.connect(_dock_palette)
+	_palette_window.close_requested.connect(_close_floating_palette)
 	# Theme floating window chrome + buttons
 	var _uw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _uw_reg != null and _uw_reg.ui_theme != null:
@@ -1706,6 +1710,15 @@ func _dock_palette() -> void:
 	if _palette_window:
 		_palette_window.queue_free()
 		_palette_window = null
+
+
+func _close_floating_palette() -> void:
+	_dock_palette()
+	if _palette != null:
+		_palette.visible = false
+	if _view_menu != null:
+		_view_menu.set_item_checked(_view_menu.get_item_index(20), false)
+	_nm_set_checked("View", 20, false)
 
 
 # ---------------------------------------------------------------------------
@@ -2032,7 +2045,7 @@ func _undock_freeze_panel() -> void:
 	_freeze_panel.offset_top = 0.0
 	_freeze_panel.offset_bottom = 0.0
 
-	_freeze_panel_window.close_requested.connect(_dock_freeze_panel)
+	_freeze_panel_window.close_requested.connect(_close_floating_freeze_panel)
 	# Theme floating window chrome + buttons
 	var _fw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _fw_reg != null and _fw_reg.ui_theme != null:
@@ -2082,6 +2095,16 @@ func _dock_freeze_panel() -> void:
 	if _view_menu != null:
 		_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
 	_nm_set_checked("View", 25, true)
+	_apply_effect_panel_size()
+
+
+func _close_floating_freeze_panel() -> void:
+	_dock_freeze_panel()
+	if _freeze_panel != null:
+		_freeze_panel.visible = false
+	if _view_menu != null:
+		_view_menu.set_item_checked(_view_menu.get_item_index(25), false)
+	_nm_set_checked("View", 25, false)
 	_apply_effect_panel_size()
 
 
@@ -2198,7 +2221,7 @@ func _undock_effect_panel() -> void:
 	_effect_panel.offset_top = 0.0
 	_effect_panel.offset_bottom = 0.0
 
-	_effect_panel_window.close_requested.connect(_dock_effect_panel)
+	_effect_panel_window.close_requested.connect(_close_floating_effect_panel)
 	# Theme floating window chrome + buttons
 	var _ew_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _ew_reg != null and _ew_reg.ui_theme != null:
@@ -2237,6 +2260,15 @@ func _dock_effect_panel() -> void:
 	if _effect_panel_window:
 		_effect_panel_window.queue_free()
 		_effect_panel_window = null
+
+
+func _close_floating_effect_panel() -> void:
+	_dock_effect_panel()
+	if _effect_panel != null:
+		_effect_panel.visible = false
+	if _view_menu != null:
+		_view_menu.set_item_checked(_view_menu.get_item_index(29), false)
+	_apply_effect_panel_size()
 
 
 # ---------------------------------------------------------------------------
@@ -6512,10 +6544,23 @@ func _apply_ui_scale() -> void:
 
 	# ── Share player link dialog ──
 	if _share_dialog_root:
-		_share_qr_rect.custom_minimum_size = Vector2(mgr.scaled(280.0), mgr.scaled(280.0))
+		var qr_px: int = mgr.scaled(280.0)
+		_share_qr_rect.custom_minimum_size = Vector2(qr_px, qr_px)
 		_share_url_label.add_theme_font_size_override("font_size", mgr.scaled(13.0))
-		_share_dialog_root.add_theme_constant_override("separation", mgr.scaled(12.0))
+		var sep_px: int = mgr.scaled(12.0)
+		_share_dialog_root.add_theme_constant_override("separation", sep_px)
 		mgr.scale_button(_share_dialog.get_ok_button())
+		# Set min_size derived from the same scaled measurements as the content so
+		# reset_size() has the correct floor on the first open, before wrap_controls
+		# has had a chance to propagate child minimums through a layout pass.
+		# Width:  QR width + left/right content margins (~30 px total scaled)
+		# Height: title_bar(30) + content_top_margin(8) + top_pad(8)
+		#         + 3 seps(12*3=36) + QR(280) + label(~20) + copy_btn(~28)
+		#         + content_bottom_margin(8) + ok_btn_row(~40)
+		#       = 30+8+8+36+20+28+8+40 = 178 chrome; use 200 for safe headroom
+		var margin_x: int = mgr.scaled(30.0)
+		var chrome_y: int = mgr.scaled(200.0)
+		_share_dialog.min_size = Vector2i(qr_px + margin_x, qr_px + chrome_y)
 
 
 func _ui_scale() -> float:
@@ -6550,27 +6595,23 @@ func _build_share_url() -> String:
 	return "%s?host=%s&port=%d" % [_SHARE_BASE_URL, ip, _WS_PORT]
 
 
-func _show_share_player_link() -> void:
-	var url: String = _build_share_url()
+func _build_share_player_link_dialog() -> void:
+	## Constructs the share-player-link AcceptDialog and adds it to the
+	## scene tree at startup, so the layout engine has a full frame to
+	## process the node before the user first opens it (fixes wrong size
+	## on first open).
 	var mgr := _get_ui_scale_mgr()
-
-	if _share_dialog != null:
-		# Refresh QR and URL in case IP changed
-		_share_url_label.text = url
-		var refresh_img: Image = QRCodeScript.generate(url, 8)
-		_share_qr_rect.texture = ImageTexture.create_from_image(refresh_img)
-		_apply_ui_scale()
-		_share_dialog.reset_size()
-		_share_dialog.popup_centered()
-		return
 
 	_share_dialog = AcceptDialog.new()
 	_share_dialog.title = "Share Player Link"
 	_share_dialog.ok_button_text = "Close"
+	# Disable wrap_controls so we own the window size entirely via min_size.
+	# wrap_controls only computes content minimums after a real draw pass, which
+	# causes the wrong size on first open. With it off, reset_size() always snaps
+	# to our explicitly-computed min_size.
+	_share_dialog.wrap_controls = false
 
-	# Content root — children sized explicitly via scale factor.
-	# No root scale transform: dialogs need Godot’s layout engine to see the
-	# real child sizes so the window auto-fits its content correctly.
+	# Content root -- children sized explicitly via scale factor.
 	_share_dialog_root = VBoxContainer.new()
 	if mgr != null:
 		_share_dialog_root.add_theme_constant_override("separation", mgr.scaled(12.0))
@@ -6581,34 +6622,31 @@ func _show_share_player_link() -> void:
 		top_pad.custom_minimum_size = Vector2(0, mgr.scaled(8.0))
 	_share_dialog_root.add_child(top_pad)
 
-	# QR code
-	var qr_img: Image = QRCodeScript.generate(url, 8)
-	var qr_tex: ImageTexture = ImageTexture.create_from_image(qr_img)
+	# QR code -- content filled in _show_share_player_link().
 	_share_qr_rect = TextureRect.new()
-	_share_qr_rect.texture = qr_tex
 	_share_qr_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	if mgr != null:
 		_share_qr_rect.custom_minimum_size = Vector2(mgr.scaled(280.0), mgr.scaled(280.0))
 	_share_qr_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_share_dialog_root.add_child(_share_qr_rect)
 
-	# URL label
+	# URL label -- text filled in _show_share_player_link().
 	_share_url_label = Label.new()
-	_share_url_label.text = url
 	_share_url_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_share_url_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if mgr != null:
 		_share_url_label.add_theme_font_size_override("font_size", mgr.scaled(13.0))
 	_share_dialog_root.add_child(_share_url_label)
 
-	# Copy URL button
+	# Copy URL button -- reads _share_url_label.text so it always copies
+	# the current URL regardless of when it was last refreshed.
 	var copy_btn := Button.new()
 	copy_btn.text = "Copy URL"
 	copy_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	if mgr != null:
 		mgr.scale_button(copy_btn)
 	copy_btn.pressed.connect(func() -> void:
-		DisplayServer.clipboard_set(url)
+		DisplayServer.clipboard_set(_share_url_label.text)
 		_set_status("Player link copied to clipboard"))
 	_share_dialog_root.add_child(copy_btn)
 
@@ -6616,16 +6654,28 @@ func _show_share_player_link() -> void:
 	if mgr != null:
 		mgr.scale_button(_share_dialog.get_ok_button())
 	add_child(_share_dialog)
-	# Theme window chrome + all child buttons
 	var _sd_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _sd_reg != null and _sd_reg.ui_theme != null:
 		_sd_reg.ui_theme.theme_control_tree(_share_dialog, _ui_scale())
+
+
+func _show_share_player_link() -> void:
+	# Refresh QR and URL in case IP changed, then show.
+	# The dialog is always in the scene tree (built at startup via
+	# _build_share_player_link_dialog) so reset_size() measures the
+	# correct layout on every call including the first.
+	var url: String = _build_share_url()
+	_share_url_label.text = url
+	var refresh_img: Image = QRCodeScript.generate(url, 8)
+	_share_qr_rect.texture = ImageTexture.create_from_image(refresh_img)
+	# Apply theme at interaction time — services are guaranteed ready here.
+	var _show_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _show_reg != null and _show_reg.ui_theme != null:
+		_show_reg.ui_theme.theme_control_tree(_share_dialog, _ui_scale())
+	_apply_ui_scale()
 	_share_dialog.reset_size()
 	_share_dialog.popup_centered()
 
-
-# ---------------------------------------------------------------------------
-# Native Win32 menu bar (Windows only)
 # ---------------------------------------------------------------------------
 
 func _build_native_menus() -> void:

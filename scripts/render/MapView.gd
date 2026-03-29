@@ -887,6 +887,12 @@ func _burst_start(world_pos: Vector2) -> void:
 	data.shape = effect_place_shape
 	data.world_pos = world_pos
 	data.size_px = effect_place_size
+	# CONE and LINE derive their length from world_end. Default to pointing right
+	# so the size comes from size_px rather than the distance to Vector2.ZERO.
+	if effect_place_shape == EffectData.EffectShape.CONE or effect_place_shape == EffectData.EffectShape.LINE:
+		data.world_end = world_pos + Vector2(effect_place_size, 0.0)
+	else:
+		data.world_end = world_pos
 	data.duration_sec = -1.0
 	data.intensity = 1.0
 	data.color_tint = Color.WHITE
