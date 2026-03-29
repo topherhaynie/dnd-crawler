@@ -67,9 +67,8 @@ var _map_name_mode: String = "new" ## "new" or "save_as"
 var _active_map_bundle_path: String = "" ## absolute path to the current .map bundle directory
 var _active_save_bundle_path: String = "" ## absolute path to the current .sav bundle
 
-## Bundle browser windows (lazy-created)
-var _map_browser: Node = null
-var _save_browser: Node = null
+## Bundle browser window (lazy-created, shared for maps and saves)
+var _bundle_browser: Node = null
 
 var _status_label: Label = null
 var _ui_root: VBoxContainer = null
@@ -288,7 +287,7 @@ func _ready() -> void:
 	_apply_ui_scale()
 	# Auto-open the save browser so the DM can quickly resume a session.
 	# Wait one frame so the node tree finishes setting up children first.
-	get_tree().process_frame.connect(_open_save_browser, CONNECT_ONE_SHOT)
+	get_tree().process_frame.connect(func() -> void: _open_bundle_browser("save"), CONNECT_ONE_SHOT)
 	print("DMWindow: ready")
 
 
@@ -2294,8 +2293,8 @@ func _on_file_menu_id(id: int) -> void:
 		4: _on_save_game_pressed()
 		5: _on_save_game_as_pressed()
 		6: _on_load_game_pressed()
-		7: _open_map_browser()
-		8: _open_save_browser()
+		7: _open_bundle_browser("map")
+		8: _open_bundle_browser("save")
 		9: get_tree().quit()
 
 
@@ -2404,10 +2403,8 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_profiles_dialog)
 	if _share_dialog != null:
 		dialogs.append(_share_dialog)
-	if _map_browser != null and _map_browser is Window:
-		dialogs.append(_map_browser as Window)
-	if _save_browser != null and _save_browser is Window:
-		dialogs.append(_save_browser as Window)
+	if _bundle_browser != null and _bundle_browser is Window:
+		dialogs.append(_bundle_browser as Window)
 	for dlg: Window in dialogs:
 		# Theme the window chrome + recursively style every child control
 		tm.theme_control_tree(dlg, s)
@@ -5510,35 +5507,25 @@ func _on_open_map_pressed() -> void:
 	_open_map_dialog.popup_centered(Vector2i(900, 600))
 
 
-func _open_map_browser() -> void:
-	## Open the custom map browser window.
+func _open_bundle_browser(mode: String) -> void:
+	## Open the unified map/save browser window on the given tab ("map" or "save").
 	_ensure_maps_dir()
-	if _map_browser == null:
-		_map_browser = BundleBrowserScript.new()
-		_map_browser.browse_mode = "map"
-		add_child(_map_browser)
-		_map_browser.bundle_selected.connect(_on_map_bundle_selected)
-		var _mb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-		if _mb_reg != null and _mb_reg.ui_theme != null:
-			_mb_reg.ui_theme.theme_control_tree(_map_browser, _ui_scale())
-	_map_browser.populate()
-	_map_browser.popup_centered_ratio(0.85)
-
-
-func _open_save_browser() -> void:
-	## Open the custom save browser window.
 	var dir := _saves_dir_abs()
 	DirAccess.make_dir_recursive_absolute(dir)
-	if _save_browser == null:
-		_save_browser = BundleBrowserScript.new()
-		_save_browser.browse_mode = "save"
-		add_child(_save_browser)
-		_save_browser.bundle_selected.connect(_on_load_game_path_selected)
-		var _sb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-		if _sb_reg != null and _sb_reg.ui_theme != null:
-			_sb_reg.ui_theme.theme_control_tree(_save_browser, _ui_scale())
-	_save_browser.populate()
-	_save_browser.popup_centered_ratio(0.85)
+	if _bundle_browser == null:
+		_bundle_browser = BundleBrowserScript.new()
+		add_child(_bundle_browser)
+		_bundle_browser.map_selected.connect(_on_map_bundle_selected)
+		_bundle_browser.save_selected.connect(_on_load_game_path_selected)
+		_bundle_browser.new_map_requested.connect(_on_new_map_pressed)
+		_bundle_browser.open_map_file_requested.connect(_on_open_map_pressed)
+		_bundle_browser.open_save_file_requested.connect(_on_load_game_pressed)
+		var _bb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _bb_reg != null and _bb_reg.ui_theme != null:
+			_bb_reg.ui_theme.theme_control_tree(_bundle_browser, _ui_scale())
+	_bundle_browser.open_to_mode(mode)
+	_bundle_browser.populate()
+	_bundle_browser.popup_centered_ratio(0.85)
 
 
 func _on_map_bundle_selected(path: String) -> void:
