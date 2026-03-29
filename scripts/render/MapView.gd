@@ -52,6 +52,11 @@ const ZOOM_MIN: float = 0.1
 const ZOOM_MAX: float = 8.0
 const ZOOM_STEP: float = 0.12 ## per scroll click
 const PAN_SPEED: float = 500.0 ## px/sec for arrow-key pan
+## InputEventPanGesture deltas are NOT cross-platform normalised.
+## macOS reports small pixel-accurate deltas; Windows precision-touchpad reports much larger
+## scroll-unit values.  Tune each independently.
+const PAN_GESTURE_SCALE_MACOS: float = 20.0
+const PAN_GESTURE_SCALE_WINDOWS: float = 3.0
 const WALL_HANDLE_HIT_RADIUS_PX: float = 12.0
 const WALL_HANDLE_SIZE_WORLD: float = 6.0
 const ROTATION_STEP: int = 90 ## degrees per rotate click
@@ -2055,7 +2060,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	# --- Trackpad: two-finger pan -------------------------------------------
 	if event is InputEventPanGesture:
-		camera.position += event.delta / camera.zoom.x
+		var pan_scale: float = PAN_GESTURE_SCALE_WINDOWS if OS.get_name() == "Windows" else PAN_GESTURE_SCALE_MACOS
+		camera.position += event.delta * pan_scale / camera.zoom.x
 		get_viewport().set_input_as_handled()
 		return
 
