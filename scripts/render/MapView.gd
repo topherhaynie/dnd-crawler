@@ -1668,7 +1668,6 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 	## (highest → lowest) and returns the first non-empty hit.
 	## Token hit-test calls are cached as locals so each runs exactly once,
 	## with the result reused for both PLAYER_TOKEN and TOKEN layer checks.
-
 	# Cache — each hit-test called at most once.
 	var handle_result: Dictionary = _hit_test_token_handle(world_pos)
 	var token_hit: Variant = _hit_test_tokens(world_pos)
@@ -1739,7 +1738,7 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 	if wall_idx >= 0:
 		return SelectableHit.make(ISelectionService.SelectionLayer.WALL, wall_idx)
 
-	return SelectableHit.new()  ## empty — no hit at this position
+	return SelectableHit.new() ## empty — no hit at this position
 
 
 func _update_cursor(world_pos: Vector2) -> void:
@@ -2653,7 +2652,7 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 			var btn := event as InputEventMouseButton
 			if btn.button_index == MOUSE_BUTTON_LEFT:
 				if btn.pressed:
-					return false  ## unified picker in _unhandled_input handles initial selection
+					return false ## unified picker in _unhandled_input handles initial selection
 				else:
 					# --- Button release: finish edit or move ---
 					if _meas_edit_dragging:
@@ -2778,7 +2777,7 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 		if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			var sb := event as InputEventMouseButton
 			if sb.pressed:
-				return false  ## unified picker in _unhandled_input handles all press logic
+				return false ## unified picker in _unhandled_input handles all press logic
 			# On mouse release: only consume the event if we actually performed a wall drag/move
 			var prev_handle := _wall_dragging_handle
 			_wall_dragging_handle = -1
@@ -3828,7 +3827,7 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 			if btn.pressed:
 				var hit := _hit_test_spawn_point(world_pos)
 				if hit >= 0:
-					return false  ## unified picker handles spawn selection and drag start
+					return false ## unified picker handles spawn selection and drag start
 				elif active_tool == Tool.SPAWN_POINT:
 					# Click on empty space: place new spawn point (SPAWN_POINT tool only)
 					add_spawn_point(world_pos)

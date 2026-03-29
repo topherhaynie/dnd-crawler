@@ -11,12 +11,12 @@ class_name ISelectionService
 ## returns the first hit found.
 
 enum SelectionLayer {
-	WALL         = 0,
-	INDICATOR    = 1,
-	SPAWN        = 2,
-	TOKEN        = 3,
-	EFFECT       = 4,
-	MEASUREMENT  = 5,
+	WALL = 0,
+	INDICATOR = 1,
+	SPAWN = 2,
+	TOKEN = 3,
+	EFFECT = 4,
+	MEASUREMENT = 5,
 	PLAYER_TOKEN = 6,
 }
 

@@ -9,8 +9,8 @@ class_name SelectableHit
 
 var layer: int = -1
 var id: Variant = null
-var handle: int = -1       ## resize/rotate handle index; -1 = body hit
-var endpoint: String = ""  ## "start" or "end" for measurement endpoint hits
+var handle: int = -1 ## resize/rotate handle index; -1 = body hit
+var endpoint: String = "" ## "start" or "end" for measurement endpoint hits
 
 
 func is_empty() -> bool:
