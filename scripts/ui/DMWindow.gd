@@ -1795,6 +1795,16 @@ func _build_freeze_panel() -> void:
 	_freeze_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fp_scroll.add_child(_freeze_rows)
 
+	_fp_vbox.add_child(HSeparator.new())
+
+	var edit_profiles_btn := Button.new()
+	edit_profiles_btn.text = "Edit Profiles…"
+	edit_profiles_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	edit_profiles_btn.custom_minimum_size = Vector2(0, roundi(28.0 * _ui_scale()))
+	edit_profiles_btn.add_theme_font_size_override("font_size", roundi(12.0 * _ui_scale()))
+	edit_profiles_btn.pressed.connect(_open_profiles_editor)
+	_fp_vbox.add_child(edit_profiles_btn)
+
 
 func _refresh_freeze_panel() -> void:
 	if _freeze_rows == null:
