@@ -1635,6 +1635,113 @@ func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
 	return {}
 
 
+# ---------------------------------------------------------------------------
+# Selection policy helpers
+# ---------------------------------------------------------------------------
+
+func _active_tool_key() -> String:
+	## Map the active Tool enum value to the string key used by SelectionManager.
+	match active_tool:
+		Tool.SELECT:
+			return "select"
+		Tool.PLACE_TOKEN:
+			return "place_token"
+		Tool.PLACE_EFFECT:
+			return "place_effect"
+		Tool.SPAWN_POINT:
+			return "spawn_point"
+	return ""
+
+
+func _active_tool_supports_selection() -> bool:
+	## Returns true when the current tool participates in unified selection
+	## logic (the unified picker runs, drag-to-select is enabled).
+	## Delegates to SelectionManager.tool_supports_selection via the registry.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.selection == null:
+		return false
+	return registry.selection.tool_supports_selection(_active_tool_key())
+
+
+func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
+	## Unified hit-tester.  Tests all selectable layers in priority order
+	## (highest → lowest) and returns the first non-empty hit.
+	## Token hit-test calls are cached as locals so each runs exactly once,
+	## with the result reused for both PLAYER_TOKEN and TOKEN layer checks.
+
+	# Cache — each hit-test called at most once.
+	var handle_result: Dictionary = _hit_test_token_handle(world_pos)
+	var token_hit: Variant = _hit_test_tokens(world_pos)
+
+	# --- PLAYER_TOKEN (highest priority) ---
+	if not handle_result.is_empty():
+		var htid: Variant = handle_result.get("token_id", null)
+		var hdl: int = int(handle_result.get("handle", -1))
+		var hnode: Node2D = _draggable_tokens.get(htid, null) as Node2D
+		if hnode is PlayerSprite:
+			return SelectableHit.make(ISelectionService.SelectionLayer.PLAYER_TOKEN, htid, hdl)
+	if token_hit != null:
+		var tnode: Node2D = _draggable_tokens.get(token_hit, null) as Node2D
+		if tnode is PlayerSprite:
+			return SelectableHit.make(ISelectionService.SelectionLayer.PLAYER_TOKEN, token_hit)
+
+	# --- MEASUREMENT ---
+	if measurement_overlay != null and is_dm_view:
+		var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
+		var ep_which: String = ep[0] as String
+		var ep_id: String = ep[1] as String
+		if ep_which != "":
+			return SelectableHit.make(
+					ISelectionService.SelectionLayer.MEASUREMENT, ep_id, -1, ep_which)
+		var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
+		if picked_id != "":
+			return SelectableHit.make(ISelectionService.SelectionLayer.MEASUREMENT, picked_id)
+
+	# --- EFFECT ---
+	var eff_id: String = hit_test_effect(world_pos)
+	if not eff_id.is_empty():
+		return SelectableHit.make(ISelectionService.SelectionLayer.EFFECT, eff_id)
+
+	# --- TOKEN (non-player handles first, then body) ---
+	if not handle_result.is_empty():
+		var htid: Variant = handle_result.get("token_id", null)
+		var hdl: int = int(handle_result.get("handle", -1))
+		var hnode: Node2D = _draggable_tokens.get(htid, null) as Node2D
+		if not (hnode is PlayerSprite):
+			return SelectableHit.make(ISelectionService.SelectionLayer.TOKEN, htid, hdl)
+	if token_hit != null:
+		var tnode: Node2D = _draggable_tokens.get(token_hit, null) as Node2D
+		if not (tnode is PlayerSprite):
+			return SelectableHit.make(ISelectionService.SelectionLayer.TOKEN, token_hit)
+
+	# --- SPAWN ---
+	var sp_idx: int = _hit_test_spawn_point(world_pos)
+	if sp_idx >= 0:
+		return SelectableHit.make(ISelectionService.SelectionLayer.SPAWN, sp_idx)
+
+	# --- INDICATOR ---
+	if _viewport_indicator != Rect2() and _indicator_overlay != null:
+		var ind_handle: int = _indicator_overlay.get_handle_at(world_pos)
+		if ind_handle >= 0:
+			return SelectableHit.make(
+					ISelectionService.SelectionLayer.INDICATOR, null, ind_handle)
+		if _indicator_has_point(world_pos):
+			return SelectableHit.make(ISelectionService.SelectionLayer.INDICATOR, null)
+
+	# --- WALL (lowest priority) ---
+	# Check already-selected wall handle before looking for a new wall.
+	if _selected_wall_index >= 0:
+		var wh_idx: int = _hit_test_selected_wall_handle(world_pos)
+		if wh_idx >= 0:
+			return SelectableHit.make(
+					ISelectionService.SelectionLayer.WALL, _selected_wall_index, wh_idx)
+	var wall_idx: int = _find_wall_at_point(world_pos)
+	if wall_idx >= 0:
+		return SelectableHit.make(ISelectionService.SelectionLayer.WALL, wall_idx)
+
+	return SelectableHit.new()  ## empty — no hit at this position
+
+
 func _update_cursor(world_pos: Vector2) -> void:
 	var shape: int = DisplayServer.CURSOR_ARROW
 	if _trigger_radius_dragging_id != null:
@@ -1991,165 +2098,148 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_LEFT:
 				if btn_event.pressed:
-					# Place Token tool — handle hit (resize/rotate) takes
-					# priority, then body hit (select/drag), then place new.
-					if active_tool == Tool.PLACE_TOKEN:
-						var pt_world := get_global_mouse_position()
-						# Handle hit-test first (resize / rotate / trigger-radius).
-						var pt_handle: Dictionary = _hit_test_token_handle(pt_world)
-						if not pt_handle.is_empty():
-							var htid: Variant = pt_handle.get("token_id", null)
-							var hdl: int = int(pt_handle.get("handle", -1))
-							var handle_node: Node2D = _draggable_tokens.get(htid, null) as Node2D
-							if handle_node != null and is_instance_valid(handle_node):
-								if hdl == 8:
-									_rotating_token_id = htid
-									_rotate_token_node = handle_node
-									_rotate_start_angle = handle_node.rotation
-									_rotate_start_mouse_angle = atan2(
-											pt_world.y - handle_node.global_position.y,
-											pt_world.x - handle_node.global_position.x)
-								elif hdl == 9:
-									_trigger_radius_dragging_id = htid
-									_trigger_radius_drag_node = handle_node
-								else:
-									_resizing_token_id = htid
-									_resize_token_node = handle_node
-									_resize_token_handle_idx = hdl
-									_resize_start_width = 48.0
-									_resize_start_height = 48.0
-									var handle_ts := handle_node as TokenSprite
-									if handle_ts != null:
-										_resize_start_width = handle_ts.get_token_width_px()
-										_resize_start_height = handle_ts.get_token_height_px()
-									_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
-								_update_cursor(pt_world)
-								get_viewport().set_input_as_handled()
-								return
-						# Body hit-test — select / drag existing token.
-						var pt_hit: Variant = _hit_test_tokens(pt_world)
-						if pt_hit != null:
-							var pt_node: Node2D = _draggable_tokens.get(pt_hit, null) as Node2D
-							if pt_node != null and is_instance_valid(pt_node):
-								token_selected.emit(str(pt_hit))
-								_dragging_token_id = pt_hit
-								_dragging_token_node = pt_node
-								_dragging_token_offset = pt_node.global_position - pt_world
-								token_drag_started.emit(pt_hit)
-								_update_cursor(pt_world)
-								get_viewport().set_input_as_handled()
-								return
-						token_place_requested.emit(pt_world)
-						get_viewport().set_input_as_handled()
-						return
-					# PLACE_EFFECT — click existing to select/drag/resize, else place new or burst.
-					if active_tool == Tool.PLACE_EFFECT:
-						var eff_world := get_global_mouse_position()
-						var eff_hit: String = hit_test_effect(eff_world)
-						if not eff_hit.is_empty():
-							_selected_effect_id = eff_hit
-							effect_selected.emit(eff_hit)
-							var eff_node: EffectNode = _get_effect_node(eff_hit)
-							if eff_node != null:
-								if _is_effect_edge_hit(eff_node, eff_world):
-									_resizing_effect_id = eff_hit
-									_resizing_effect_node = eff_node
-									_resize_effect_start_size = eff_node._sprite.scale.x if eff_node._sprite != null else 96.0
-								else:
-									_dragging_effect_id = eff_hit
-									_dragging_effect_node = eff_node
-									_dragging_effect_offset = eff_node.position - eff_world
-							get_viewport().set_input_as_handled()
-							return
-						if effect_burst_mode:
-							# Burst: spawn temporary visual that follows mouse
-							_burst_start(eff_world)
-							get_viewport().set_input_as_handled()
-							return
-						# Start click-and-drag shape placement
-						_effect_drag_placing = true
-						_effect_drag_start = eff_world
-						_effect_drag_preview_start(eff_world)
-						get_viewport().set_input_as_handled()
-						return
-					# Token interaction — handle hit (resize/rotate) takes priority over body move.
-					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
+					if _active_tool_supports_selection():
 						var world_pos := get_global_mouse_position()
-						var handle_result: Dictionary = _hit_test_token_handle(world_pos)
-						if not handle_result.is_empty():
-							var htid: Variant = handle_result.get("token_id", null)
-							var hdl: int = int(handle_result.get("handle", -1))
-							var handle_node: Node2D = _draggable_tokens.get(htid, null) as Node2D
-							if handle_node != null and is_instance_valid(handle_node):
-								if hdl == 8:
-									_rotating_token_id = htid
-									_rotate_token_node = handle_node
-									_rotate_start_angle = handle_node.rotation
-									_rotate_start_mouse_angle = atan2(
-											world_pos.y - handle_node.global_position.y,
-											world_pos.x - handle_node.global_position.x)
-								elif hdl == 9:
-									_trigger_radius_dragging_id = htid
-									_trigger_radius_drag_node = handle_node
+						var hit := _pick_selectable_at(world_pos)
+						# Placement tools only interact with their own entity type;
+						# mask hits from other layers so they fall through to placement.
+						var eff_hit := hit
+						if active_tool == Tool.PLACE_TOKEN:
+							if hit.layer != ISelectionService.SelectionLayer.TOKEN and hit.layer != ISelectionService.SelectionLayer.PLAYER_TOKEN:
+								eff_hit = SelectableHit.new()
+						elif active_tool == Tool.PLACE_EFFECT:
+							if hit.layer != ISelectionService.SelectionLayer.EFFECT:
+								eff_hit = SelectableHit.new()
+						elif active_tool == Tool.SPAWN_POINT:
+							if hit.layer != ISelectionService.SelectionLayer.SPAWN:
+								eff_hit = SelectableHit.new()
+						# In SELECT mode, always clear wall selection first; re-set below if a wall was hit.
+						if active_tool == Tool.SELECT:
+							_set_selected_wall(-1)
+						match eff_hit.layer:
+							ISelectionService.SelectionLayer.PLAYER_TOKEN, ISelectionService.SelectionLayer.TOKEN:
+								var htid: Variant = eff_hit.id
+								var hdl: int = eff_hit.handle
+								var hit_node: Node2D = _draggable_tokens.get(htid, null) as Node2D
+								if hit_node != null and is_instance_valid(hit_node):
+									if hdl == 8:
+										_rotating_token_id = htid
+										_rotate_token_node = hit_node
+										_rotate_start_angle = hit_node.rotation
+										_rotate_start_mouse_angle = atan2(
+												world_pos.y - hit_node.global_position.y,
+												world_pos.x - hit_node.global_position.x)
+									elif hdl == 9:
+										_trigger_radius_dragging_id = htid
+										_trigger_radius_drag_node = hit_node
+									elif hdl >= 0:
+										_resizing_token_id = htid
+										_resize_token_node = hit_node
+										_resize_token_handle_idx = hdl
+										_resize_start_width = 48.0
+										_resize_start_height = 48.0
+										var handle_ts := hit_node as TokenSprite
+										if handle_ts != null:
+											_resize_start_width = handle_ts.get_token_width_px()
+											_resize_start_height = handle_ts.get_token_height_px()
+										_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
+									else:
+										token_selected.emit(str(htid))
+										_dragging_token_id = htid
+										_dragging_token_node = hit_node
+										_dragging_token_offset = hit_node.global_position - world_pos
+										token_drag_started.emit(htid)
+									_update_cursor(world_pos)
+									get_viewport().set_input_as_handled()
+									return
+							ISelectionService.SelectionLayer.MEASUREMENT:
+								var meas_id: String = str(eff_hit.id)
+								_selected_meas_id = meas_id
+								if measurement_overlay != null:
+									measurement_overlay.set_selected(meas_id)
+								if eff_hit.endpoint != "":
+									var reg_m := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+									if reg_m != null and reg_m.measurement != null:
+										var md: MeasurementData = reg_m.measurement.get_by_id(meas_id)
+										if md != null:
+											_meas_edit_dragging = true
+											_meas_edit_which = eff_hit.endpoint
+											_meas_edit_id = meas_id
+											_meas_edit_old_start = md.world_start
+											_meas_edit_old_end = md.world_end
 								else:
-									_resizing_token_id = htid
-									_resize_token_node = handle_node
-									_resize_token_handle_idx = hdl
-									_resize_start_width = 48.0
-									_resize_start_height = 48.0
-									var handle_ts := handle_node as TokenSprite
-									if handle_ts != null:
-										_resize_start_width = handle_ts.get_token_width_px()
-										_resize_start_height = handle_ts.get_token_height_px()
-									_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
-								_update_cursor(world_pos)
+									var reg_m := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+									if reg_m != null and reg_m.measurement != null:
+										var md: MeasurementData = reg_m.measurement.get_by_id(meas_id)
+										if md != null:
+											_meas_move_dragging = true
+											_meas_move_offset_start = md.world_start - world_pos
+											_meas_move_offset_end = md.world_end - world_pos
 								get_viewport().set_input_as_handled()
 								return
-						var hit_id: Variant = _hit_test_tokens(world_pos)
-						if hit_id != null:
-							var hit_node: Node2D = _draggable_tokens.get(hit_id, null) as Node2D
-							if hit_node != null and is_instance_valid(hit_node):
-								token_selected.emit(str(hit_id))
-								_dragging_token_id = hit_id
-								_dragging_token_node = hit_node
-								_dragging_token_offset = hit_node.global_position - world_pos
-								token_drag_started.emit(hit_id)
-								_update_cursor(world_pos)
+							ISelectionService.SelectionLayer.EFFECT:
+								var eff_id: String = str(eff_hit.id)
+								_selected_effect_id = eff_id
+								effect_selected.emit(eff_id)
+								var eff_node: EffectNode = _get_effect_node(eff_id)
+								if eff_node != null:
+									if _is_effect_edge_hit(eff_node, world_pos):
+										_resizing_effect_id = eff_id
+										_resizing_effect_node = eff_node
+										_resize_effect_start_size = eff_node._sprite.scale.x if eff_node._sprite != null else 96.0
+									else:
+										_dragging_effect_id = eff_id
+										_dragging_effect_node = eff_node
+										_dragging_effect_offset = eff_node.position - world_pos
 								get_viewport().set_input_as_handled()
 								return
-						# Effect hit-test — select / drag / resize existing effect.
-						var eff_sel_id: String = hit_test_effect(world_pos)
-						if not eff_sel_id.is_empty():
-							_selected_effect_id = eff_sel_id
-							effect_selected.emit(eff_sel_id)
-							var eff_sel_node: EffectNode = _get_effect_node(eff_sel_id)
-							if eff_sel_node != null:
-								if _is_effect_edge_hit(eff_sel_node, world_pos):
-									_resizing_effect_id = eff_sel_id
-									_resizing_effect_node = eff_sel_node
-									_resize_effect_start_size = eff_sel_node._sprite.scale.x if eff_sel_node._sprite != null else 96.0
+							ISelectionService.SelectionLayer.SPAWN:
+								var sp_hit_idx: int = int(eff_hit.id)
+								_dragging_spawn_index = sp_hit_idx
+								_dragging_spawn_start_pos = world_pos
+								select_spawn_point(sp_hit_idx)
+								get_viewport().set_input_as_handled()
+								return
+							ISelectionService.SelectionLayer.INDICATOR:
+								if eff_hit.handle >= 0:
+									_resizing_indicator = true
+									_resize_handle_idx = eff_hit.handle
+									_resize_start_rect = _viewport_indicator
+									var corners := _indicator_corners()
+									_resize_anchor_world = corners[(eff_hit.handle + 2) % 4]
 								else:
-									_dragging_effect_id = eff_sel_id
-									_dragging_effect_node = eff_sel_node
-									_dragging_effect_offset = eff_sel_node.position - world_pos
-							get_viewport().set_input_as_handled()
-							return
-						# Deselect effect when clicking empty space
-						_selected_effect_id = ""
-						# Handle resize takes priority over body-drag
-						if _viewport_indicator != Rect2() and _indicator_overlay != null:
-							var handle_idx: int = _indicator_overlay.get_handle_at(world_pos)
-							if handle_idx >= 0:
-								_resizing_indicator = true
-								_resize_handle_idx = handle_idx
-								_resize_start_rect = _viewport_indicator
-								var corners := _indicator_corners()
-								_resize_anchor_world = corners[(handle_idx + 2) % 4]
+									_dragging_indicator = true
 								get_viewport().set_input_as_handled()
 								return
-					if active_tool == Tool.SELECT and fog_tool == FogTool.NONE and not _is_measure_tool_active() and _viewport_indicator != Rect2() and _indicator_has_point(get_global_mouse_position()):
-						_dragging_indicator = true
-						get_viewport().set_input_as_handled()
+							ISelectionService.SelectionLayer.WALL:
+								_set_selected_wall(int(eff_hit.id))
+								_wall_drag_start_points = _get_wall_points(int(eff_hit.id))
+								_wall_drag_start_index = int(eff_hit.id)
+								if eff_hit.handle >= 0:
+									_wall_dragging_handle = eff_hit.handle
+								get_viewport().set_input_as_handled()
+								return
+							_:
+								# No hit — clear selections (SELECT mode only; placement tools fall through to create)
+								if active_tool == Tool.SELECT:
+									_selected_effect_id = ""
+									if _selected_meas_id != "":
+										_selected_meas_id = ""
+										if measurement_overlay != null:
+											measurement_overlay.set_selected("")
+								elif active_tool == Tool.PLACE_TOKEN:
+									token_place_requested.emit(world_pos)
+									get_viewport().set_input_as_handled()
+									return
+								elif active_tool == Tool.PLACE_EFFECT:
+									if effect_burst_mode:
+										_burst_start(world_pos)
+									else:
+										_effect_drag_placing = true
+										_effect_drag_start = world_pos
+										_effect_drag_preview_start(world_pos)
+									get_viewport().set_input_as_handled()
+									return
 					elif active_tool == Tool.PAN:
 						_panning = true
 						_pan_start_mouse = btn_event.position
@@ -2557,49 +2647,13 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 				return true
 		return false
 
-	# --- Select mode: click to select, edit endpoint, or drag to move ---
+	# --- Select mode: drag drain (initial press handled by unified picker) ---
 	if active_tool == Tool.SELECT:
 		if event is InputEventMouseButton:
 			var btn := event as InputEventMouseButton
 			if btn.button_index == MOUSE_BUTTON_LEFT:
-				var world_pos := get_global_mouse_position()
 				if btn.pressed:
-					# Priority 1: endpoint edit (tighter snap than body pick)
-					var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
-					var ep_which: String = ep[0] as String
-					var ep_id: String = ep[1] as String
-					if ep_which != "":
-						var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-						if registry != null and registry.measurement != null:
-							var md: MeasurementData = registry.measurement.get_by_id(ep_id)
-							if md != null:
-								_meas_edit_dragging = true
-								_meas_edit_which = ep_which
-								_meas_edit_id = ep_id
-								_meas_edit_old_start = md.world_start
-								_meas_edit_old_end = md.world_end
-								_selected_meas_id = ep_id
-								measurement_overlay.set_selected(ep_id)
-								return true
-					# Priority 2: body pick → start whole-shape move
-					var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
-					if picked_id != "":
-						_selected_meas_id = picked_id
-						measurement_overlay.set_selected(picked_id)
-						var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-						if registry != null and registry.measurement != null:
-							var md: MeasurementData = registry.measurement.get_by_id(picked_id)
-							if md != null:
-								_meas_move_dragging = true
-								_meas_move_offset_start = md.world_start - world_pos
-								_meas_move_offset_end = md.world_end - world_pos
-						return true
-					else:
-						# Click on empty space clears selection
-						if _selected_meas_id != "":
-							_selected_meas_id = ""
-							measurement_overlay.set_selected("")
-						return false
+					return false  ## unified picker in _unhandled_input handles initial selection
 				else:
 					# --- Button release: finish edit or move ---
 					if _meas_edit_dragging:
@@ -2719,36 +2773,12 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 			# Optionally, return false or handle as needed
 			return false
 
-	# Restore SELECT tool wall selection, handle drag, and move drag logic
-	if active_tool == Tool.SELECT and fog_tool == FogTool.NONE:
+	# Wall drag drain for SELECT mode (initial press handled by unified picker)
+	if active_tool == Tool.SELECT:
 		if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			var sb := event as InputEventMouseButton
 			if sb.pressed:
-				var mouse_pos := get_global_mouse_position()
-				# Dragging an existing wall handle — keep selection.
-				var handle_idx := _hit_test_selected_wall_handle(mouse_pos)
-				if handle_idx >= 0:
-					_wall_dragging_handle = handle_idx
-					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
-					_wall_drag_start_index = _selected_wall_index
-					return true
-				# Any other click deselects the current wall first.
-				_set_selected_wall(-1)
-				# Tokens take priority over walls — let the outer handler deal
-				# with them instead of consuming the click here.
-				if _hit_test_token_handle(mouse_pos).size() > 0 or _hit_test_tokens(mouse_pos) != null:
-					return false
-				# Indicator (handles and body) takes priority over wall selection.
-				if _viewport_indicator != Rect2() and _indicator_overlay != null:
-					if _indicator_overlay.get_handle_at(mouse_pos) >= 0 or _indicator_has_point(mouse_pos):
-						return false
-				var wall_idx := _find_wall_at_point(mouse_pos)
-				if wall_idx >= 0:
-					_set_selected_wall(wall_idx)
-					_wall_drag_start_points = _get_wall_points(_selected_wall_index)
-					_wall_drag_start_index = _selected_wall_index
-					return true
-				return false
+				return false  ## unified picker in _unhandled_input handles all press logic
 			# On mouse release: only consume the event if we actually performed a wall drag/move
 			var prev_handle := _wall_dragging_handle
 			_wall_dragging_handle = -1
@@ -3798,10 +3828,7 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 			if btn.pressed:
 				var hit := _hit_test_spawn_point(world_pos)
 				if hit >= 0:
-					_dragging_spawn_index = hit
-					_dragging_spawn_start_pos = world_pos
-					select_spawn_point(hit)
-					return true
+					return false  ## unified picker handles spawn selection and drag start
 				elif active_tool == Tool.SPAWN_POINT:
 					# Click on empty space: place new spawn point (SPAWN_POINT tool only)
 					add_spawn_point(world_pos)

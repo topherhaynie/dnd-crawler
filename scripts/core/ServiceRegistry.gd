@@ -24,6 +24,7 @@ var token: TokenManager = null
 var history: HistoryManager = null
 var measurement: MeasurementManager = null
 var effect: EffectManager = null
+var selection: SelectionManager = null
 var ui_scale: UIScaleManager = null
 var ui_theme: UIThemeManager = null
 
