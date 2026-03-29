@@ -1539,8 +1539,7 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 			_map_view._set_active_tool(_map_view.Tool.PLACE_EFFECT)
 			if _effect_panel != null:
 				_effect_panel.visible = true
-				if _view_menu != null:
-					_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+				_set_view_checked(29, true)
 				_apply_effect_panel_size()
 				_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
 				_map_view.effect_place_size = _effect_panel.get_effect_size()
@@ -1561,8 +1560,7 @@ func _on_palette_effect_tool_activated(_effect_type: int) -> void:
 	# Auto-show the effect panel and sync state to MapView
 	if _effect_panel != null:
 		_effect_panel.visible = true
-		if _view_menu != null:
-			_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+		_set_view_checked(29, true)
 		_apply_effect_panel_size()
 		_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
 		_map_view.effect_place_size = _effect_panel.get_effect_size()
@@ -1715,9 +1713,7 @@ func _close_floating_palette() -> void:
 	_dock_palette()
 	if _palette != null:
 		_palette.visible = false
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(20), false)
-	_nm_set_checked("View", 20, false)
+	_set_view_checked(20, false)
 
 
 # ---------------------------------------------------------------------------
@@ -2065,9 +2061,7 @@ func _undock_freeze_panel() -> void:
 	else:
 		_freeze_panel_window.popup_centered()
 
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
-	_nm_set_checked("View", 25, true)
+	_set_view_checked(25, true)
 	_apply_effect_panel_size()
 
 
@@ -2101,9 +2095,7 @@ func _dock_freeze_panel() -> void:
 		_freeze_panel_window.queue_free()
 		_freeze_panel_window = null
 
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
-	_nm_set_checked("View", 25, true)
+	_set_view_checked(25, true)
 	_apply_effect_panel_size()
 
 
@@ -2111,9 +2103,7 @@ func _close_floating_freeze_panel() -> void:
 	_dock_freeze_panel()
 	if _freeze_panel != null:
 		_freeze_panel.visible = false
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(25), false)
-	_nm_set_checked("View", 25, false)
+	_set_view_checked(25, false)
 	_apply_effect_panel_size()
 
 
@@ -2241,8 +2231,7 @@ func _undock_effect_panel() -> void:
 	else:
 		_effect_panel_window.popup_centered()
 
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+	_set_view_checked(29, true)
 
 
 func _dock_effect_panel() -> void:
@@ -2275,8 +2264,7 @@ func _close_floating_effect_panel() -> void:
 	_dock_effect_panel()
 	if _effect_panel != null:
 		_effect_panel.visible = false
-	if _view_menu != null:
-		_view_menu.set_item_checked(_view_menu.get_item_index(29), false)
+	_set_view_checked(29, false)
 	_apply_effect_panel_size()
 
 
@@ -2340,25 +2328,22 @@ func _on_view_menu_id(id: int) -> void:
 		20: # Toggle toolbar
 			if _palette != null:
 				_palette.visible = !_palette.visible
-				_view_menu.set_item_checked(_view_menu.get_item_index(20), _palette.visible)
-				_nm_set_checked("View", 20, _palette.visible)
+				_set_view_checked(20, _palette.visible)
 		25: # Toggle player freeze panel
 			if _freeze_panel != null:
 				_freeze_panel.visible = !_freeze_panel.visible
-				_view_menu.set_item_checked(_view_menu.get_item_index(25), _freeze_panel.visible)
-				_nm_set_checked("View", 25, _freeze_panel.visible)
+				_set_view_checked(25, _freeze_panel.visible)
 				_apply_effect_panel_size()
 		29: # Toggle effect panel
 			if _effect_panel != null:
 				_effect_panel.visible = !_effect_panel.visible
-				_view_menu.set_item_checked(_view_menu.get_item_index(29), _effect_panel.visible)
+				_set_view_checked(29, _effect_panel.visible)
 				_apply_effect_panel_size()
 		21: # Toggle grid overlay
 			if _map_view:
 				var go: Node2D = _map_view.grid_overlay
 				go.visible = !go.visible
-				_view_menu.set_item_checked(_view_menu.get_item_index(21), go.visible)
-				_nm_set_checked("View", 21, go.visible)
+				_set_view_checked(21, go.visible)
 		22: # Reset DM view
 			if _map_view:
 				_map_view._reset_camera()
@@ -2369,8 +2354,7 @@ func _on_view_menu_id(id: int) -> void:
 		28: # Toggle fog overlay effect
 			var idx := _view_menu.get_item_index(28)
 			var on := not _view_menu.is_item_checked(idx)
-			_view_menu.set_item_checked(idx, on)
-			_nm_set_checked("View", 28, on)
+			_set_view_checked(28, on)
 			if _map_view:
 				_map_view.set_fog_overlay_enabled(on)
 			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
@@ -6723,6 +6707,7 @@ func _build_native_menus() -> void:
 	nm.call(&"AddMenu", "View")
 	nm.call(&"AddCheckItem", "View", "Toolbar", 20, true)
 	nm.call(&"AddCheckItem", "View", "Player Freeze Panel", 25, true)
+	nm.call(&"AddCheckItem", "View", "Effect Panel", 29, false)
 	nm.call(&"AddCheckItem", "View", "Grid Overlay", 21, true)
 	nm.call(&"AddSeparator", "View")
 	nm.call(&"AddItem", "View", "Reset View", 22)
@@ -6776,3 +6761,10 @@ func _nm_set_disabled(menu: String, id: int, disabled: bool) -> void:
 func _nm_set_text(menu: String, id: int, text: String) -> void:
 	if _native_menu:
 		_native_menu.call(&"SetItemText", menu, id, text)
+
+
+func _set_view_checked(id: int, on: bool) -> void:
+	## Update both the Godot view PopupMenu checkmark and the native Win32 menu bar in one call.
+	if _view_menu != null:
+		_view_menu.set_item_checked(_view_menu.get_item_index(id), on)
+	_nm_set_checked("View", id, on)
