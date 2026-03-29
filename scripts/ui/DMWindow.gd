@@ -575,6 +575,15 @@ func _shortcut_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	# Re-dock floating panels if the OS minimizes them (macOS yellow dot).
+	# Minimized sub-windows can't be restored from within the DM window, so
+	# we snap them back to docked state immediately.
+	if _freeze_panel_window != null and is_instance_valid(_freeze_panel_window) \
+			and _freeze_panel_window.mode == Window.MODE_MINIMIZED:
+		call_deferred("_dock_freeze_panel")
+	if _effect_panel_window != null and is_instance_valid(_effect_panel_window) \
+			and _effect_panel_window.mode == Window.MODE_MINIMIZED:
+		call_deferred("_dock_effect_panel")
 	if _player_state_countdown > 0.0:
 		_player_state_countdown = maxf(0.0, _player_state_countdown - delta)
 	if _fog_countdown > 0.0:
@@ -695,6 +704,7 @@ func _build_ui() -> void:
 	_menu_bar.prefer_global_menu = true ## merge into native OS menu bar
 	_menu_bar.resized.connect(_apply_palette_size)
 	_menu_bar.resized.connect(_apply_freeze_panel_size)
+	_menu_bar.resized.connect(_apply_effect_panel_size)
 	_ui_root.add_child(_menu_bar)
 
 	var menu_bar: MenuBar = _menu_bar ## local alias for readability below
@@ -744,30 +754,34 @@ func _build_ui() -> void:
 	edit_menu.set_item_disabled(edit_menu.get_item_index(18), true)
 	menu_bar.add_child(edit_menu)
 
-	# View menu  (indices matter for set_item_checked)
+	# View menu  (all set_item_checked calls use get_item_index(id) — no hardcoded indices)
 	# idx 0 → id 20 Toolbar
 	# idx 1 → id 25 Player Freeze Panel
-	# idx 2 → id 21 Grid Overlay
-	# idx 3 → separator
-	# idx 4 → id 22 Reset View
-	# idx 5 → separator
-	# idx 6 → id 24 Sync Fog Now
-	# idx 7 → separator
-	# idx 8 → id 26 Measurement Tools…
-	# idx 9 → separator
-	# idx 10 → Grid Type submenu
-	# idx 11 → separator
-	# idx 12 → id 23 Launch Player Window
+	# idx 2 → id 29 Effect Panel
+	# idx 3 → id 21 Grid Overlay
+	# idx 4 → separator
+	# idx 5 → id 22 Reset View
+	# idx 6 → separator
+	# idx 7 → id 24 Sync Fog Now
+	# idx 8 → id 27 Reset Fog…
+	# idx 9 → id 28 Fog Overlay Effect
+	# idx 10 → separator
+	# idx 11 → id 26 Measurement Tools…
+	# idx 12 → separator
+	# idx 13 → Grid Type submenu
+	# idx 14 → UI Theme submenu
+	# idx 15 → separator
+	# idx 16 → id 23 Launch Player Window
 	_view_menu = PopupMenu.new()
 	_view_menu.name = "View"
 	_view_menu.add_check_item("Toolbar", 20)
-	_view_menu.set_item_checked(0, true)
+	_view_menu.set_item_checked(_view_menu.get_item_index(20), true)
 	_view_menu.add_check_item("Player Freeze Panel", 25)
-	_view_menu.set_item_checked(1, true)
+	_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
 	_view_menu.add_check_item("Effect Panel", 29)
 	_view_menu.set_item_checked(_view_menu.get_item_index(29), false)
 	_view_menu.add_check_item("Grid Overlay", 21)
-	_view_menu.set_item_checked(2, true)
+	_view_menu.set_item_checked(_view_menu.get_item_index(21), true)
 	_view_menu.add_separator()
 	_view_menu.add_item("Reset View", 22)
 	_view_menu.add_separator()
@@ -1524,6 +1538,7 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 				_effect_panel.visible = true
 				if _view_menu != null:
 					_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+				_apply_effect_panel_size()
 				_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
 				_map_view.effect_place_size = _effect_panel.get_effect_size()
 				_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
@@ -1545,6 +1560,7 @@ func _on_palette_effect_tool_activated(_effect_type: int) -> void:
 		_effect_panel.visible = true
 		if _view_menu != null:
 			_view_menu.set_item_checked(_view_menu.get_item_index(29), true)
+		_apply_effect_panel_size()
 		_map_view.effect_place_type = _effect_panel.get_selected_effect_type()
 		_map_view.effect_place_size = _effect_panel.get_effect_size()
 		_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
@@ -2005,6 +2021,7 @@ func _undock_freeze_panel() -> void:
 	var old_parent := _freeze_panel.get_parent()
 	if old_parent:
 		old_parent.remove_child(_freeze_panel)
+	_apply_effect_panel_size()
 	_freeze_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_freeze_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	_freeze_panel_window.add_child(_freeze_panel)
@@ -2027,8 +2044,9 @@ func _undock_freeze_panel() -> void:
 		_freeze_panel_window.popup_centered()
 
 	if _view_menu != null:
-		_view_menu.set_item_checked(1, true)
+		_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
 	_nm_set_checked("View", 25, true)
+	_apply_effect_panel_size()
 
 
 func _dock_freeze_panel() -> void:
@@ -2062,8 +2080,9 @@ func _dock_freeze_panel() -> void:
 		_freeze_panel_window = null
 
 	if _view_menu != null:
-		_view_menu.set_item_checked(1, true)
+		_view_menu.set_item_checked(_view_menu.get_item_index(25), true)
 	_nm_set_checked("View", 25, true)
+	_apply_effect_panel_size()
 
 
 # ---------------------------------------------------------------------------
@@ -2280,22 +2299,24 @@ func _on_view_menu_id(id: int) -> void:
 		20: # Toggle toolbar
 			if _palette != null:
 				_palette.visible = !_palette.visible
-				_view_menu.set_item_checked(0, _palette.visible)
+				_view_menu.set_item_checked(_view_menu.get_item_index(20), _palette.visible)
 				_nm_set_checked("View", 20, _palette.visible)
 		25: # Toggle player freeze panel
 			if _freeze_panel != null:
 				_freeze_panel.visible = !_freeze_panel.visible
-				_view_menu.set_item_checked(1, _freeze_panel.visible)
+				_view_menu.set_item_checked(_view_menu.get_item_index(25), _freeze_panel.visible)
 				_nm_set_checked("View", 25, _freeze_panel.visible)
+				_apply_effect_panel_size()
 		29: # Toggle effect panel
 			if _effect_panel != null:
 				_effect_panel.visible = !_effect_panel.visible
 				_view_menu.set_item_checked(_view_menu.get_item_index(29), _effect_panel.visible)
+				_apply_effect_panel_size()
 		21: # Toggle grid overlay
 			if _map_view:
 				var go: Node2D = _map_view.grid_overlay
 				go.visible = !go.visible
-				_view_menu.set_item_checked(2, go.visible)
+				_view_menu.set_item_checked(_view_menu.get_item_index(21), go.visible)
 				_nm_set_checked("View", 21, go.visible)
 		22: # Reset DM view
 			if _map_view:
