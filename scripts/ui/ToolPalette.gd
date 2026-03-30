@@ -75,10 +75,10 @@ var _fog_context: VBoxContainer = null
 var _spawn_context: VBoxContainer = null
 
 const _LONG_PRESS_SEC: float = 0.4
-const _BTN_SIZE: float = 24.0
-const _FONT_SIZE: float = 18.0
-const _SMALL_FONT: float = 11.0
-const _HEADER_FONT: float = 8.0
+const _BTN_SIZE: float = 28.0
+const _FONT_SIZE: float = 22.0
+const _SMALL_FONT: float = 13.0
+const _HEADER_FONT: float = 10.0
 
 
 func setup(ui_scale_mgr: UIScaleManager = null, ui_theme_mgr: UIThemeManager = null) -> void:
@@ -144,7 +144,7 @@ func _build() -> void:
 	add_theme_stylebox_override("panel", panel_style)
 
 	# Constrain palette width (keep in sync with DMWindow._apply_palette_size)
-	var palette_w := roundi(34.0 * s)
+	var palette_w := roundi(40.0 * s)
 	custom_minimum_size = Vector2(palette_w, 0)
 
 	# Button StyleBoxes from theme manager (or fallback to defaults)
@@ -191,23 +191,38 @@ func _build() -> void:
 	margin.add_theme_constant_override("margin_right", roundi(1.0 * s))
 	margin.add_theme_constant_override("margin_top", roundi(1.0 * s))
 	margin.add_theme_constant_override("margin_bottom", roundi(1.0 * s))
+	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(margin)
 
-	var palette_vbox := VBoxContainer.new()
-	palette_vbox.add_theme_constant_override("separation", roundi(1.0 * s))
-	margin.add_child(palette_vbox)
+	# Outer VBox: undock button (fixed) + scrollable tool area
+	var outer_vbox := VBoxContainer.new()
+	outer_vbox.add_theme_constant_override("separation", 0)
+	outer_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(outer_vbox)
 
 	# Undock button
 	undock_btn = Button.new()
 	undock_btn.text = "⇲"
 	undock_btn.focus_mode = Control.FOCUS_NONE
 	undock_btn.tooltip_text = "Detach / re-dock palette"
-	undock_btn.custom_minimum_size = Vector2(0, roundi(10.0 * s))
-	undock_btn.add_theme_font_size_override("font_size", roundi(8.0 * s))
+	undock_btn.custom_minimum_size = Vector2(0, roundi(_BTN_SIZE * s))
+	undock_btn.add_theme_font_size_override("font_size", roundi(_FONT_SIZE * s))
 	_apply_compact_style(undock_btn)
-	palette_vbox.add_child(undock_btn)
+	outer_vbox.add_child(undock_btn)
 
-	palette_vbox.add_child(HSeparator.new())
+	outer_vbox.add_child(HSeparator.new())
+
+	# Scrollable area for all tool buttons
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer_vbox.add_child(scroll)
+
+	var palette_vbox := VBoxContainer.new()
+	palette_vbox.add_theme_constant_override("separation", roundi(1.0 * s))
+	palette_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(palette_vbox)
 
 	# Tool toggle group (Select / Pan / Fog / Wall / Spawn / Token)
 	_tool_group = ButtonGroup.new()

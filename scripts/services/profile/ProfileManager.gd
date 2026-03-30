@@ -51,6 +51,7 @@ func add_profile(profile: PlayerProfile) -> void:
 	service.add_profile(profile)
 	if model != null:
 		model.profiles = service.get_profiles()
+	service.save_profiles()
 	profiles_changed.emit()
 
 
@@ -60,6 +61,7 @@ func remove_profile(id: String) -> void:
 	service.remove_profile(id)
 	if model != null:
 		model.profiles = service.get_profiles()
+	service.save_profiles()
 	profiles_changed.emit()
 
 

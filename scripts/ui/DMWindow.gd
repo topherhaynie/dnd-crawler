@@ -180,6 +180,12 @@ var _profile_add_btn: Button = null
 var _profile_delete_btn: Button = null
 var _profile_add_btn_alt: Button = null
 var _profile_delete_btn_alt: Button = null
+var _profile_delete_confirm_dialog: ConfirmationDialog = null
+var _profile_delete_pending_id: String = ""
+var _profile_delete_pending_name: String = ""
+var _profile_delete_pending_index: int = -1
+var _profile_delete_pending_snapshot: PlayerProfile = null
+var _profile_undo_btn: Button = null
 var _profile_save_btn: Button = null
 var _profile_cancel_new_btn: Button = null
 var _profile_selected_index: int = -1
@@ -189,6 +195,8 @@ var _profiles_export_dialog: FileDialog = null
 var _profiles_root: Control = null
 var _profile_color_btn: ColorPickerButton = null
 var _profile_active_check: CheckBox = null
+var _profile_search_edit: LineEdit = null
+var _profile_display_indices: Array = []
 ## Legacy autoload reference removed — use registry-first `_network()` helper
 
 # ── Measurement panel ────────────────────────────────────────────────────────
@@ -343,7 +351,10 @@ func _ensure_history_bindings() -> void:
 	var svc: IHistoryService = registry.history.service
 	if not svc.is_connected("history_changed", Callable(self , "_refresh_history_menu")):
 		svc.history_changed.connect(_refresh_history_menu)
+	if not svc.is_connected("history_changed", Callable(self , "_update_profile_undo_btn")):
+		svc.history_changed.connect(_update_profile_undo_btn)
 	_refresh_history_menu()
+	_update_profile_undo_btn()
 
 
 func _refresh_history_menu() -> void:
@@ -1690,7 +1701,7 @@ func _undock_palette() -> void:
 		_uw_reg.ui_theme.theme_control_tree(_palette_window, _ui_scale())
 	var _pm := _get_ui_scale_mgr()
 	if _pm != null:
-		_pm.popup_fitted(_palette_window, 48.0, 500.0)
+		_pm.popup_fitted(_palette_window, 56.0, 500.0)
 	else:
 		_palette_window.popup_centered()
 
@@ -2405,6 +2416,8 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_share_dialog)
 	if _fog_reset_dialog != null:
 		dialogs.append(_fog_reset_dialog)
+	if _profile_delete_confirm_dialog != null:
+		dialogs.append(_profile_delete_confirm_dialog)
 	if _bundle_browser != null and _bundle_browser is Window:
 		dialogs.append(_bundle_browser as Window)
 	for dlg: Window in dialogs:
@@ -2660,6 +2673,15 @@ func _build_profiles_dialog() -> void:
 		left_title.add_theme_font_size_override("font_size", _sm.scaled(15.0))
 	left_panel.add_child(left_title)
 
+	_profile_search_edit = LineEdit.new()
+	_profile_search_edit.placeholder_text = "Filter profiles..."
+	_profile_search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_profile_search_edit.clear_button_enabled = true
+	if _sm != null:
+		_profile_search_edit.add_theme_font_size_override("font_size", _sm.scaled(13.0))
+	_profile_search_edit.text_changed.connect(_on_profile_search_changed)
+	left_panel.add_child(_profile_search_edit)
+
 	_profiles_list = ItemList.new()
 	_profiles_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if _sm != null:
@@ -2878,13 +2900,22 @@ func _build_profiles_dialog() -> void:
 	refresh_btn.pressed.connect(_refresh_available_inputs)
 	action_row.add_child(refresh_btn)
 
+	_profile_undo_btn = Button.new()
+	_profile_undo_btn.text = "Undo"
+	_profile_undo_btn.disabled = true
+	_profile_undo_btn.pressed.connect(_on_profile_undo_pressed)
+	action_row.add_child(_profile_undo_btn)
+
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action_row.add_child(fill)
 
+	var hint_margin := MarginContainer.new()
+	hint_margin.add_theme_constant_override("margin_right", 12)
 	var hint := Label.new()
 	hint.text = "Tip: Unknown keys in extras are preserved across save/load."
-	action_row.add_child(hint)
+	hint_margin.add_child(hint)
+	action_row.add_child(hint_margin)
 
 	_profiles_import_dialog = FileDialog.new()
 	_profiles_import_dialog.use_native_dialog = true
@@ -2918,19 +2949,25 @@ func _refresh_profiles_list() -> void:
 	if _profiles_list == null:
 		return
 	_profiles_list.clear()
+	_profile_display_indices.clear()
 	var pm := _profile_service()
 	var gs := _game_state()
 	var profiles_arr: Array = pm.get_profiles() if pm != null else []
-	for profile in profiles_arr:
+	var filter := _profile_search_edit.text.strip_edges().to_lower() if _profile_search_edit != null else ""
+	for i in range(profiles_arr.size()):
+		var profile = profiles_arr[i]
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
+		if filter != "" and not p.player_name.to_lower().contains(filter):
+			continue
 		var label: String
 		if gs != null and not gs.is_profile_active(p.id):
 			label = "%s (%s) [not in session]" % [p.player_name, p.id.left(8)]
 		else:
 			label = "%s (%s)" % [p.player_name, p.id.left(8)]
 		_profiles_list.add_item(label)
+		_profile_display_indices.append(i)
 		if gs != null and not gs.is_profile_active(p.id):
 			var item_idx: int = _profiles_list.item_count - 1
 			_profiles_list.set_item_custom_fg_color(item_idx, Color(0.6, 0.6, 0.6))
@@ -2946,9 +2983,20 @@ func _refresh_profiles_list() -> void:
 		_update_profile_action_state()
 		return
 
-	if _profile_selected_index < 0 or _profile_selected_index >= _profiles_list.item_count:
-		_profile_selected_index = 0
-	_profiles_list.select(_profile_selected_index)
+	# Find the list position for the currently selected real profile index.
+	var list_pos: int = _profile_display_indices.find(_profile_selected_index)
+	if list_pos < 0:
+		# Selected profile not visible in current filter — pick first visible.
+		if _profile_display_indices.size() > 0:
+			list_pos = 0
+			_profile_selected_index = _profile_display_indices[0]
+		else:
+			# Nothing visible (all filtered out) — clear form without losing the selection.
+			_profiles_list.deselect_all()
+			_clear_profile_form()
+			_update_profile_action_state()
+			return
+	_profiles_list.select(list_pos)
 	_load_selected_profile_into_form(_profile_selected_index)
 	_update_profile_action_state()
 
@@ -2977,11 +3025,17 @@ func _clear_profile_form() -> void:
 	_update_profile_action_state()
 
 
-func _on_profile_selected(index: int) -> void:
+func _on_profile_selected(list_idx: int) -> void:
 	_profile_is_new_draft = false
-	_profile_selected_index = index
-	_load_selected_profile_into_form(index)
+	# Translate the displayed list position to the real profiles-array index.
+	var real_idx: int = _profile_display_indices[list_idx] if list_idx < _profile_display_indices.size() else list_idx
+	_profile_selected_index = real_idx
+	_load_selected_profile_into_form(real_idx)
 	_update_profile_action_state()
+
+
+func _on_profile_search_changed(_new_text: String) -> void:
+	_refresh_profiles_list()
 
 
 func _load_selected_profile_into_form(index: int) -> void:
@@ -3058,12 +3112,76 @@ func _on_profile_delete_pressed() -> void:
 	if item is PlayerProfile:
 		removed_name = (item as PlayerProfile).player_name
 	var remove_id := str((item as PlayerProfile).id) if item is PlayerProfile else str((item as Dictionary).get("id", ""))
+	_profile_delete_pending_id = remove_id
+	_profile_delete_pending_name = removed_name
+	_profile_delete_pending_index = _profile_selected_index
+	_profile_delete_pending_snapshot = PlayerProfile.from_dict((item as PlayerProfile).to_dict()) if item is PlayerProfile else null
+	_show_profile_delete_confirm(removed_name)
+
+
+func _show_profile_delete_confirm(profile_name: String) -> void:
+	if _profile_delete_confirm_dialog == null:
+		_profile_delete_confirm_dialog = ConfirmationDialog.new()
+		_profile_delete_confirm_dialog.title = "Remove Profile"
+		_profile_delete_confirm_dialog.ok_button_text = "Remove"
+		_profile_delete_confirm_dialog.confirmed.connect(_on_profile_delete_confirmed)
+		# Add as child of the profiles AcceptDialog so it doesn't conflict with
+		# DMWindow's exclusive popup constraint.
+		_profiles_dialog.add_child(_profile_delete_confirm_dialog)
+		_apply_dialog_themes()
+		_apply_ui_scale()
+	_profile_delete_confirm_dialog.dialog_text = (
+		"Remove \"%s\"?\n\nThis permanently deletes the profile from disk. You can undo this action with Ctrl+Z." % profile_name
+	)
+	_profile_delete_confirm_dialog.reset_size()
+	_profile_delete_confirm_dialog.popup_centered()
+
+
+func _on_profile_delete_confirmed() -> void:
+	var pm := _profile_service()
+	if pm == null:
+		return
+	var remove_id := _profile_delete_pending_id
+	var removed_name := _profile_delete_pending_name
+	var original_index := _profile_delete_pending_index
+	var snapshot: PlayerProfile = _profile_delete_pending_snapshot
 	pm.remove_profile(remove_id)
 	_profile_selected_index = clampi(_profile_selected_index, 0, max(0, pm.get_profiles().size() - 1))
 	_profile_is_new_draft = false
 	_refresh_profiles_list()
 	_update_profile_action_state()
 	_set_status("Deleted profile: %s" % removed_name)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.history != null and snapshot != null:
+		var snap := snapshot
+		var rid := remove_id
+		var rname := removed_name
+		var ridx := original_index
+		var undo_fn := func() -> void:
+			var pm_u := _profile_service()
+			if pm_u == null:
+				return
+			var arr := pm_u.get_profiles()
+			arr.insert(mini(ridx, arr.size()), snap)
+			pm_u.set_all_profiles(arr)
+			_profile_selected_index = mini(ridx, pm_u.get_profiles().size() - 1)
+			_refresh_profiles_list()
+			_update_profile_action_state()
+			_update_profile_undo_btn()
+			_set_status("Restored profile: %s" % rname)
+		var redo_fn := func() -> void:
+			var pm_r := _profile_service()
+			if pm_r == null:
+				return
+			pm_r.remove_profile(rid)
+			_profile_selected_index = clampi(_profile_selected_index, 0, max(0, pm_r.get_profiles().size() - 1))
+			_refresh_profiles_list()
+			_update_profile_action_state()
+			_update_profile_undo_btn()
+			_set_status("Deleted profile: %s" % rname)
+		registry.history.push_command(HistoryCommand.create(
+			"Delete profile \"%s\"" % rname, undo_fn, redo_fn))
+	_update_profile_undo_btn()
 
 
 func _profile_service() -> ProfileManager:
@@ -3071,6 +3189,27 @@ func _profile_service() -> ProfileManager:
 	if registry == null or registry.profile == null:
 		return null
 	return registry.profile
+
+
+func _update_profile_undo_btn() -> void:
+	if _profile_undo_btn == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var can := registry != null and registry.history != null and registry.history.can_undo()
+	_profile_undo_btn.disabled = not can
+	if can and registry != null and registry.history != null:
+		_profile_undo_btn.tooltip_text = "Undo: %s" % registry.history.get_undo_description()
+	else:
+		_profile_undo_btn.tooltip_text = ""
+
+
+func _on_profile_undo_pressed() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.history == null:
+		return
+	var desc := registry.history.get_undo_description()
+	if registry.history.undo():
+		_set_status("Undo: %s" % desc)
 
 
 func _on_profile_save_pressed() -> void:
@@ -6431,7 +6570,7 @@ func _apply_palette_size() -> void:
 	if _palette == null:
 		return
 	var scale := _ui_scale()
-	var panel_w := roundi(34.0 * scale)
+	var panel_w := roundi(40.0 * scale)
 	_palette.offset_left = 0.0
 	_palette.offset_right = float(panel_w)
 	_palette.offset_top = _menu_bar_screen_height()
@@ -6550,6 +6689,10 @@ func _apply_ui_scale() -> void:
 		mgr.scale_button(_fog_reset_dialog.get_ok_button())
 		mgr.scale_button(_fog_reset_dialog.get_cancel_button())
 		_fog_reset_dialog.get_label().add_theme_font_size_override("font_size", mgr.scaled(14.0))
+	if _profile_delete_confirm_dialog:
+		mgr.scale_button(_profile_delete_confirm_dialog.get_ok_button())
+		mgr.scale_button(_profile_delete_confirm_dialog.get_cancel_button())
+		_profile_delete_confirm_dialog.get_label().add_theme_font_size_override("font_size", mgr.scaled(14.0))
 	_apply_token_context_menu_theme()
 
 	# ── Share player link dialog ──

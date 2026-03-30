@@ -481,6 +481,10 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 			var label_palette: Dictionary = get_accent_palette()
 			var label_col: Color = label_palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
 			(node as Label).add_theme_color_override("font_color", label_col)
+			# Set font size only if the caller hasn't already set an explicit override
+			# (e.g. title labels built with _sm.scaled(15.0) must not be overwritten).
+			if not (node as Label).has_theme_font_size_override("font_size"):
+				(node as Label).add_theme_font_size_override("font_size", roundi(14.0 * scale))
 		# Panels
 		if node is PanelContainer:
 			apply_chrome(node as PanelContainer)
