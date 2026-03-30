@@ -55,6 +55,10 @@ var _selected_style: StyleBoxFlat = null
 func _ready() -> void:
 	title = "Maps & Saves"
 	min_size = Vector2i(700, 500)
+	# transient=true: window stays in front of its parent (DM window) on all
+	# platforms, which is critical on Windows where non-transient child Windows
+	# can silently open behind the foreground window.
+	transient = true
 	close_requested.connect(_on_cancel)
 	_build_ui()
 

@@ -5522,7 +5522,10 @@ func _open_bundle_browser(mode: String) -> void:
 			_bb_reg.ui_theme.theme_control_tree(_bundle_browser, _ui_scale())
 	_bundle_browser.open_to_mode(mode)
 	_bundle_browser.populate()
-	_bundle_browser.popup_centered_ratio(0.85)
+	# Defer the popup so the Window node has fully entered the scene tree before
+	# being shown — fixes a Windows-specific race where a just-created Window
+	# doesn't appear because it hasn't received its HWND yet.
+	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
 
 
 func _on_map_bundle_selected(path: String) -> void:
