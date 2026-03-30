@@ -2381,6 +2381,11 @@ func _on_view_menu_id(id: int) -> void:
 
 func _apply_dialog_themes() -> void:
 	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		# ServiceRegistry is added deferred — fall back to bootstrap during _ready()
+		var _bootstrap := get_node_or_null("/root/ServiceBootstrap")
+		if _bootstrap != null and _bootstrap.get("registry") != null:
+			reg = _bootstrap.registry as ServiceRegistry
 	if reg == null or reg.ui_theme == null:
 		return
 	var tm: UIThemeManager = reg.ui_theme
@@ -2398,6 +2403,8 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_profiles_dialog)
 	if _share_dialog != null:
 		dialogs.append(_share_dialog)
+	if _fog_reset_dialog != null:
+		dialogs.append(_fog_reset_dialog)
 	if _bundle_browser != null and _bundle_browser is Window:
 		dialogs.append(_bundle_browser as Window)
 	for dlg: Window in dialogs:
@@ -6017,6 +6024,8 @@ func _show_fog_reset_confirm() -> void:
 		_fog_reset_dialog.ok_button_text = "Reset"
 		_fog_reset_dialog.confirmed.connect(_on_fog_reset_confirmed)
 		add_child(_fog_reset_dialog)
+		_apply_dialog_themes()
+		_apply_ui_scale()
 	_fog_reset_dialog.reset_size()
 	_fog_reset_dialog.popup_centered()
 
@@ -6537,6 +6546,10 @@ func _apply_ui_scale() -> void:
 		mgr.scale_control_fonts(_token_editor_dialog_root)
 		mgr.scale_button(_token_editor_dialog.get_ok_button())
 		mgr.scale_button(_token_editor_dialog.get_cancel_button())
+	if _fog_reset_dialog:
+		mgr.scale_button(_fog_reset_dialog.get_ok_button())
+		mgr.scale_button(_fog_reset_dialog.get_cancel_button())
+		_fog_reset_dialog.get_label().add_theme_font_size_override("font_size", mgr.scaled(14.0))
 	_apply_token_context_menu_theme()
 
 	# ── Share player link dialog ──

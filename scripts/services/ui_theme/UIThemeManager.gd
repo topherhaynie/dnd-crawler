@@ -351,8 +351,25 @@ func _apply_window_style(win: Window) -> void:
 	sb.set_corner_radius_all(6)
 	sb.set_content_margin_all(6)
 	win.add_theme_stylebox_override("embedded_border", sb)
-	# Non-embedded window background — insert a themed ColorRect at z=0
-	_ensure_window_bg_rect(win)
+	if win is AcceptDialog:
+		# AcceptDialog (and ConfirmationDialog) calls draw_style_box("panel", …)
+		# in NOTIFICATION_DRAW — before any children are rendered.  Override that
+		# stylebox directly so the background is correct without a ColorRect child.
+		# A ColorRect child would be rendered AFTER the internal label/button
+		# container (INTERNAL_MODE_FRONT children), visually covering the text.
+		var panel_sb := StyleBoxFlat.new()
+		panel_sb.bg_color = bg
+		panel_sb.set_border_width_all(0)
+		panel_sb.set_corner_radius_all(0)
+		panel_sb.set_content_margin_all(8)
+		win.add_theme_stylebox_override("panel", panel_sb)
+		# Remove any ColorRect previously inserted by the old code path.
+		var old_bg: ColorRect = win.get_node_or_null("_ThemeBG") as ColorRect
+		if old_bg != null:
+			old_bg.queue_free()
+	else:
+		# For plain Window nodes, insert a full-rect ColorRect background.
+		_ensure_window_bg_rect(win)
 
 
 func _ensure_window_bg_rect(win: Window) -> void:
@@ -459,6 +476,11 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 				_apply_input_style(sb_edit, scale)
 		elif node is LineEdit:
 			_apply_input_style(node as LineEdit, scale)
+		# Labels — ensure text is readable against dark themed backgrounds
+		if node is Label:
+			var label_palette: Dictionary = get_accent_palette()
+			var label_col: Color = label_palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
+			(node as Label).add_theme_color_override("font_color", label_col)
 		# Panels
 		if node is PanelContainer:
 			apply_chrome(node as PanelContainer)
