@@ -6,14 +6,14 @@ A virtual tabletop (VTT) application for D&D, built with Godot 4.5. Designed for
 
 | Platform | Download | Size |
 | :--- | :--- | :--- |
-| macOS (x86_64 / Apple Silicon) | [TheVault-0.1.0-macOS.zip](https://github.com/topherhaynie/dnd-crawler/releases/download/v0.1.0/TheVault-0.1.0-macOS.zip) | ~149 MB |
-| Windows (x86_64) | [TheVault-0.1.0-Windows.zip](https://github.com/topherhaynie/dnd-crawler/releases/download/v0.1.0/TheVault-0.1.0-Windows.zip) | ~90 MB |
+| macOS (x86_64 / Apple Silicon) | [TheVault-1.0.0-beta11-macOS.zip](https://github.com/topherhaynie/dnd-crawler/releases/download/v1.0.0-beta11/TheVault-1.0.0-beta11-macOS.zip) | ~149 MB |
+| Windows (x86_64) | [TheVault-1.0.0-beta11-Windows.zip](https://github.com/topherhaynie/dnd-crawler/releases/download/v1.0.0-beta11/TheVault-1.0.0-beta11-Windows.zip) | ~90 MB |
 
 ## Installation
 
 ### macOS
 
-1. Download and unzip **TheVault-0.1.0-macOS.zip**.
+1. Download and unzip **TheVault-1.0.0-beta11-macOS.zip**.
 2. Move **The Vault.app** to your Applications folder (or wherever you prefer).
 3. The app is ad-hoc signed and not notarized, so macOS will quarantine it. Remove the quarantine flag:
    ```bash
@@ -25,7 +25,7 @@ A virtual tabletop (VTT) application for D&D, built with Godot 4.5. Designed for
 
 ### Windows
 
-1. Download and unzip **TheVault-0.1.0-Windows.zip**.
+1. Download and unzip **TheVault-1.0.0-beta11-Windows.zip**.
 2. Run **The Vault.exe**.
 3. If Windows SmartScreen warns about an unrecognized app, click **More info → Run anyway**.
 

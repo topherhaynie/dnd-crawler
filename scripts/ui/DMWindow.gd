@@ -6556,9 +6556,9 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 
 func _menu_bar_screen_height() -> float:
 	## Returns the in-window MenuBar height in screen pixels.  On macOS the
-	## native global menu is used so size.y == 0; on Windows / Linux the
-	## MenuBar renders inside the window and has a non-zero height.
-	if _menu_bar == null:
+	## native global menu is used so size.y == 0; on Windows the native menu
+	## bar is used and _menu_bar is hidden, so return 0 in that case too.
+	if _menu_bar == null or not _menu_bar.visible:
 		return 0.0
 	return _menu_bar.size.y * _ui_scale()
 
