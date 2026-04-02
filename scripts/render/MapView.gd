@@ -50,7 +50,8 @@ enum Tool {
 
 const ZOOM_MIN: float = 0.1
 const ZOOM_MAX: float = 8.0
-const ZOOM_STEP: float = 0.12 ## per scroll click
+const ZOOM_STEP: float = 0.12 ## per scroll click (toolbar / magnify gesture)
+const ZOOM_FACTOR: float = 1.1 ## multiplicative zoom per scroll tick
 const PAN_SPEED: float = 500.0 ## px/sec for arrow-key pan
 ## InputEventPanGesture deltas are NOT cross-platform normalised.
 ## macOS reports small pixel-accurate deltas; Windows precision-touchpad reports much larger
@@ -2059,8 +2060,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		set_wall_polygon_mode(false)
 
 	# --- Trackpad: two-finger pan -------------------------------------------
-	if event is InputEventPanGesture:
-		var pan_scale: float = PAN_GESTURE_SCALE_WINDOWS if OS.get_name() == "Windows" else PAN_GESTURE_SCALE_MACOS
+	# On Windows, precision-touchpad swipes arrive as MOUSE_BUTTON_WHEEL events
+	# rather than PanGesture, making this handler unreliable.  Skip it there.
+	if event is InputEventPanGesture and OS.get_name() != "Windows":
+		var pan_scale: float = PAN_GESTURE_SCALE_MACOS
 		camera.position += event.delta * pan_scale / camera.zoom.x
 		get_viewport().set_input_as_handled()
 		return
@@ -2086,7 +2089,7 @@ func _unhandled_input(event: InputEvent) -> void:
 						effect_resize_completed.emit(_selected_effect_id, new_size)
 						get_viewport().set_input_as_handled()
 						return
-				_zoom_camera(ZOOM_STEP, btn_event.position)
+				_zoom_camera_multiply(ZOOM_FACTOR, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_WHEEL_DOWN:
 				if _selected_effect_id != "" and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT):
@@ -2098,7 +2101,7 @@ func _unhandled_input(event: InputEvent) -> void:
 						effect_resize_completed.emit(_selected_effect_id, new_size)
 						get_viewport().set_input_as_handled()
 						return
-				_zoom_camera(-ZOOM_STEP, btn_event.position)
+				_zoom_camera_multiply(1.0 / ZOOM_FACTOR, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_MIDDLE:
 				# Middle-drag always pans regardless of active tool
@@ -2476,6 +2479,19 @@ func _process(delta: float) -> void:
 func _zoom_camera(step: float, pivot_screen: Vector2) -> void:
 	var old_zoom := camera.zoom.x
 	var new_zoom := clampf(old_zoom + step, ZOOM_MIN, ZOOM_MAX)
+	if new_zoom == old_zoom:
+		return
+	var half_vp := get_viewport().get_visible_rect().size * 0.5
+	var pivot_world := camera.position + (pivot_screen - half_vp) / old_zoom
+	camera.zoom = Vector2.ONE * new_zoom
+	camera.position = pivot_world - (pivot_screen - half_vp) / new_zoom
+
+
+func _zoom_camera_multiply(factor: float, pivot_screen: Vector2) -> void:
+	## Multiplicative zoom — decelerates naturally at extremes so rapid
+	## scroll events (Windows trackpad) cannot slam to ZOOM_MIN / ZOOM_MAX.
+	var old_zoom := camera.zoom.x
+	var new_zoom := clampf(old_zoom * factor, ZOOM_MIN, ZOOM_MAX)
 	if new_zoom == old_zoom:
 		return
 	var half_vp := get_viewport().get_visible_rect().size * 0.5
