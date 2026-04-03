@@ -424,10 +424,22 @@ func is_ffmpeg_available() -> bool:
 	return _ffmpeg_available_cached == 1
 
 
-func convert_video_to_ogv(src_path: String, dest_path: String, progress_file: String = "") -> int:
+func convert_video_to_ogv(
+	src_path: String,
+	dest_path: String,
+	progress_file: String = "",
+	max_width: int = 1920,
+	fps: int = 30,
+	video_quality: int = 6,
+	audio_quality: int = 4,
+) -> int:
 	## Convert a video file to OGV (Theora + Vorbis) via bundled/system ffmpeg.
 	## If progress_file is non-empty, ffmpeg writes machine-readable progress
 	## info there (poll for out_time_us to track completion).
+	## max_width: 0 = original, otherwise cap to this width.
+	## fps: 0 = original, otherwise cap framerate.
+	## video_quality: libtheora -q:v (0–10, higher = better).
+	## audio_quality: libvorbis -q:a (0–10, higher = better).
 	## Returns 0 on success, non-zero on failure.
 	var ff := _resolve_ffmpeg_path()
 	if ff.is_empty():
@@ -437,10 +449,17 @@ func convert_video_to_ogv(src_path: String, dest_path: String, progress_file: St
 	if not DirAccess.dir_exists_absolute(parent_dir):
 		DirAccess.make_dir_recursive_absolute(parent_dir)
 	var args: PackedStringArray = [
+		"-hwaccel", "auto",
 		"-i", src_path,
-		"-c:v", "libtheora", "-q:v", "7",
-		"-c:a", "libvorbis", "-q:a", "5",
 	]
+	if max_width > 0:
+		args.append_array(["-vf", "scale='min(%d,iw)':-2" % max_width])
+	if fps > 0:
+		args.append_array(["-r", str(fps)])
+	args.append_array([
+		"-c:v", "libtheora", "-q:v", str(clampi(video_quality, 0, 10)),
+		"-c:a", "libvorbis", "-q:a", str(clampi(audio_quality, 0, 10)),
+	])
 	if not progress_file.is_empty():
 		args.append_array(["-progress", progress_file])
 	args.append_array(["-y", dest_path])

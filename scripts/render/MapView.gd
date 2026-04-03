@@ -117,6 +117,7 @@ var _passage_wip_lines: Array = []
 var _passage_current_line: Line2D = null
 var is_dm_view: bool = true
 var dm_fog_visible: bool = true
+var fog_enabled: bool = true
 var _render_profile: int = RenderProfile.DM
 
 var _fog_hidden_cells: Dictionary = {}
@@ -624,6 +625,15 @@ func set_dm_fog_visible(enabled: bool) -> void:
 func set_fog_overlay_enabled(enabled: bool) -> void:
 	if fog_overlay != null:
 		fog_overlay.set_fog_overlay_enabled(enabled)
+
+
+func set_fog_enabled(enabled: bool) -> void:
+	fog_enabled = enabled
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.fog != null:
+		registry.fog.set_enabled(enabled)
+	if fog_overlay != null:
+		fog_overlay.set_fog_enabled(enabled)
 
 
 func set_flashlights_only(enabled: bool) -> void:
@@ -3308,7 +3318,7 @@ func _refresh_fog_overlay() -> void:
 	if fog_overlay == null or _map == null:
 		return
 	var size := get_map_size()
-	var fog_is_visible := dm_fog_visible if is_dm_view else true
+	var fog_is_visible: bool = fog_enabled and (dm_fog_visible if is_dm_view else true)
 	fog_overlay.configure(size, is_dm_view, fog_is_visible)
 
 

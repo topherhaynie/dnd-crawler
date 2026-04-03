@@ -47,6 +47,9 @@ var wall_polygons: Array = []
 # --- Fog data (Phase 4) ----------------------------------------------------
 # Cell pixel size used by GPU fog seed/delta operations.
 var fog_cell_px: int = 4
+# Master fog-of-war toggle.  When false the fog overlay is hidden on both
+# DM and player views and history accumulation is paused.
+var fog_enabled: bool = true
 
 # --- Spawn points ----------------------------------------------------------
 # Each entry is a Dictionary: {"x": float, "y": float, "label": String}
@@ -97,6 +100,7 @@ func to_dict() -> Dictionary:
 		"grid_offset": {"x": grid_offset.x, "y": grid_offset.y},
 		"wall_polygons": _serialise_polygons(wall_polygons),
 		"fog_cell_px": fog_cell_px,
+		"fog_enabled": fog_enabled,
 		"spawn_points": _serialise_points(spawn_points),
 		"map_objects": map_objects.duplicate(true),
 		"tokens": tokens.duplicate(true),
@@ -120,6 +124,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.grid_offset = Vector2(float(go.get("x", 0.0)), float(go.get("y", 0.0)))
 	m.wall_polygons = _deserialise_polygons(d.get("wall_polygons", []))
 	m.fog_cell_px = int(d.get("fog_cell_px", 4))
+	m.fog_enabled = bool(d.get("fog_enabled", true))
 	m.spawn_points = _deserialise_points(d.get("spawn_points", []))
 	m.map_objects = d.get("map_objects", []).duplicate(true)
 	m.tokens = d.get("tokens", []).duplicate(true)

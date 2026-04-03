@@ -268,6 +268,8 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			mgr.fog_stroke_applied.connect(_on_fog_stroke_applied)
 		if not mgr.flashlights_only_changed.is_connected(_on_flashlights_only_changed):
 			mgr.flashlights_only_changed.connect(_on_flashlights_only_changed)
+		if not mgr.fog_enabled_changed.is_connected(_on_fog_enabled_changed):
+			mgr.fog_enabled_changed.connect(_on_fog_enabled_changed)
 		mgr.set_fog_scale(base_fog_scale)
 		mgr.configure(base_fog_size, _is_dm, _fog_enabled)
 	if DEBUG_FOG_TELEMETRY:
@@ -282,6 +284,22 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 
 func is_flashlights_only() -> bool:
 	return _flashlights_only
+
+
+## Master fog-of-war toggle.  When disabled the fog rect is hidden and the
+## GPU pipeline (LOS baking, stroke handling) is paused on both DM and player.
+## History is preserved so re-enabling restores the previous reveal state.
+func set_fog_enabled(enabled: bool) -> void:
+	if _fog_enabled == enabled:
+		return
+	_fog_enabled = enabled
+	if _live_lights_viewport:
+		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _fog_enabled else SubViewport.UPDATE_DISABLED
+	_apply_shader_uniforms()
+
+
+func _on_fog_enabled_changed(enabled: bool) -> void:
+	set_fog_enabled(enabled)
 
 
 ## Lightweight DM-side visibility toggle.  Sets the fog overlay alpha to 0

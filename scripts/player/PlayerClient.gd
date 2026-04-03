@@ -186,6 +186,9 @@ func _handle_packet(raw: String) -> void:
 		"fog_overlay_toggle":
 			# DM toggled fog overlay effect
 			state_received.emit(data)
+		"fog_enabled_toggle":
+			# DM toggled master fog-of-war on/off
+			state_received.emit(data)
 		"flashlights_only_toggle":
 			# DM toggled flashlights-only fog mode
 			state_received.emit(data)

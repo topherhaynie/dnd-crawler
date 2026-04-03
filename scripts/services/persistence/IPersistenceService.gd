@@ -75,7 +75,15 @@ func is_ffmpeg_available() -> bool:
 	push_error("IPersistenceService.is_ffmpeg_available: not implemented")
 	return false
 
-func convert_video_to_ogv(_src_path: String, _dest_path: String, _progress_file: String = "") -> int:
+func convert_video_to_ogv(
+	_src_path: String,
+	_dest_path: String,
+	_progress_file: String = "",
+	_max_width: int = 1920,
+	_fps: int = 30,
+	_video_quality: int = 6,
+	_audio_quality: int = 4,
+) -> int:
 	push_error("IPersistenceService.convert_video_to_ogv: not implemented")
 	return -1
 

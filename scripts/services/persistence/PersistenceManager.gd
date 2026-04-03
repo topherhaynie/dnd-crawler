@@ -67,10 +67,18 @@ func is_ffmpeg_available() -> bool:
 	return service.is_ffmpeg_available()
 
 
-func convert_video_to_ogv(src_path: String, dest_path: String, progress_file: String = "") -> int:
+func convert_video_to_ogv(
+	src_path: String,
+	dest_path: String,
+	progress_file: String = "",
+	max_width: int = 1920,
+	fps: int = 30,
+	video_quality: int = 6,
+	audio_quality: int = 4,
+) -> int:
 	if service == null:
 		return -1
-	return service.convert_video_to_ogv(src_path, dest_path, progress_file)
+	return service.convert_video_to_ogv(src_path, dest_path, progress_file, max_width, fps, video_quality, audio_quality)
 
 
 func probe_video_duration(path: String) -> float:

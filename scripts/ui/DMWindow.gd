@@ -80,9 +80,16 @@ var _convert_thread: Thread = null
 var _convert_result: int = -1
 var _convert_pending_bundle: String = ""
 var _convert_pending_dest: String = ""
+var _convert_pending_src: String = ""
 var _convert_progress_file: String = ""
 var _convert_duration_us: float = 0.0
 var _convert_progress_timer: Timer = null
+
+## Video conversion settings dialog
+var _convert_settings_dialog: ConfirmationDialog = null
+var _convert_res_option: OptionButton = null
+var _convert_fps_option: OptionButton = null
+var _convert_vq_option: OptionButton = null
 
 ## Background audio volume window (View menu)
 var _volume_window: Window = null
@@ -793,16 +800,17 @@ func _build_ui() -> void:
 	# idx 4 → separator
 	# idx 5 → id 22 Reset View
 	# idx 6 → separator
-	# idx 7 → id 24 Sync Fog Now
-	# idx 8 → id 27 Reset Fog…
-	# idx 9 → id 28 Fog Overlay Effect
-	# idx 10 → separator
-	# idx 11 → id 26 Measurement Tools…
-	# idx 12 → separator
-	# idx 13 → Grid Type submenu
-	# idx 14 → UI Theme submenu
-	# idx 15 → separator
-	# idx 16 → id 23 Launch Player Window
+	# idx 7 → id 30 Fog of War
+	# idx 8 → id 24 Sync Fog Now
+	# idx 9 → id 27 Reset Fog…
+	# idx 10 → id 28 Fog Overlay Effect
+	# idx 11 → separator
+	# idx 12 → id 26 Measurement Tools…
+	# idx 13 → separator
+	# idx 14 → Grid Type submenu
+	# idx 15 → UI Theme submenu
+	# idx 16 → separator
+	# idx 17 → id 23 Launch Player Window
 	_view_menu = PopupMenu.new()
 	_view_menu.name = "View"
 	_view_menu.add_check_item("Toolbar", 20)
@@ -816,6 +824,8 @@ func _build_ui() -> void:
 	_view_menu.add_separator()
 	_view_menu.add_item("Reset View", 22)
 	_view_menu.add_separator()
+	_view_menu.add_check_item("Fog of War", 30)
+	_view_menu.set_item_checked(_view_menu.get_item_index(30), true)
 	_view_menu.add_item("Sync Fog Now", 24)
 	_view_menu.add_item("Reset Fog…", 27)
 	_view_menu.add_check_item("Fog Overlay Effect", 28)
@@ -1296,6 +1306,9 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	_broadcast_puzzle_notes_state()
 	_broadcast_measurement_state()
 	_broadcast_effect_state()
+	# Send current fog-of-war enabled state.
+	var fog_enabled_val: bool = _view_menu.is_item_checked(_view_menu.get_item_index(30))
+	_nm_broadcast_to_displays({"msg": "fog_enabled_toggle", "enabled": fog_enabled_val})
 	# Send current fog overlay state so the player matches the DM.
 	var overlay_idx := _view_menu.get_item_index(28)
 	_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": _view_menu.is_item_checked(overlay_idx)})
@@ -2400,6 +2413,17 @@ func _on_view_menu_id(id: int) -> void:
 			_manual_fog_sync_now()
 		27: # Reset fog to fully hidden
 			_show_fog_reset_confirm()
+		30: # Toggle fog of war (both views)
+			var fog_idx := _view_menu.get_item_index(30)
+			var fog_on := not _view_menu.is_item_checked(fog_idx)
+			_set_view_checked(30, fog_on)
+			if _map_view:
+				_map_view.set_fog_enabled(fog_on)
+			var map_for_fog: MapData = _map()
+			if map_for_fog != null:
+				map_for_fog.fog_enabled = fog_on
+				_save_map_data(map_for_fog)
+			_nm_broadcast_to_displays({"msg": "fog_enabled_toggle", "enabled": fog_on})
 		28: # Toggle fog overlay effect
 			var idx := _view_menu.get_item_index(28)
 			var on := not _view_menu.is_item_checked(idx)
@@ -2453,6 +2477,8 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_volume_window)
 	if _progress_dialog != null:
 		dialogs.append(_progress_dialog)
+	if _convert_settings_dialog != null:
+		dialogs.append(_convert_settings_dialog)
 	for dlg: Window in dialogs:
 		# Theme the window chrome + recursively style every child control
 		tm.theme_control_tree(dlg, s)
@@ -5800,33 +5826,135 @@ func _create_map_from_video(src_path: String, bundle_path: String, ext: String) 
 		_show_ffmpeg_missing_dialog()
 		return
 
+	# Stash paths for after the user confirms settings.
+	_convert_pending_bundle = bundle_path
+	_convert_pending_dest = dest_ogv
+	_convert_pending_src = src_path
+	_show_convert_settings_dialog()
+
+
+func _show_convert_settings_dialog() -> void:
+	## Show a dialog letting the user choose resolution, fps, and quality
+	## before starting the (potentially slow) Theora conversion.
+	if _convert_settings_dialog == null:
+		_convert_settings_dialog = ConfirmationDialog.new()
+		_convert_settings_dialog.title = "Video Conversion Settings"
+		_convert_settings_dialog.min_size = Vector2i(380, 0)
+		_convert_settings_dialog.ok_button_text = "Convert"
+
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 10)
+
+		var info_label := Label.new()
+		info_label.text = "Godot requires OGV (Theora) format for video playback.\nChoose settings for the conversion:"
+		info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vbox.add_child(info_label)
+
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 12)
+		grid.add_theme_constant_override("v_separation", 6)
+
+		# --- Max Resolution ---
+		var res_label := Label.new()
+		res_label.text = "Max Resolution:"
+		grid.add_child(res_label)
+		_convert_res_option = OptionButton.new()
+		_convert_res_option.add_item("1280p (Fast)", 1280)
+		_convert_res_option.add_item("1920p (Recommended)", 1920)
+		_convert_res_option.add_item("2560p", 2560)
+		_convert_res_option.add_item("3840p (4K)", 3840)
+		_convert_res_option.add_item("Original", 0)
+		_convert_res_option.select(1) # default: 1920
+		grid.add_child(_convert_res_option)
+
+		# --- Framerate ---
+		var fps_label := Label.new()
+		fps_label.text = "Max Framerate:"
+		grid.add_child(fps_label)
+		_convert_fps_option = OptionButton.new()
+		_convert_fps_option.add_item("24 fps", 24)
+		_convert_fps_option.add_item("30 fps (Recommended)", 30)
+		_convert_fps_option.add_item("60 fps (Slow)", 60)
+		_convert_fps_option.add_item("Original", 0)
+		_convert_fps_option.select(1) # default: 30
+		grid.add_child(_convert_fps_option)
+
+		# --- Quality ---
+		var vq_label := Label.new()
+		vq_label.text = "Quality:"
+		grid.add_child(vq_label)
+		_convert_vq_option = OptionButton.new()
+		_convert_vq_option.add_item("Low (Fastest)", 4)
+		_convert_vq_option.add_item("Medium (Recommended)", 6)
+		_convert_vq_option.add_item("High", 8)
+		_convert_vq_option.add_item("Maximum (Slowest)", 10)
+		_convert_vq_option.select(1) # default: Medium
+		grid.add_child(_convert_vq_option)
+
+		vbox.add_child(grid)
+		_convert_settings_dialog.add_child(vbox)
+		add_child(_convert_settings_dialog)
+		_convert_settings_dialog.confirmed.connect(_on_convert_settings_confirmed)
+		_convert_settings_dialog.canceled.connect(_on_convert_settings_canceled)
+		_apply_dialog_themes()
+	_convert_settings_dialog.popup_centered()
+
+
+func _on_convert_settings_confirmed() -> void:
+	## User clicked Convert — read the chosen settings and start encoding.
+	var max_w: int = _convert_res_option.get_selected_id()
+	var fps: int = _convert_fps_option.get_selected_id()
+	var vq: int = _convert_vq_option.get_selected_id()
+	# Audio quality tracks video quality roughly: low=2, medium=4, high=6, max=8
+	var aq: int = clampi(vq - 2, 0, 10)
+	_begin_video_conversion(max_w, fps, vq, aq)
+
+
+func _on_convert_settings_canceled() -> void:
+	_convert_pending_bundle = ""
+	_convert_pending_dest = ""
+	_convert_pending_src = ""
+
+
+func _begin_video_conversion(max_width: int, fps: int, vq: int, aq: int) -> void:
+	## Probe duration, show progress, and launch threaded ffmpeg conversion.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.persistence == null:
+		return
+
 	# Probe duration so we can show a real progress bar.
 	var persistence := reg.persistence
-	var duration_s: float = persistence.probe_video_duration(src_path)
+	var duration_s: float = persistence.probe_video_duration(_convert_pending_src)
 	_convert_duration_us = duration_s * 1_000_000.0
 
 	# Temp file for ffmpeg to write machine-readable progress into.
 	_convert_progress_file = OS.get_cache_dir().path_join("thevault_ffmpeg_progress.txt")
-	# Ensure clean state.
 	if FileAccess.file_exists(_convert_progress_file):
 		DirAccess.remove_absolute(_convert_progress_file)
 
-	# Show progress dialog and begin threaded conversion.
-	_convert_pending_bundle = bundle_path
-	_convert_pending_dest = dest_ogv
 	_show_progress_dialog("Converting video…", "Encoding to Theora/Vorbis…")
-
-	# Start a timer to poll the progress file.
 	_start_progress_timer()
 
 	_convert_thread = Thread.new()
-	_convert_thread.start(_thread_convert_video.bind(src_path, dest_ogv, persistence, _convert_progress_file))
+	_convert_thread.start(
+		_thread_convert_video.bind(
+			_convert_pending_src, _convert_pending_dest, persistence,
+			_convert_progress_file, max_width, fps, vq, aq
+		)
+	)
 
 
-func _thread_convert_video(src_path: String, dest_path: String, persistence: PersistenceManager, progress_file: String) -> void:
+func _thread_convert_video(
+	src_path: String, dest_path: String, persistence: PersistenceManager,
+	progress_file: String, max_width: int, fps: int, vq: int, aq: int,
+) -> void:
 	## Runs on a background thread — converts video to OGV via ffmpeg.
 	if persistence != null:
-		_convert_result = persistence.convert_video_to_ogv(src_path, dest_path, progress_file)
+		_convert_result = persistence.convert_video_to_ogv(
+			src_path, dest_path, progress_file, max_width, fps, vq, aq
+		)
 	else:
 		_convert_result = -1
 	call_deferred("_on_video_conversion_finished")
@@ -5897,6 +6025,7 @@ func _on_video_conversion_finished() -> void:
 	_finish_map_creation(_convert_pending_bundle, _convert_pending_dest)
 	_convert_pending_bundle = ""
 	_convert_pending_dest = ""
+	_convert_pending_src = ""
 
 
 func _finish_map_creation(bundle_path: String, media_path: String) -> void:
@@ -6310,6 +6439,10 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	_update_grid_submenu_checks()
 	_update_effect_panel_calibration()
 	_refresh_freeze_panel()
+	# Restore per-map fog-of-war toggle.
+	_set_view_checked(30, map.fog_enabled)
+	if _map_view != null:
+		_map_view.set_fog_enabled(map.fog_enabled)
 
 
 func _simulate_player_movement(delta: float) -> bool:
