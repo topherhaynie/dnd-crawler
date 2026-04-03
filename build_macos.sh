@@ -141,6 +141,35 @@ PLIST="$BUILD_DIR/$APP_NAME.app/Contents/Info.plist"
 echo "==> Ad-hoc code signing"
 codesign --force --deep --sign - "$BUILD_DIR/$APP_NAME.app"
 
+# ---------- Bundle ffmpeg & ffprobe ----------
+echo "==> Bundling ffmpeg and ffprobe"
+FRAMEWORKS_DIR="$BUILD_DIR/$APP_NAME.app/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS_DIR"
+
+FFMPEG_CACHE_DIR="$PROJECT_DIR/.cache/ffmpeg-macos"
+FFMPEG_ARCHIVE="$FFMPEG_CACHE_DIR/ffmpeg.zip"
+# evermeet.cx provides static macOS builds.  Pin to 7.1.1 for reproducibility.
+FFMPEG_URL="https://evermeet.cx/ffmpeg/ffmpeg-7.1.1.zip"
+FFPROBE_URL="https://evermeet.cx/ffmpeg/ffprobe-7.1.1.zip"
+
+if [[ ! -x "$FFMPEG_CACHE_DIR/ffmpeg" ]] || [[ ! -x "$FFMPEG_CACHE_DIR/ffprobe" ]]; then
+    echo "    Downloading static ffmpeg and ffprobe (one-time cache)…"
+    mkdir -p "$FFMPEG_CACHE_DIR"
+    curl -# -L -o "$FFMPEG_CACHE_DIR/ffmpeg.zip" "$FFMPEG_URL"
+    unzip -o -q "$FFMPEG_CACHE_DIR/ffmpeg.zip" -d "$FFMPEG_CACHE_DIR"
+    curl -# -L -o "$FFMPEG_CACHE_DIR/ffprobe.zip" "$FFPROBE_URL"
+    unzip -o -q "$FFMPEG_CACHE_DIR/ffprobe.zip" -d "$FFMPEG_CACHE_DIR"
+    chmod +x "$FFMPEG_CACHE_DIR/ffmpeg" "$FFMPEG_CACHE_DIR/ffprobe"
+fi
+
+cp "$FFMPEG_CACHE_DIR/ffmpeg"  "$FRAMEWORKS_DIR/ffmpeg"
+cp "$FFMPEG_CACHE_DIR/ffprobe" "$FRAMEWORKS_DIR/ffprobe"
+chmod +x "$FRAMEWORKS_DIR/ffmpeg" "$FRAMEWORKS_DIR/ffprobe"
+
+# Re-sign after adding binaries
+echo "==> Re-signing after bundling ffmpeg"
+codesign --force --deep --sign - "$BUILD_DIR/$APP_NAME.app"
+
 # ---------- Remove quarantine flag (for local testing) ----------
 echo "==> Removing quarantine attribute"
 xattr -dr com.apple.quarantine "$BUILD_DIR/$APP_NAME.app" 2>/dev/null || true

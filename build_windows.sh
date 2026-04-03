@@ -72,6 +72,23 @@ else
     "$GODOT" --headless --path "$PROJECT_DIR" --export-release "$PRESET_NAME" "$BUILD_DIR/$APP_NAME.exe"
 fi
 
+# ---------- Bundle ffmpeg & ffprobe ----------
+echo "==> Bundling ffmpeg and ffprobe for Windows"
+FFMPEG_WIN_CACHE="$PROJECT_DIR/.cache/ffmpeg-windows"
+# gyan.dev provides static Windows builds. Pin to release-7.1.1 for reproducibility.
+FFMPEG_WIN_URL="https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip"
+
+if [[ ! -f "$FFMPEG_WIN_CACHE/ffmpeg.exe" ]] || [[ ! -f "$FFMPEG_WIN_CACHE/ffprobe.exe" ]]; then
+    echo "    Downloading static ffmpeg Windows build (one-time cache)…"
+    mkdir -p "$FFMPEG_WIN_CACHE"
+    curl -# -L -o "$FFMPEG_WIN_CACHE/ffmpeg-win.zip" "$FFMPEG_WIN_URL"
+    # The zip contains a top-level dir like ffmpeg-7.1.1-essentials_build/bin/
+    unzip -o -j -q "$FFMPEG_WIN_CACHE/ffmpeg-win.zip" "*/bin/ffmpeg.exe" "*/bin/ffprobe.exe" -d "$FFMPEG_WIN_CACHE"
+fi
+
+cp "$FFMPEG_WIN_CACHE/ffmpeg.exe"  "$BUILD_DIR/ffmpeg.exe"
+cp "$FFMPEG_WIN_CACHE/ffprobe.exe" "$BUILD_DIR/ffprobe.exe"
+
 # ---------- Done ----------
 echo ""
 echo "=========================================="

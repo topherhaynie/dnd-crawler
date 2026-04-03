@@ -6,6 +6,9 @@
 # Export builds
 /build/
 
+# Cached ffmpeg binaries for builds
+/.cache/
+
 # Release zips (uploaded to GitHub Releases instead)
 /releases/
 

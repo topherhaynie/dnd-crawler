@@ -59,3 +59,33 @@ func generate_thumbnail(image_path: String, dest_path: String, max_size: Vector2
 	if service == null:
 		return false
 	return service.generate_thumbnail(image_path, dest_path, max_size)
+
+
+func is_ffmpeg_available() -> bool:
+	if service == null:
+		return false
+	return service.is_ffmpeg_available()
+
+
+func convert_video_to_ogv(src_path: String, dest_path: String, progress_file: String = "") -> int:
+	if service == null:
+		return -1
+	return service.convert_video_to_ogv(src_path, dest_path, progress_file)
+
+
+func probe_video_duration(path: String) -> float:
+	if service == null:
+		return 0.0
+	return service.probe_video_duration(path)
+
+
+func probe_video_dimensions(path: String) -> Vector2i:
+	if service == null:
+		return Vector2i.ZERO
+	return service.probe_video_dimensions(path)
+
+
+func generate_video_thumbnail(src_video: String, dest_png: String, max_size: Vector2i = Vector2i(400, 300)) -> bool:
+	if service == null:
+		return false
+	return service.generate_video_thumbnail(src_video, dest_png, max_size)

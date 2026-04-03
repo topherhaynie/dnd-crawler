@@ -26,9 +26,12 @@ class_name MapData
 
 enum GridType {SQUARE, HEX_FLAT, HEX_POINTY}
 
+const SUPPORTED_IMAGE_EXTENSIONS: Array = ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
+const SUPPORTED_VIDEO_EXTENSIONS: Array = ["mp4", "m4v", "webm", "avi", "mkv", "mov", "ogv", "ogg"]
+
 # --- Identity --------------------------------------------------------------
 var map_name: String = "" ## Display name / filename stem
-var image_path: String = "" ## Absolute or project-relative image path
+var image_path: String = "" ## Absolute or project-relative image/video path
 
 # --- Grid ------------------------------------------------------------------
 var grid_type: int = GridType.SQUARE
@@ -71,6 +74,9 @@ var measurements: Array = []
 # Persisted in map.json so placed magic effects survive map bundle reloads.
 var effects: Array = []
 
+# --- Audio (video map backgrounds) -----------------------------------------
+var audio_volume_db: float = 0.0 ## Background video volume in dB (0 = full)
+
 # --- Viewport state (optional, remembered across sessions) -----------------
 var camera_position: Vector2 = Vector2.ZERO
 var camera_zoom: float = 1.0
@@ -96,6 +102,7 @@ func to_dict() -> Dictionary:
 		"tokens": tokens.duplicate(true),
 		"measurements": measurements.duplicate(true),
 		"effects": effects.duplicate(true),
+		"audio_volume_db": audio_volume_db,
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
 		"camera_rotation": camera_rotation,
@@ -118,6 +125,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.tokens = d.get("tokens", []).duplicate(true)
 	m.measurements = d.get("measurements", []).duplicate(true)
 	m.effects = d.get("effects", []).duplicate(true)
+	m.audio_volume_db = float(d.get("audio_volume_db", 0.0))
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))
 	m.camera_zoom = float(d.get("camera_zoom", 1.0))
@@ -172,6 +180,12 @@ static func _deserialise_points(raw: Array) -> Array:
 # ---------------------------------------------------------------------------
 # Grid helpers (used by GridOverlay and calibration tool)
 # ---------------------------------------------------------------------------
+
+func is_video() -> bool:
+	## Returns true when image_path refers to a video file rather than a static image.
+	var ext: String = image_path.get_extension().to_lower()
+	return ext in SUPPORTED_VIDEO_EXTENSIONS
+
 
 func grid_type_name() -> String:
 	match grid_type:

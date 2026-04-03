@@ -31,7 +31,9 @@ const EffectPanelScript = preload("res://scripts/ui/EffectPanel.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SAVE_DIR := "user://data/saves/"
-const SUPPORTED_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
+const SUPPORTED_IMAGE_EXTENSIONS := MapData.SUPPORTED_IMAGE_EXTENSIONS
+const SUPPORTED_VIDEO_EXTENSIONS := MapData.SUPPORTED_VIDEO_EXTENSIONS
+const SUPPORTED_EXTENSIONS := SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_VIDEO_EXTENSIONS
 
 # ── UI node references ──────────────────────────────────────────────────────
 var _map_view: MapView = null
@@ -69,6 +71,25 @@ var _active_save_bundle_path: String = "" ## absolute path to the current .sav b
 
 ## Bundle browser window (lazy-created, shared for maps and saves)
 var _bundle_browser: Node = null
+
+## Video conversion progress dialog
+var _progress_dialog: AcceptDialog = null
+var _progress_label: Label = null
+var _progress_bar: ProgressBar = null
+var _convert_thread: Thread = null
+var _convert_result: int = -1
+var _convert_pending_bundle: String = ""
+var _convert_pending_dest: String = ""
+var _convert_progress_file: String = ""
+var _convert_duration_us: float = 0.0
+var _convert_progress_timer: Timer = null
+
+## Background audio volume window (View menu)
+var _volume_window: Window = null
+var _volume_slider: HSlider = null
+var _volume_mute_btn: CheckButton = null
+var _volume_label: Label = null
+var _volume_vbox: VBoxContainer = null
 
 var _status_label: Label = null
 var _ui_root: VBoxContainer = null
@@ -801,6 +822,7 @@ func _build_ui() -> void:
 	_view_menu.set_item_checked(_view_menu.get_item_index(28), false)
 	_view_menu.add_separator()
 	_view_menu.add_item("Measurement Tools…", 26)
+	_view_menu.add_item("Background Audio…", 31)
 	_view_menu.add_separator()
 
 	# Grid Type submenu
@@ -956,9 +978,11 @@ func _build_ui() -> void:
 	_file_dialog.use_native_dialog = true
 	_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_file_dialog.title = "Select Map Image"
-	for ext in SUPPORTED_EXTENSIONS:
-		_file_dialog.add_filter("*.%s" % ext)
+	_file_dialog.title = "Select Map Image or Video"
+	var _img_filter := ",".join(SUPPORTED_IMAGE_EXTENSIONS.map(func(e: Variant) -> String: return "*.%s" % str(e)))
+	var _vid_filter := ",".join(SUPPORTED_VIDEO_EXTENSIONS.map(func(e: Variant) -> String: return "*.%s" % str(e)))
+	_file_dialog.add_filter("%s ; Image Files" % _img_filter)
+	_file_dialog.add_filter("%s ; Video Files" % _vid_filter)
 	_file_dialog.file_selected.connect(_on_image_selected)
 	add_child(_file_dialog)
 
@@ -1207,6 +1231,9 @@ func _on_display_peer_registered(_peer_id: int, viewport_size: Vector2) -> void:
 	_initial_sync_attempt_by_peer[_peer_id] = 0
 	_queue_initial_display_sync(_peer_id, 0.20)
 	_send_player_bind_to_display(_peer_id)
+	# Restart video playback so DM and player roughly sync.
+	if _map_view != null:
+		_map_view.restart_video()
 
 
 ## Send a player_bind message to a display peer, matching its handshake role
@@ -2382,6 +2409,8 @@ func _on_view_menu_id(id: int) -> void:
 			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
 		26: # Open measurement tools panel
 			_open_measure_panel()
+		31: # Open background audio volume window
+			_open_volume_window()
 		23: # Launch player display process
 			_launch_player_process()
 
@@ -2420,6 +2449,10 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_profile_delete_confirm_dialog)
 	if _bundle_browser != null and _bundle_browser is Window:
 		dialogs.append(_bundle_browser as Window)
+	if _volume_window != null:
+		dialogs.append(_volume_window)
+	if _progress_dialog != null:
+		dialogs.append(_progress_dialog)
 	for dlg: Window in dialogs:
 		# Theme the window chrome + recursively style every child control
 		tm.theme_control_tree(dlg, s)
@@ -5104,6 +5137,118 @@ func _mark_map_dirty_effects() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Background audio volume window
+# ---------------------------------------------------------------------------
+
+func _open_volume_window() -> void:
+	if _volume_window != null and is_instance_valid(_volume_window):
+		_volume_window.show()
+		_volume_window.grab_focus()
+		return
+	_volume_window = Window.new()
+	_volume_window.title = "Background Audio"
+	_volume_window.popup_window = false
+	_volume_window.exclusive = false
+	_volume_window.close_requested.connect(func() -> void:
+		if _volume_window != null: _volume_window.hide())
+	add_child(_volume_window)
+
+	var mgr := _get_ui_scale_mgr()
+	var margin := MarginContainer.new()
+	var m: int = mgr.scaled(10.0) if mgr != null else 10
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, m)
+
+	_volume_vbox = VBoxContainer.new()
+	_volume_vbox.add_theme_constant_override("separation", 8)
+
+	_volume_label = Label.new()
+	_volume_label.text = "Volume"
+	_volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_volume_vbox.add_child(_volume_label)
+
+	_volume_slider = HSlider.new()
+	_volume_slider.min_value = 0.0
+	_volume_slider.max_value = 100.0
+	_volume_slider.value = 100.0
+	_volume_slider.step = 1.0
+	_volume_slider.custom_minimum_size = Vector2(180, 20)
+	_volume_slider.value_changed.connect(_on_volume_slider_changed)
+	_volume_vbox.add_child(_volume_slider)
+
+	_volume_mute_btn = CheckButton.new()
+	_volume_mute_btn.text = "Mute"
+	_volume_mute_btn.toggled.connect(_on_volume_mute_toggled)
+	_volume_vbox.add_child(_volume_mute_btn)
+
+	margin.add_child(_volume_vbox)
+	_volume_window.add_child(margin)
+
+	# Sync slider to current map volume.
+	var map: MapData = _map()
+	if map != null:
+		_volume_slider.value = _db_to_linear_pct(map.audio_volume_db)
+
+	# Theme + size
+	var _vw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _vw_reg != null and _vw_reg.ui_theme != null:
+		_vw_reg.ui_theme.theme_control_tree(_volume_window, _ui_scale())
+	if mgr != null:
+		mgr.popup_fitted(_volume_window, 220.0, 160.0)
+	else:
+		_volume_window.popup_centered()
+
+
+func _on_volume_slider_changed(value: float) -> void:
+	var db: float = _linear_pct_to_db(value)
+	if _map_view != null:
+		_map_view.set_audio_volume_db(db)
+	var map: MapData = _map()
+	if map != null:
+		map.audio_volume_db = db
+	_nm_broadcast_to_displays({"msg": "audio_volume", "volume_db": db})
+	_update_volume_label()
+
+
+func _on_volume_mute_toggled(muted: bool) -> void:
+	if _volume_slider != null:
+		_volume_slider.editable = not muted
+	var db: float = -80.0 if muted else _linear_pct_to_db(_volume_slider.value if _volume_slider != null else 100.0)
+	if _map_view != null:
+		_map_view.set_audio_volume_db(db)
+	var map: MapData = _map()
+	if map != null and not muted:
+		map.audio_volume_db = db
+	_nm_broadcast_to_displays({"msg": "audio_volume", "volume_db": db})
+	_update_volume_label()
+
+
+func _update_volume_label() -> void:
+	if _volume_label == null:
+		return
+	if _volume_mute_btn != null and _volume_mute_btn.button_pressed:
+		_volume_label.text = "Volume: Muted"
+	elif _volume_slider != null:
+		_volume_label.text = "Volume: %d%%" % int(_volume_slider.value)
+	else:
+		_volume_label.text = "Volume"
+
+
+static func _linear_pct_to_db(pct: float) -> float:
+	## Convert a 0-100 linear percentage to decibels.
+	if pct <= 0.0:
+		return -80.0
+	return 20.0 * log(pct / 100.0) / log(10.0)
+
+
+static func _db_to_linear_pct(db: float) -> float:
+	## Convert decibels to a 0-100 linear percentage.
+	if db <= -80.0:
+		return 0.0
+	return 100.0 * pow(10.0, db / 20.0)
+
+
+# ---------------------------------------------------------------------------
 # Measurement panel
 # ---------------------------------------------------------------------------
 
@@ -5610,6 +5755,13 @@ func _on_save_as_path_selected(path: String) -> void:
 func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 	_ensure_bundle_dir(bundle_path)
 	var ext: String = src_path.get_extension().to_lower()
+	var is_video: bool = ext in SUPPORTED_VIDEO_EXTENSIONS
+
+	if is_video:
+		_create_map_from_video(src_path, bundle_path, ext)
+		return
+
+	# ── Static image path (unchanged) ──────────────────────────────────────
 	var img_dest_abs: String = _image_dest_path_abs(bundle_path, ext)
 
 	var copy_err := _copy_file(src_path, img_dest_abs)
@@ -5621,9 +5773,138 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 		_set_status("Error: could not copy image.")
 		return
 
+	_finish_map_creation(bundle_path, img_dest_abs)
+
+
+func _create_map_from_video(src_path: String, bundle_path: String, ext: String) -> void:
+	## Handle video-format map imports. OGV files are copied directly; all
+	## other formats are converted to OGV via the system ``ffmpeg`` CLI.
+	var dest_ogv: String = bundle_path.path_join("video.ogv")
+
+	if ext == "ogv":
+		# OGV — copy directly, no conversion needed.
+		var copy_err := _copy_file(src_path, dest_ogv)
+		var _vreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _vreg != null and _vreg.persistence != null:
+			copy_err = _vreg.persistence.copy_file(src_path, dest_ogv) as Error
+		if copy_err != OK:
+			push_error("DMWindow: failed to copy video to '%s' (err %d)" % [dest_ogv, copy_err])
+			_set_status("Error: could not copy video.")
+			return
+		_finish_map_creation(bundle_path, dest_ogv)
+		return
+
+	# Non-OGV video — need ffmpeg to convert.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.persistence == null or not reg.persistence.is_ffmpeg_available():
+		_show_ffmpeg_missing_dialog()
+		return
+
+	# Probe duration so we can show a real progress bar.
+	var persistence := reg.persistence
+	var duration_s: float = persistence.probe_video_duration(src_path)
+	_convert_duration_us = duration_s * 1_000_000.0
+
+	# Temp file for ffmpeg to write machine-readable progress into.
+	_convert_progress_file = OS.get_cache_dir().path_join("thevault_ffmpeg_progress.txt")
+	# Ensure clean state.
+	if FileAccess.file_exists(_convert_progress_file):
+		DirAccess.remove_absolute(_convert_progress_file)
+
+	# Show progress dialog and begin threaded conversion.
+	_convert_pending_bundle = bundle_path
+	_convert_pending_dest = dest_ogv
+	_show_progress_dialog("Converting video…", "Encoding to Theora/Vorbis…")
+
+	# Start a timer to poll the progress file.
+	_start_progress_timer()
+
+	_convert_thread = Thread.new()
+	_convert_thread.start(_thread_convert_video.bind(src_path, dest_ogv, persistence, _convert_progress_file))
+
+
+func _thread_convert_video(src_path: String, dest_path: String, persistence: PersistenceManager, progress_file: String) -> void:
+	## Runs on a background thread — converts video to OGV via ffmpeg.
+	if persistence != null:
+		_convert_result = persistence.convert_video_to_ogv(src_path, dest_path, progress_file)
+	else:
+		_convert_result = -1
+	call_deferred("_on_video_conversion_finished")
+
+
+func _start_progress_timer() -> void:
+	if _convert_progress_timer != null:
+		_convert_progress_timer.stop()
+		_convert_progress_timer.queue_free()
+	_convert_progress_timer = Timer.new()
+	_convert_progress_timer.wait_time = 0.35
+	_convert_progress_timer.timeout.connect(_poll_convert_progress)
+	add_child(_convert_progress_timer)
+	_convert_progress_timer.start()
+
+
+func _stop_progress_timer() -> void:
+	if _convert_progress_timer != null:
+		_convert_progress_timer.stop()
+		_convert_progress_timer.queue_free()
+		_convert_progress_timer = null
+
+
+func _poll_convert_progress() -> void:
+	## Read ffmpeg's -progress file and update the bar.
+	if _convert_progress_file.is_empty() or not FileAccess.file_exists(_convert_progress_file):
+		return
+	var f := FileAccess.open(_convert_progress_file, FileAccess.READ)
+	if f == null:
+		return
+	var text := f.get_as_text()
+	f.close()
+	# Parse the last out_time_us value in the file.
+	var out_us: float = 0.0
+	for line: String in text.split("\n"):
+		var stripped := line.strip_edges()
+		if stripped.begins_with("out_time_us="):
+			out_us = stripped.substr(12).to_float()
+	if _convert_duration_us > 0.0 and out_us > 0.0:
+		var pct: float = clampf(out_us / _convert_duration_us * 100.0, 0.0, 100.0)
+		if _progress_bar != null:
+			if _progress_bar.indeterminate:
+				_progress_bar.indeterminate = false
+				_progress_bar.show_percentage = true
+			_progress_bar.value = pct
+		if _progress_label != null:
+			_progress_label.text = "Encoding to Theora/Vorbis… %d%%" % int(pct)
+
+
+func _on_video_conversion_finished() -> void:
+	## Called on the main thread after the background conversion completes.
+	_stop_progress_timer()
+	if _convert_thread != null:
+		_convert_thread.wait_to_finish()
+		_convert_thread = null
+	_hide_progress_dialog()
+	# Clean up temp progress file.
+	if not _convert_progress_file.is_empty() and FileAccess.file_exists(_convert_progress_file):
+		DirAccess.remove_absolute(_convert_progress_file)
+	_convert_progress_file = ""
+	_convert_duration_us = 0.0
+
+	if _convert_result != 0:
+		push_error("DMWindow: ffmpeg conversion failed (exit %d)" % _convert_result)
+		_set_status("Error: video conversion failed (exit %d). Check ffmpeg installation." % _convert_result)
+		return
+
+	_finish_map_creation(_convert_pending_bundle, _convert_pending_dest)
+	_convert_pending_bundle = ""
+	_convert_pending_dest = ""
+
+
+func _finish_map_creation(bundle_path: String, media_path: String) -> void:
+	## Shared tail for both image and video map creation: build MapData, save,
+	## load via service, broadcast, and generate thumbnail.
 	var map := MapData.new()
 	map.map_name = bundle_path.get_file().get_basename()
-	map.image_path = img_dest_abs
+	map.image_path = media_path
 	_active_map_bundle_path = bundle_path
 	# Clear all tokens from any previous session BEFORE saving the new bundle.
 	# _save_map_data calls save_to_bundle → _flush_tokens_to_map, which would
@@ -5639,7 +5920,7 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 		ms.load(map)
 	_apply_map(map)
 	_nm_broadcast_map(map)
-	_generate_thumbnail(bundle_path, img_dest_abs)
+	_generate_thumbnail(bundle_path, media_path)
 	_set_status("New map: %s" % map.map_name)
 
 
@@ -5804,7 +6085,7 @@ func _save_game_to_bundle(save_name: String) -> void:
 				var embedded_map_path: String = _active_save_bundle_path.path_join("map.map")
 				ms.save_to_bundle(embedded_map_path)
 			# Generate thumbnail for the .sav bundle from the embedded map image
-			var sav_img := _find_bundle_image(_active_save_bundle_path.path_join("map.map"))
+			var sav_img := _find_bundle_media(_active_save_bundle_path.path_join("map.map"))
 			if not sav_img.is_empty():
 				_generate_thumbnail(_active_save_bundle_path, sav_img)
 			_set_status("Game saved: %s" % save_name)
@@ -6470,7 +6751,7 @@ func _save_map_data(map: MapData) -> void:
 		ms.update(map)
 		ms.save_to_bundle(_active_map_bundle_path)
 		# Regenerate thumbnail on every map save
-		var thumb_img_ms := _find_bundle_image(_active_map_bundle_path)
+		var thumb_img_ms := _find_bundle_media(_active_map_bundle_path)
 		if not thumb_img_ms.is_empty():
 			_generate_thumbnail(_active_map_bundle_path, thumb_img_ms)
 		return
@@ -6482,7 +6763,7 @@ func _save_map_data(map: MapData) -> void:
 	fa.store_string(JSON.stringify(d, "\t"))
 	fa.close()
 	# Regenerate thumbnail on every map save
-	var thumb_img := _find_bundle_image(_active_map_bundle_path)
+	var thumb_img := _find_bundle_media(_active_map_bundle_path)
 	if not thumb_img.is_empty():
 		_generate_thumbnail(_active_map_bundle_path, thumb_img)
 
@@ -6515,21 +6796,28 @@ func _set_status(msg: String) -> void:
 	print("DMWindow: %s" % msg)
 
 
-func _generate_thumbnail(bundle_path: String, image_path: String) -> void:
-	## Generate thumbnail.png inside the bundle from the map image.
+func _generate_thumbnail(bundle_path: String, media_path: String) -> void:
+	## Generate thumbnail.png inside the bundle from the map image or video.
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.persistence == null:
 		return
 	var thumb_dest := bundle_path.path_join("thumbnail.png")
-	registry.persistence.generate_thumbnail(image_path, thumb_dest)
+	var ext: String = media_path.get_extension().to_lower()
+	if ext in SUPPORTED_VIDEO_EXTENSIONS:
+		registry.persistence.generate_video_thumbnail(media_path, thumb_dest)
+	else:
+		registry.persistence.generate_thumbnail(media_path, thumb_dest)
 
 
-func _find_bundle_image(bundle_path: String) -> String:
-	## Locate the image file inside a bundle by trying known extensions.
-	for ext in SUPPORTED_EXTENSIONS:
+func _find_bundle_media(bundle_path: String) -> String:
+	## Locate the image or video file inside a bundle by trying known extensions.
+	for ext in SUPPORTED_IMAGE_EXTENSIONS:
 		var candidate := bundle_path.path_join("image." + ext)
 		if FileAccess.file_exists(candidate):
 			return candidate
+	var video_candidate := bundle_path.path_join("video.ogv")
+	if FileAccess.file_exists(video_candidate):
+		return video_candidate
 	return ""
 
 
@@ -6552,6 +6840,70 @@ func _copy_file(from_path: String, to_path: String) -> Error:
 	dst.store_buffer(data)
 	dst.close()
 	return OK
+
+
+# ---------------------------------------------------------------------------
+# Video conversion progress dialog
+# ---------------------------------------------------------------------------
+
+func _show_progress_dialog(title: String, message: String) -> void:
+	if _progress_dialog == null:
+		_progress_dialog = AcceptDialog.new()
+		_progress_dialog.title = "Working…"
+		_progress_dialog.exclusive = true
+		_progress_dialog.min_size = Vector2i(360, 0)
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 8)
+		_progress_label = Label.new()
+		_progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vbox.add_child(_progress_label)
+		_progress_bar = ProgressBar.new()
+		_progress_bar.custom_minimum_size = Vector2(300, 20)
+		_progress_bar.min_value = 0.0
+		_progress_bar.max_value = 100.0
+		_progress_bar.value = 0.0
+		_progress_bar.indeterminate = true
+		_progress_bar.show_percentage = false
+		vbox.add_child(_progress_bar)
+		_progress_dialog.add_child(vbox)
+		add_child(_progress_dialog)
+		_apply_dialog_themes()
+	_progress_dialog.title = title
+	_progress_label.text = message
+	# Reset to indeterminate until first poll arrives.
+	_progress_bar.value = 0.0
+	_progress_bar.indeterminate = true
+	_progress_bar.show_percentage = false
+	# Hide the OK button during conversion.
+	_progress_dialog.get_ok_button().visible = false
+	_progress_dialog.popup_centered()
+
+
+func _hide_progress_dialog() -> void:
+	if _progress_dialog != null:
+		_progress_dialog.hide()
+
+
+func _show_ffmpeg_missing_dialog() -> void:
+	var dlg := AcceptDialog.new()
+	dlg.title = "ffmpeg Not Found"
+	var hint: String
+	match OS.get_name():
+		"macOS":
+			hint = "ffmpeg should be bundled inside the app.\n\nIf you are running from the editor, run this in the project root:\n    ./setup_ffmpeg_dev.sh\n\nThis downloads a static ffmpeg with the required Theora encoder."
+		"Windows":
+			hint = "ffmpeg.exe should be next to The Vault.exe.\n\nIf you are running from the editor, install ffmpeg and add it to PATH."
+		_:
+			hint = "Install ffmpeg via your system's package manager."
+	dlg.dialog_text = "Video import requires ffmpeg, which was not found.\n\n%s" % hint
+	dlg.min_size = Vector2i(420, 0)
+	add_child(dlg)
+	var _ff_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _ff_reg != null and _ff_reg.ui_theme != null:
+		_ff_reg.ui_theme.theme_control_tree(dlg, _ui_scale())
+	dlg.popup_centered()
+	dlg.confirmed.connect(dlg.queue_free)
+	dlg.canceled.connect(dlg.queue_free)
 
 
 func _menu_bar_screen_height() -> float:
@@ -6714,6 +7066,14 @@ func _apply_ui_scale() -> void:
 		var margin_x: int = mgr.scaled(30.0)
 		var chrome_y: int = mgr.scaled(200.0)
 		_share_dialog.min_size = Vector2i(qr_px + margin_x, qr_px + chrome_y)
+
+	# ── Volume window ──
+	if _volume_vbox != null:
+		mgr.scale_control_fonts(_volume_vbox)
+	if _progress_dialog != null and _progress_label != null:
+		_progress_dialog.min_size = Vector2i(mgr.scaled(360.0), 0)
+		_progress_label.add_theme_font_size_override("font_size", mgr.scaled(14.0))
+		mgr.scale_button(_progress_dialog.get_ok_button())
 
 
 func _ui_scale() -> float:
@@ -6889,6 +7249,7 @@ func _build_native_menus() -> void:
 	nm.call(&"AddCheckItem", "View", "Fog Overlay Effect", 28, false)
 	nm.call(&"AddSeparator", "View")
 	nm.call(&"AddItem", "View", "Measurement Tools…", 26)
+	nm.call(&"AddItem", "View", "Background Audio…", 31)
 	nm.call(&"AddSeparator", "View")
 
 	# Grid Type submenu

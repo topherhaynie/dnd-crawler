@@ -130,6 +130,9 @@ func on_state(data: Dictionary) -> void:
 		"effect_burst_move":
 			if _map_view != null:
 				_map_view.move_effect_node("__burst__", Vector2(data.get("x", 0.0) as float, data.get("y", 0.0) as float))
+		"audio_volume":
+			if _map_view != null:
+				_map_view.set_audio_volume_db(float(data.get("volume_db", 0.0)))
 		_:
 			pass
 	# Puzzle notes piggyback on token messages (and standalone puzzle_notes_state).
@@ -154,6 +157,7 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 		sreg.map.load(map)
 
 	_map_view.load_map(map)
+	_map_view.set_audio_volume_db(map.audio_volume_db)
 	# Restore player viewport rotation immediately from the map data so the
 	# correct angle is visible before (or in case of late arrival of) camera_update.
 	if map.camera_rotation != 0:

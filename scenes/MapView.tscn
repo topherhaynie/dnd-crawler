@@ -13,6 +13,10 @@ enabled = true
 [node name="MapImage" type="TextureRect" parent="."]
 mouse_filter = 2
 
+[node name="VideoBackground" type="VideoStreamPlayer" parent="."]
+visible = false
+autoplay = true
+
 [node name="GridOverlay" type="Node2D" parent="."]
 script = ExtResource("2_GridOverlay")
 

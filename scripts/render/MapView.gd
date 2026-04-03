@@ -66,6 +66,7 @@ const ROT_HANDLE_DIST_PX: float = 22.0 ## distance above bounding box top for th
 
 @onready var camera: Camera2D = $Camera2D
 @onready var map_image: TextureRect = $MapImage
+@onready var video_bg: VideoStreamPlayer = $VideoBackground
 @onready var grid_overlay: Node2D = $GridOverlay
 @onready var wall_layer: Node2D = $WallLayer
 @onready var corridor_layer: Node2D = $CorridorLayer
@@ -90,6 +91,8 @@ enum RenderLayer {
 enum RenderProfile {DM, PLAYER}
 
 var _map: MapData = null
+var _is_video: bool = false
+var _video_size: Vector2 = Vector2.ZERO
 var active_tool: Tool = Tool.SELECT
 var allow_keyboard_pan: bool = false
 
@@ -428,17 +431,49 @@ func load_map(map: MapData) -> void:
 		_fog_loading_cover.visible = true
 		_fog_cover_frames_remaining = 3
 
-	if map.image_path != "":
+	if map.image_path != "" and map.is_video():
+		# ── Video background ────────────────────────────────────────────
+		_is_video = true
+		map_image.visible = false
+		map_image.texture = null
+		var stream := VideoStreamTheora.new()
+		stream.file = map.image_path
+		video_bg.stream = stream
+		video_bg.loop = true
+		video_bg.volume_db = map.audio_volume_db
+		video_bg.play()
+		# Determine video dimensions.  Godot's Theora decoder exposes them
+		# once the stream is assigned and a frame has been decoded.
+		if video_bg.get_video_texture() != null:
+			_video_size = Vector2(video_bg.get_video_texture().get_size())
+		if _video_size.x <= 0.0 or _video_size.y <= 0.0:
+			# Fallback: use ffprobe dimensions stored during import, or default.
+			_video_size = Vector2(1920, 1080)
+		video_bg.size = _video_size
+		video_bg.visible = true
+	elif map.image_path != "":
+		# ── Static image background ─────────────────────────────────────
+		_is_video = false
+		_video_size = Vector2.ZERO
+		video_bg.visible = false
+		video_bg.stop()
+		video_bg.stream = null
 		var img := Image.load_from_file(map.image_path)
 		if img and not img.is_empty():
 			map_image.texture = ImageTexture.create_from_image(img)
 		else:
 			push_error("MapView: could not load image at '%s'" % map.image_path)
 			map_image.texture = null
+		map_image.visible = true
 	else:
+		_is_video = false
+		_video_size = Vector2.ZERO
+		video_bg.visible = false
+		video_bg.stop()
+		video_bg.stream = null
 		map_image.texture = null
 
-	map_image.size = map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
+	map_image.size = get_map_size()
 	grid_overlay.apply_map_data(map)
 	_load_fog_from_map(map)
 	_refresh_fog_overlay()
@@ -713,6 +748,37 @@ func delete_selected_wall() -> bool:
 				_rebuild_wall_occluders(map_ref_dw)
 				walls_changed.emit(map_ref_dw)))
 	return true
+
+
+# ---------------------------------------------------------------------------
+# Video / map size helpers
+# ---------------------------------------------------------------------------
+
+func get_map_size() -> Vector2:
+	## Returns the pixel dimensions of the current map background (image or video).
+	if _is_video:
+		return _video_size if _video_size.x > 0.0 else Vector2(1920, 1080)
+	return map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
+
+
+func set_audio_volume_db(db: float) -> void:
+	## Adjust the video background audio volume.
+	if video_bg != null:
+		video_bg.volume_db = db
+
+
+func restart_video() -> void:
+	## Restart the video from the beginning (used to roughly sync with player).
+	if _is_video and video_bg != null and video_bg.stream != null:
+		video_bg.stop()
+		video_bg.play()
+
+
+func set_video_size(size: Vector2) -> void:
+	## Override the video dimensions (used when ffprobe provides dimensions at import).
+	_video_size = size
+	if _is_video and video_bg != null:
+		video_bg.size = size
 
 
 func get_camera_state() -> Dictionary:
@@ -3241,7 +3307,7 @@ func _apply_cached_fog_snapshot_if_compatible() -> bool:
 func _refresh_fog_overlay() -> void:
 	if fog_overlay == null or _map == null:
 		return
-	var size := map_image.texture.get_size() if map_image.texture else Vector2(1920, 1080)
+	var size := get_map_size()
 	var fog_is_visible := dm_fog_visible if is_dm_view else true
 	fog_overlay.configure(size, is_dm_view, fog_is_visible)
 

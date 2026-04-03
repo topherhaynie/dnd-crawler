@@ -68,3 +68,25 @@ func load_bundle_metadata(_bundle_path: String) -> Dictionary:
 func generate_thumbnail(_image_path: String, _dest_path: String, _max_size: Vector2i) -> bool:
 	push_error("IPersistenceService.generate_thumbnail: not implemented")
 	return false
+
+# --- Video conversion (ffmpeg CLI) ------------------------------------------
+
+func is_ffmpeg_available() -> bool:
+	push_error("IPersistenceService.is_ffmpeg_available: not implemented")
+	return false
+
+func convert_video_to_ogv(_src_path: String, _dest_path: String, _progress_file: String = "") -> int:
+	push_error("IPersistenceService.convert_video_to_ogv: not implemented")
+	return -1
+
+func probe_video_duration(_path: String) -> float:
+	push_error("IPersistenceService.probe_video_duration: not implemented")
+	return 0.0
+
+func probe_video_dimensions(_path: String) -> Vector2i:
+	push_error("IPersistenceService.probe_video_dimensions: not implemented")
+	return Vector2i.ZERO
+
+func generate_video_thumbnail(_src_video: String, _dest_png: String, _max_size: Vector2i) -> bool:
+	push_error("IPersistenceService.generate_video_thumbnail: not implemented")
+	return false

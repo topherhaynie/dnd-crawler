@@ -460,3 +460,22 @@ fields via the token editor popup.
 | 5 | EVENT |
 | 6 | NPC |
 | 7 | GENERIC |
+
+---
+
+## `audio_volume` — DM → Display
+
+Sent when the DM adjusts the background audio volume for a video map. The display
+should apply the volume immediately to its `MapView.set_audio_volume_db()`.
+
+| Field | Type | Description |
+|---|---|---|
+| `msg` | `"audio_volume"` | Message type |
+| `volume_db` | float | Volume in decibels (0.0 = full, –80.0 = silence) |
+
+```json
+{
+  "msg": "audio_volume",
+  "volume_db": -6.0
+}
+```

@@ -148,6 +148,8 @@ const _MAPS_DIR: String = "user://data/maps"
 const _THUMBNAIL_MAX := Vector2i(400, 300)
 const _SUPPORTED_IMG_EXT: Array = ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
+var _ffmpeg_available_cached: int = -1 # -1 = unchecked, 0 = no, 1 = yes
+
 
 func save_game_bundle(bundle_path: String, state: RefCounted, fog_image: Image, map_bundle_path: String) -> bool:
 	var abs_bundle := _abs(bundle_path)
@@ -337,6 +339,189 @@ func generate_thumbnail(image_path: String, dest_path: String, max_size: Vector2
 		push_error("PersistenceService.generate_thumbnail: failed to save '%s' (err %d)" % [dest_path, save_err])
 		return false
 	return true
+
+
+# ---------------------------------------------------------------------------
+# Video conversion (ffmpeg CLI)
+# ---------------------------------------------------------------------------
+
+var _ffmpeg_path_cached: String = ""
+var _ffprobe_path_cached: String = ""
+
+
+func _resolve_ffmpeg_path() -> String:
+	## Return the absolute path to an ffmpeg binary.  Checks the app bundle
+	## first (shipped with the release), then falls back to the system PATH.
+	if not _ffmpeg_path_cached.is_empty():
+		return _ffmpeg_path_cached
+	var bundled := _bundled_tool_path("ffmpeg")
+	if not bundled.is_empty():
+		_ffmpeg_path_cached = bundled
+		return bundled
+	# Fallback: system PATH
+	var output: Array = []
+	if OS.execute("ffmpeg", ["-version"], output, true) == 0:
+		_ffmpeg_path_cached = "ffmpeg"
+		return "ffmpeg"
+	return ""
+
+
+func _resolve_ffprobe_path() -> String:
+	## Return the absolute path to an ffprobe binary.
+	if not _ffprobe_path_cached.is_empty():
+		return _ffprobe_path_cached
+	var bundled := _bundled_tool_path("ffprobe")
+	if not bundled.is_empty():
+		_ffprobe_path_cached = bundled
+		return bundled
+	var output: Array = []
+	if OS.execute("ffprobe", ["-version"], output, true) == 0:
+		_ffprobe_path_cached = "ffprobe"
+		return "ffprobe"
+	return ""
+
+
+func _bundled_tool_path(tool_name: String) -> String:
+	## Look for a bundled binary next to the executable (release builds),
+	## inside the .app Frameworks directory (macOS releases), or in the
+	## project's .cache directory (dev builds running from the editor).
+	var exe_path := OS.get_executable_path()
+	if exe_path.is_empty():
+		return ""
+	var candidates: Array[String] = []
+	match OS.get_name():
+		"macOS":
+			# Inside .app: Contents/MacOS/<exe> → Contents/Frameworks/<tool>
+			var macos_dir := exe_path.get_base_dir()
+			var contents_dir := macos_dir.get_base_dir()
+			candidates.append(contents_dir.path_join("Frameworks").path_join(tool_name))
+			# Also check next to the executable directly (dev builds)
+			candidates.append(macos_dir.path_join(tool_name))
+			# Project .cache (for dev: same dir build_macos.sh downloads to)
+			var project_dir := ProjectSettings.globalize_path("res://")
+			candidates.append(project_dir.path_join(".cache/ffmpeg-macos").path_join(tool_name))
+		"Windows":
+			var suffix := ".exe"
+			var exe_dir := exe_path.get_base_dir()
+			candidates.append(exe_dir.path_join(tool_name + suffix))
+			var project_dir := ProjectSettings.globalize_path("res://")
+			candidates.append(project_dir.path_join(".cache/ffmpeg-windows").path_join(tool_name + suffix))
+		_:
+			var exe_dir := exe_path.get_base_dir()
+			candidates.append(exe_dir.path_join(tool_name))
+	for candidate: String in candidates:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
+
+
+func is_ffmpeg_available() -> bool:
+	## Check whether ffmpeg is reachable (bundled or system).
+	if _ffmpeg_available_cached >= 0:
+		return _ffmpeg_available_cached == 1
+	var path := _resolve_ffmpeg_path()
+	_ffmpeg_available_cached = 1 if not path.is_empty() else 0
+	return _ffmpeg_available_cached == 1
+
+
+func convert_video_to_ogv(src_path: String, dest_path: String, progress_file: String = "") -> int:
+	## Convert a video file to OGV (Theora + Vorbis) via bundled/system ffmpeg.
+	## If progress_file is non-empty, ffmpeg writes machine-readable progress
+	## info there (poll for out_time_us to track completion).
+	## Returns 0 on success, non-zero on failure.
+	var ff := _resolve_ffmpeg_path()
+	if ff.is_empty():
+		push_error("PersistenceService.convert_video_to_ogv: ffmpeg not found")
+		return -1
+	var parent_dir := dest_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent_dir):
+		DirAccess.make_dir_recursive_absolute(parent_dir)
+	var args: PackedStringArray = [
+		"-i", src_path,
+		"-c:v", "libtheora", "-q:v", "7",
+		"-c:a", "libvorbis", "-q:a", "5",
+	]
+	if not progress_file.is_empty():
+		args.append_array(["-progress", progress_file])
+	args.append_array(["-y", dest_path])
+	print("PersistenceService: running %s %s" % [ff, " ".join(args)])
+	var output: Array = []
+	var exit_code: int = OS.execute(ff, args, output, true)
+	if exit_code != 0:
+		var stderr_text: String = "\n".join(output.map(func(v: Variant) -> String: return str(v)))
+		push_error("PersistenceService.convert_video_to_ogv: ffmpeg exited %d\n%s" % [exit_code, stderr_text])
+	return exit_code
+
+
+func probe_video_duration(path: String) -> float:
+	## Use ffprobe to extract the total duration in seconds.
+	var fp := _resolve_ffprobe_path()
+	if fp.is_empty():
+		return 0.0
+	var output: Array = []
+	var exit_code: int = OS.execute(fp, [
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		path
+	], output, true)
+	if exit_code != 0 or output.is_empty():
+		return 0.0
+	var line: String = str(output[0]).strip_edges()
+	return line.to_float()
+
+
+func probe_video_dimensions(path: String) -> Vector2i:
+	## Use ffprobe to extract the video stream dimensions.
+	var fp := _resolve_ffprobe_path()
+	if fp.is_empty():
+		push_error("PersistenceService.probe_video_dimensions: ffprobe not found")
+		return Vector2i.ZERO
+	var output: Array = []
+	var exit_code: int = OS.execute(fp, [
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "csv=p=0",
+		path
+	], output, true)
+	if exit_code != 0 or output.is_empty():
+		push_error("PersistenceService.probe_video_dimensions: ffprobe failed (exit %d)" % exit_code)
+		return Vector2i.ZERO
+	var line: String = str(output[0]).strip_edges()
+	var parts: PackedStringArray = line.split(",")
+	if parts.size() < 2:
+		return Vector2i.ZERO
+	return Vector2i(int(parts[0]), int(parts[1]))
+
+
+func generate_video_thumbnail(src_video: String, dest_png: String, max_size: Vector2i = _THUMBNAIL_MAX) -> bool:
+	## Extract a frame near the start of a video and save as a resized PNG thumbnail.
+	var ff := _resolve_ffmpeg_path()
+	if ff.is_empty():
+		push_error("PersistenceService.generate_video_thumbnail: ffmpeg not found")
+		return false
+	var tmp_path := dest_png + ".tmp.png"
+	var output: Array = []
+	var exit_code: int = OS.execute(ff, [
+		"-i", src_video,
+		"-ss", "00:00:01",
+		"-frames:v", "1",
+		"-y", tmp_path
+	], output, true)
+	if exit_code != 0 or not FileAccess.file_exists(tmp_path):
+		# Fallback: try frame 0 (video shorter than 1 second)
+		exit_code = OS.execute(ff, [
+			"-i", src_video,
+			"-frames:v", "1",
+			"-y", tmp_path
+		], output, true)
+	if exit_code != 0 or not FileAccess.file_exists(tmp_path):
+		push_error("PersistenceService.generate_video_thumbnail: ffmpeg frame extract failed")
+		return false
+	var ok := generate_thumbnail(tmp_path, dest_png, max_size)
+	DirAccess.remove_absolute(tmp_path)
+	return ok
 
 
 # ---------------------------------------------------------------------------
