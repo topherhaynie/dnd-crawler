@@ -4916,7 +4916,7 @@ func _snap_all_tokens_to_grid() -> void:
 	if map_data == null:
 		return
 	var all_tokens: Array = registry.token.get_all_tokens()
-	var moved_entries: Array = []  # [{id, old_pos, new_pos, old_paths}]
+	var moved_entries: Array = [] # [{id, old_pos, new_pos, old_paths}]
 	for raw: Variant in all_tokens:
 		var td: TokenData = raw as TokenData
 		if td == null:

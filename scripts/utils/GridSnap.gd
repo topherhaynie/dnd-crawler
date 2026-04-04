@@ -5,8 +5,8 @@ class_name GridSnap
 ## centre.  Supports SQUARE, HEX_FLAT, and HEX_POINTY grids.  The hex math is
 ## ported directly from grid_overlay.gdshader (cube-coordinate rounding).
 
-const SQRT3: float   = 1.7320508
-const SQRT3_2: float = 0.8660254  # sqrt(3) / 2
+const SQRT3: float = 1.7320508
+const SQRT3_2: float = 0.8660254 # sqrt(3) / 2
 
 
 ## Snap a world-space position to the centre of the nearest grid cell.
@@ -49,11 +49,11 @@ static func _cube_round(cube: Vector3) -> Vector3:
 	var dy: float = absf(ry - cube.y)
 	var dz: float = absf(rz - cube.z)
 	if dx > dy and dx > dz:
-		rx = -ry - rz
+		rx = - ry - rz
 	elif dy > dz:
-		ry = -rx - rz
+		ry = - rx - rz
 	else:
-		rz = -rx - ry
+		rz = - rx - ry
 	return Vector3(rx, ry, rz)
 
 
