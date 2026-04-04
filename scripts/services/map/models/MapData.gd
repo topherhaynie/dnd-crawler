@@ -36,7 +36,7 @@ var image_path: String = "" ## Absolute or project-relative image/video path
 # --- Grid ------------------------------------------------------------------
 var grid_type: int = GridType.SQUARE
 var cell_px: float = 64.0 ## Pixels per cell (square grids)
-var hex_size: float = 40.0 ## Outer radius in pixels (hex grids)
+var hex_size: float = 32.0 ## Outer radius in pixels (hex grids)
 var grid_offset: Vector2 = Vector2.ZERO ## Pixel offset so grid aligns to tiles
 
 # --- Wall data (Phase 6) ---------------------------------------------------
@@ -119,7 +119,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.image_path = d.get("image_path", "")
 	m.grid_type = int(d.get("grid_type", GridType.SQUARE))
 	m.cell_px = float(d.get("cell_px", 64.0))
-	m.hex_size = float(d.get("hex_size", 40.0))
+	m.hex_size = float(d.get("hex_size", 32.0))
 	var go: Dictionary = d.get("grid_offset", {"x": 0.0, "y": 0.0})
 	m.grid_offset = Vector2(float(go.get("x", 0.0)), float(go.get("y", 0.0)))
 	m.wall_polygons = _deserialise_polygons(d.get("wall_polygons", []))

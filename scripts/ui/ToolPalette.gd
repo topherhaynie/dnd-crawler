@@ -357,7 +357,7 @@ func _build() -> void:
 	spawn_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(spawn_btn)
 
-	token_btn = _make_toggle_btn("✦", "Token tool — click to place, click existing to select, right-click to edit", _tool_group)
+	token_btn = _make_toggle_btn("✦", "Token tool — click to place, drag to move, hold Shift to snap to grid", _tool_group)
 	token_btn.pressed.connect(func() -> void: _activate_tool("token"))
 	token_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(token_btn)

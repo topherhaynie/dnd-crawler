@@ -78,6 +78,10 @@ var notes: String = ""
 var puzzle_notes: Array = []
 
 # --- Appearance -----------------------------------------------------------
+## Creature space in feet (D&D 5e: 5 = Medium, 10 = Large, etc.).
+## When > 0, width_px/height_px are derived from calibration.
+## 0 = manual pixel sizing (doors, traps, passages, etc.).
+var size_ft: float = 0.0
 ## Rendered size of the token in world-space pixels.
 ## 48 = one standard grid cell at 1:1 zoom.
 var width_px: float = 48.0
@@ -115,6 +119,8 @@ static func create(category_val: int, pos: Vector2, lbl: String = "") -> TokenDa
 	t.category = category_val
 	t.world_pos = pos
 	t.label = lbl
+	if category_val == TokenCategory.MONSTER or category_val == TokenCategory.NPC:
+		t.size_ft = 5.0
 	return t
 
 
@@ -134,6 +140,7 @@ func to_dict() -> Dictionary:
 		"pause_on_interact": pause_on_interact,
 		"auto_reveal": auto_reveal,
 		"notes": notes,
+		"size_ft": size_ft,
 		"width_px": width_px,
 		"height_px": height_px,
 		"rotation_deg": rotation_deg,
@@ -164,6 +171,7 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.pause_on_interact = bool(d.get("pause_on_interact", false))
 	t.auto_reveal = bool(d.get("auto_reveal", false))
 	t.notes = str(d.get("notes", ""))
+	t.size_ft = float(d.get("size_ft", 0.0))
 	var _compat_diam: float = float(d.get("diameter_px", 48.0))
 	t.width_px = float(d.get("width_px", _compat_diam))
 	t.height_px = float(d.get("height_px", _compat_diam))

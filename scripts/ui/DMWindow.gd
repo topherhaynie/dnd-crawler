@@ -158,6 +158,8 @@ var _token_autopause_max_spin: SpinBox = null
 var _token_notes_edit: TextEdit = null
 var _token_width_spin: SpinBox = null
 var _token_height_spin: SpinBox = null
+var _token_size_ft_spin: SpinBox = null
+var _token_size_ft_row: HBoxContainer = null
 var _token_rotation_spin: SpinBox = null
 var _token_shape_option: OptionButton = null
 var _token_blocks_los_check: CheckBox = null
@@ -423,6 +425,11 @@ func _refresh_history_menu() -> void:
 	if paste_idx >= 0:
 		_edit_menu.set_item_disabled(paste_idx, _token_clipboard.is_empty())
 		_nm_set_disabled("Edit", 18, _token_clipboard.is_empty())
+	# Snap All Tokens to Grid — enabled when a map is loaded.
+	var snap_idx := _edit_menu.get_item_index(19)
+	if snap_idx >= 0:
+		var has_map: bool = _map() != null
+		_edit_menu.set_item_disabled(snap_idx, not has_map)
 
 
 func _network() -> NetworkManager:
@@ -779,6 +786,7 @@ func _build_ui() -> void:
 	edit_menu.add_item("Calibrate Grid…", 10)
 	edit_menu.add_item("Set Scale Manually…", 11)
 	edit_menu.add_item("Set Grid Offset…", 12)
+	edit_menu.add_item("Snap All Tokens to Grid", 19)
 	edit_menu.add_separator()
 	edit_menu.add_item("Player Profiles…", 13)
 	edit_menu.id_pressed.connect(_on_edit_menu_id)
@@ -790,6 +798,8 @@ func _build_ui() -> void:
 	edit_menu.set_item_disabled(edit_menu.get_item_index(16), true)
 	edit_menu.set_item_disabled(edit_menu.get_item_index(17), true)
 	edit_menu.set_item_disabled(edit_menu.get_item_index(18), true)
+	# Snap All starts disabled; enabled when a map is loaded.
+	edit_menu.set_item_disabled(edit_menu.get_item_index(19), true)
 	menu_bar.add_child(edit_menu)
 
 	# View menu  (all set_item_checked calls use get_item_index(id) — no hardcoded indices)
@@ -1595,7 +1605,7 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 		"token":
 			_map_view.set_fog_tool(0, 64.0)
 			_map_view._set_active_tool(_map_view.Tool.PLACE_TOKEN)
-			_set_status("Token tool — click to place, click existing to select, right-click to edit")
+			_set_status("Token tool — click to place, drag to move, hold Shift to snap to grid")
 		"effect":
 			_map_view.set_fog_tool(0, 64.0)
 			_map_view._set_active_tool(_map_view.Tool.PLACE_EFFECT)
@@ -2378,6 +2388,7 @@ func _on_edit_menu_id(id: int) -> void:
 		11: _on_manual_scale_pressed()
 		12: _on_set_offset_pressed()
 		13: _open_profiles_editor()
+		19: _snap_all_tokens_to_grid()
 
 
 func _on_session_menu_id(id: int) -> void:
@@ -2590,9 +2601,15 @@ func _on_grid_type_selected_by_id(grid_id: int) -> void:
 		return
 	map.grid_type = grid_id
 	_grid_type_selected = grid_id
+	# Keep hex_size and cell_px in sync so switching grid type preserves
+	# the calibrated scale.  CalibrationTool and manual-scale both enforce
+	# hex_size = cell_px / 2.0; replicate that invariant here.
+	map.hex_size = map.cell_px / 2.0
 	_map_view.grid_overlay.apply_map_data(map)
+	_resize_tokens_for_calibration(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
+	_update_effect_panel_calibration()
 	var label := "Square"
 	match grid_id:
 		MapData.GridType.HEX_FLAT:
@@ -2634,6 +2651,7 @@ func _on_calibration_done(map: MapData) -> void:
 	# Apply offset from the dialog spinboxes (user-entered or retained from before).
 	map.grid_offset = Vector2(_offset_x_spin.value, _offset_y_spin.value)
 	_map_view.grid_overlay.apply_map_data(map)
+	_resize_tokens_for_calibration(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_update_effect_panel_calibration()
@@ -2672,6 +2690,7 @@ func _on_manual_scale_confirmed() -> void:
 	map.cell_px = cell_px
 	map.hex_size = cell_px * 0.5
 	_map_view.grid_overlay.apply_map_data(map)
+	_resize_tokens_for_calibration(map)
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_update_effect_panel_calibration()
@@ -4276,6 +4295,11 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_width_spin.value = data.width_px
 	if _token_height_spin != null:
 		_token_height_spin.value = data.height_px
+	if _token_size_ft_spin != null:
+		_token_size_ft_spin.value = data.size_ft
+	if _token_size_ft_row != null:
+		var is_creature: bool = data.category == TokenData.TokenCategory.MONSTER or data.category == TokenData.TokenCategory.NPC
+		_token_size_ft_row.visible = is_creature
 	if _token_rotation_spin != null:
 		_token_rotation_spin.value = data.rotation_deg
 	if _token_trigger_spin != null:
@@ -4380,6 +4404,24 @@ func _build_token_editor_dialog() -> void:
 	_token_height_spin.custom_minimum_size = Vector2(130, 0)
 	height_row.add_child(_token_height_spin)
 	vbox.add_child(height_row)
+
+	# Size (ft) — creature tokens (MONSTER / NPC)
+	_token_size_ft_row = HBoxContainer.new()
+	var sft_label := Label.new()
+	sft_label.text = "Space (ft):"
+	sft_label.custom_minimum_size = Vector2(120, 0)
+	_token_size_ft_row.add_child(sft_label)
+	_token_size_ft_spin = SpinBox.new()
+	_token_size_ft_spin.min_value = 0.0
+	_token_size_ft_spin.max_value = 40.0
+	_token_size_ft_spin.step = 2.5
+	_token_size_ft_spin.value = 5.0
+	_token_size_ft_spin.suffix = "ft"
+	_token_size_ft_spin.tooltip_text = "Creature space in feet (5 = Medium, 10 = Large, etc.). Auto-sizes the token from calibration."
+	_token_size_ft_spin.custom_minimum_size = Vector2(130, 0)
+	_token_size_ft_row.add_child(_token_size_ft_spin)
+	_token_size_ft_row.visible = false
+	vbox.add_child(_token_size_ft_row)
 
 	# Rotation
 	var rot_row := HBoxContainer.new()
@@ -4582,6 +4624,11 @@ func _on_token_category_changed(idx: int) -> void:
 	var is_door_type: bool = cat == TokenData.TokenCategory.DOOR or cat == TokenData.TokenCategory.SECRET_PASSAGE
 	if _token_blocks_los_row != null:
 		_token_blocks_los_row.visible = is_door_type
+	var is_creature: bool = cat == TokenData.TokenCategory.MONSTER or cat == TokenData.TokenCategory.NPC
+	if _token_size_ft_row != null:
+		_token_size_ft_row.visible = is_creature
+	if is_creature and _token_size_ft_spin != null and _token_size_ft_spin.value <= 0.0:
+		_token_size_ft_spin.value = 5.0
 	# Default trap flags: autopause (collision-only), pause-on-interact, auto-reveal.
 	if cat == TokenData.TokenCategory.TRAP:
 		if _token_autopause_check != null:
@@ -4708,6 +4755,16 @@ func _on_token_editor_confirmed() -> void:
 	var p_notes: Array = _read_puzzle_note_rows()
 	var w_px: float = _token_width_spin.value if _token_width_spin != null else 48.0
 	var h_px: float = _token_height_spin.value if _token_height_spin != null else 48.0
+	var s_ft: float = _token_size_ft_spin.value if _token_size_ft_spin != null else 0.0
+	var is_creature: bool = category == TokenData.TokenCategory.MONSTER or category == TokenData.TokenCategory.NPC
+	if not is_creature:
+		s_ft = 0.0
+	# Auto-compute pixel size from calibration when size_ft is set.
+	if s_ft > 0.0:
+		var px_per_5ft: float = _pixels_per_5ft_current()
+		var px_size: float = s_ft / 5.0 * px_per_5ft
+		w_px = px_size
+		h_px = px_size
 	var rot_deg: float = _token_rotation_spin.value if _token_rotation_spin != null else 0.0
 	var shape_val: int = _token_shape_option.get_selected_id() if _token_shape_option != null else 0
 	var blos_val: bool = _token_blocks_los_check.button_pressed if _token_blocks_los_check != null else true
@@ -4744,6 +4801,7 @@ func _on_token_editor_confirmed() -> void:
 	data.puzzle_notes = p_notes
 	data.width_px = w_px
 	data.height_px = h_px
+	data.size_ft = s_ft
 	data.rotation_deg = rot_deg
 	data.token_shape = shape_val
 	data.blocks_los = blos_val
@@ -4824,7 +4882,213 @@ func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
 		_nm_broadcast_to_displays({"msg": "token_removed", "token_id": id})
 
 
-## Broadcast a single-token change to all connected display clients.
+## Recalculate pixel size for every token whose size_ft > 0 based on the
+## current map calibration.  Called after calibration, manual scale, or
+## grid-type changes so creature tokens stay at the correct foot-based size.
+func _resize_tokens_for_calibration(map: MapData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var px_per_5ft: float = map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
+	var all_tokens: Array = registry.token.get_all_tokens()
+	for raw: Variant in all_tokens:
+		var td: TokenData = raw as TokenData
+		if td == null or td.size_ft <= 0.0:
+			continue
+		var desired_px: float = td.size_ft / 5.0 * px_per_5ft
+		if absf(td.width_px - desired_px) < 0.5 and absf(td.height_px - desired_px) < 0.5:
+			continue
+		td.width_px = desired_px
+		td.height_px = desired_px
+		registry.token.update_token(td)
+		if _map_view != null:
+			_map_view.update_token_sprite(td)
+		_broadcast_token_change(td, false)
+
+
+## Snap every token on the current map to its nearest grid cell centre.
+## Pushes a single compound undo command and broadcasts changes to displays.
+func _snap_all_tokens_to_grid() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null:
+		return
+	var map_data: MapData = _map()
+	if map_data == null:
+		return
+	var all_tokens: Array = registry.token.get_all_tokens()
+	var moved_entries: Array = []  # [{id, old_pos, new_pos, old_paths}]
+	for raw: Variant in all_tokens:
+		var td: TokenData = raw as TokenData
+		if td == null:
+			continue
+		var snap_pos: Vector2 = GridSnap.snap_to_grid(td.world_pos, map_data)
+		if snap_pos.distance_to(td.world_pos) < 0.5:
+			continue
+		var entry: Dictionary = {
+			"id": td.id,
+			"old_pos": td.world_pos,
+			"new_pos": snap_pos,
+			"old_paths": td.passage_paths.duplicate(true),
+		}
+		# Shift SECRET_PASSAGE corridor coordinates by the same delta.
+		var delta: Vector2 = snap_pos - td.world_pos
+		if td.category == TokenData.TokenCategory.SECRET_PASSAGE and td.passage_paths.size() > 0:
+			var shifted: Array = []
+			for path_raw: Variant in td.passage_paths:
+				if path_raw is PackedVector2Array:
+					var shifted_chain := PackedVector2Array()
+					for pt: Vector2 in (path_raw as PackedVector2Array):
+						shifted_chain.append(pt + delta)
+					shifted.append(shifted_chain)
+				else:
+					shifted.append(path_raw)
+			td.passage_paths = shifted
+		td.world_pos = snap_pos
+		registry.token.update_token(td)
+		if _map_view != null:
+			_map_view.update_token_sprite(td)
+			_map_view.apply_token_passthrough_state(td)
+		_broadcast_token_change(td, false)
+		moved_entries.append(entry)
+	# Push a single compound undo command for DM tokens.
+	if not moved_entries.is_empty() and registry.history != null:
+		var mv := _map_view
+		var entries_copy: Array = moved_entries.duplicate(true)
+		registry.history.push_command(HistoryCommand.create(
+			"Snap %d tokens to grid" % entries_copy.size(),
+			func():
+				for e: Variant in entries_copy:
+					var d: Dictionary = e as Dictionary
+					var td: TokenData = registry.token.get_token_by_id(d["id"] as String)
+					if td == null:
+						continue
+					td.world_pos = d["old_pos"] as Vector2
+					td.passage_paths = (d["old_paths"] as Array).duplicate(true)
+					registry.token.update_token(td)
+					if mv != null:
+						mv.update_token_sprite(td)
+						mv.apply_token_passthrough_state(td)
+					_broadcast_token_change(td, false),
+			func():
+				for e: Variant in entries_copy:
+					var d: Dictionary = e as Dictionary
+					var td: TokenData = registry.token.get_token_by_id(d["id"] as String)
+					if td == null:
+						continue
+					var redo_delta: Vector2 = (d["new_pos"] as Vector2) - (d["old_pos"] as Vector2)
+					if td.category == TokenData.TokenCategory.SECRET_PASSAGE and td.passage_paths.size() > 0:
+						var shifted_redo: Array = []
+						for pr: Variant in td.passage_paths:
+							if pr is PackedVector2Array:
+								var sc := PackedVector2Array()
+								for pt: Vector2 in (pr as PackedVector2Array):
+									sc.append(pt + redo_delta)
+								shifted_redo.append(sc)
+							else:
+								shifted_redo.append(pr)
+						td.passage_paths = shifted_redo
+					td.world_pos = d["new_pos"] as Vector2
+					registry.token.update_token(td)
+					if mv != null:
+						mv.update_token_sprite(td)
+						mv.apply_token_passthrough_state(td)
+					_broadcast_token_change(td, false)))
+
+	# ── Snap player tokens (PlayerSprite characters) ───────────────────────
+	var player_moved: int = 0
+	var old_player_positions: Dictionary = {}
+	var dm_tokens: Dictionary = _backend.get_dm_token_nodes() if _backend != null else {}
+	if registry.game_state != null:
+		var gs: GameStateManager = registry.game_state
+		for pid: Variant in gs.player_positions.keys():
+			var old_pos: Vector2 = gs.player_positions[pid] as Vector2
+			var snapped_pos: Vector2 = GridSnap.snap_to_grid(old_pos, map_data)
+			if snapped_pos.distance_to(old_pos) < 0.5:
+				continue
+			old_player_positions[pid] = old_pos
+			gs.set_position(pid, snapped_pos)
+			# Move the actual PlayerSprite node so BackendRuntime doesn't
+			# overwrite the position on the next step() frame.
+			var sprite: Node2D = dm_tokens.get(pid, null) as Node2D
+			if sprite != null and is_instance_valid(sprite):
+				sprite.global_position = snapped_pos
+			player_moved += 1
+		if player_moved > 0:
+			_broadcast_player_state()
+
+	# ── Snap spawn points ─────────────────────────────────────────────────
+	var spawn_moved: int = 0
+	var old_spawn_points: Array = map_data.spawn_points.duplicate(true)
+	for sp: Variant in map_data.spawn_points:
+		if not sp is Dictionary:
+			continue
+		var spd := sp as Dictionary
+		var sp_pos := Vector2(float(spd.get("x", 0.0)), float(spd.get("y", 0.0)))
+		var snapped_sp: Vector2 = GridSnap.snap_to_grid(sp_pos, map_data)
+		if snapped_sp.distance_to(sp_pos) < 0.5:
+			continue
+		spd["x"] = snapped_sp.x
+		spd["y"] = snapped_sp.y
+		spawn_moved += 1
+	if spawn_moved > 0 and _map_view != null:
+		_map_view._rebuild_spawn_markers(map_data)
+
+	var total_moved: int = moved_entries.size() + player_moved + spawn_moved
+	if total_moved == 0:
+		_set_status("All tokens already on grid")
+		return
+
+	# Extend the compound undo command with player + spawn state.
+	if registry.history != null:
+		var old_pp: Dictionary = old_player_positions.duplicate()
+		var old_sp: Array = old_spawn_points.duplicate(true)
+		var new_sp: Array = map_data.spawn_points.duplicate(true)
+		var gs_ref: GameStateManager = registry.game_state
+		var mv2 := _map_view
+		var map_ref: MapData = map_data
+		var backend_ref: BackendRuntime = _backend
+		if player_moved > 0 or spawn_moved > 0:
+			registry.history.push_command(HistoryCommand.create(
+				"Snap players/spawns to grid",
+				func():
+					if gs_ref != null:
+						var dtoks: Dictionary = backend_ref.get_dm_token_nodes() if backend_ref != null else {}
+						for pid2: Variant in old_pp.keys():
+							var restore_pos: Vector2 = old_pp[pid2] as Vector2
+							gs_ref.set_position(pid2, restore_pos)
+							var spr: Node2D = dtoks.get(pid2, null) as Node2D
+							if spr != null and is_instance_valid(spr):
+								spr.global_position = restore_pos
+						_broadcast_player_state()
+					if map_ref != null:
+						map_ref.spawn_points = old_sp.duplicate(true)
+						if mv2 != null:
+							mv2._rebuild_spawn_markers(map_ref),
+				func():
+					if gs_ref != null:
+						var dtoks: Dictionary = backend_ref.get_dm_token_nodes() if backend_ref != null else {}
+						for pid2: Variant in old_pp.keys():
+							var new_pos: Vector2 = GridSnap.snap_to_grid(old_pp[pid2] as Vector2, map_ref)
+							gs_ref.set_position(pid2, new_pos)
+							var spr: Node2D = dtoks.get(pid2, null) as Node2D
+							if spr != null and is_instance_valid(spr):
+								spr.global_position = new_pos
+						_broadcast_player_state()
+					if map_ref != null:
+						map_ref.spawn_points = new_sp.duplicate(true)
+						if mv2 != null:
+							mv2._rebuild_spawn_markers(map_ref)))
+
+	var parts: PackedStringArray = PackedStringArray()
+	if moved_entries.size() > 0:
+		parts.append("%d token(s)" % moved_entries.size())
+	if player_moved > 0:
+		parts.append("%d player(s)" % player_moved)
+	if spawn_moved > 0:
+		parts.append("%d spawn(s)" % spawn_moved)
+	_set_status("Snapped %s to grid" % ", ".join(parts))
+
+
 func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 	# DOOR and SECRET_PASSAGE tokens affect wall/passthrough geometry on the
 	# player display, so they must always be broadcast regardless of token

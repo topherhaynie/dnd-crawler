@@ -133,6 +133,10 @@ func save_session(save_name: String, fog_image: Image, map_bundle_path: String) 
 	state.save_name = save_name
 	state.map_bundle_path = map_bundle_path
 
+	# Carry over which profiles are active in this session
+	if _model.active_save != null:
+		state.active_profile_ids = (_model.active_save as GameSaveData).active_profile_ids.duplicate()
+
 	# Snapshot player positions as serialisable dicts
 	for pid in _model.player_positions.keys():
 		var pos: Variant = _model.player_positions[pid]

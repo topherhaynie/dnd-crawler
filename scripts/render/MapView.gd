@@ -1888,7 +1888,11 @@ func _reset_cursor() -> void:
 
 func _cancel_token_drag() -> void:
 	if _dragging_token_node != null:
-		token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
+		var final_pos: Vector2 = _dragging_token_node.global_position
+		if Input.is_key_pressed(KEY_SHIFT) and _map != null:
+			final_pos = GridSnap.snap_to_grid(final_pos, _map)
+			_dragging_token_node.global_position = final_pos
+		token_drag_completed.emit(_dragging_token_id, final_pos)
 		_token_drag_order.erase(_dragging_token_id)
 		_token_drag_order.push_front(_dragging_token_id)
 	_dragging_token_id = null
@@ -2318,7 +2322,10 @@ func _unhandled_input(event: InputEvent) -> void:
 										if measurement_overlay != null:
 											measurement_overlay.set_selected("")
 								elif active_tool == Tool.PLACE_TOKEN:
-									token_place_requested.emit(world_pos)
+									var place_pos: Vector2 = world_pos
+									if Input.is_key_pressed(KEY_SHIFT) and _map != null:
+										place_pos = GridSnap.snap_to_grid(place_pos, _map)
+									token_place_requested.emit(place_pos)
 									get_viewport().set_input_as_handled()
 									return
 								elif active_tool == Tool.PLACE_EFFECT:
@@ -2476,7 +2483,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if _dragging_token_node != null:
-			_dragging_token_node.global_position = motion_world_pos + _dragging_token_offset
+			var drag_pos: Vector2 = motion_world_pos + _dragging_token_offset
+			if Input.is_key_pressed(KEY_SHIFT) and _map != null:
+				drag_pos = GridSnap.snap_to_grid(drag_pos, _map)
+			_dragging_token_node.global_position = drag_pos
 			_update_cursor(motion_world_pos)
 			get_viewport().set_input_as_handled()
 			return
