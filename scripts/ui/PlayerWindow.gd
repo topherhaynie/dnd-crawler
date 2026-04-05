@@ -102,6 +102,10 @@ func on_state(data: Dictionary) -> void:
 			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary)
 		"token_updated":
 			_handle_token_added(data.get("token", {}) as Dictionary)
+		"player_icon":
+			_handle_player_icon(data)
+		"token_icon":
+			_handle_token_icon(data)
 		"puzzle_notes_state":
 			pass # Handled by the puzzle_notes catch-all below the match block
 		"token_detected":
@@ -462,8 +466,15 @@ func _handle_token_state(token_dicts: Array) -> void:
 	# Seed passthrough rects for any doors/portals already open in the snapshot.
 	for raw in token_dicts:
 		if raw is Dictionary:
-			var td: TokenData = TokenData.from_dict(raw as Dictionary)
+			var td_dict := raw as Dictionary
+			var td: TokenData = TokenData.from_dict(td_dict)
 			_map_view.apply_token_passthrough_state(td)
+			# Apply inline icon image from network payload.
+			var icon_b64: String = str(td_dict.get("icon_image_b64", ""))
+			if not icon_b64.is_empty():
+				var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
+				if tex != null:
+					_map_view.set_token_icon_texture(td.id, tex)
 
 
 func _handle_token_added(token_dict: Dictionary) -> void:
@@ -472,6 +483,12 @@ func _handle_token_added(token_dict: Dictionary) -> void:
 	var data: TokenData = TokenData.from_dict(token_dict)
 	_map_view.add_token_sprite(data, false)
 	_map_view.apply_token_passthrough_state(data)
+	# Apply inline icon image from the network payload.
+	var icon_b64: String = str(token_dict.get("icon_image_b64", ""))
+	if not icon_b64.is_empty():
+		var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
+		if tex != null:
+			_map_view.set_token_icon_texture(data.id, tex)
 
 
 func _handle_token_removed(id: String) -> void:
@@ -505,6 +522,32 @@ func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
 		td.height_px = matched_sprite.get_token_height_px()
 		td.blocks_los = matched_sprite.get_token_blocks_los()
 		_map_view.apply_token_passthrough_state(td)
+
+
+func _handle_player_icon(data: Dictionary) -> void:
+	var player_id: String = str(data.get("id", ""))
+	var icon_b64: String = str(data.get("icon_image_b64", ""))
+	if player_id.is_empty():
+		return
+	var token: PlayerSprite = _tokens_by_id.get(player_id, null) as PlayerSprite
+	if token == null or not is_instance_valid(token):
+		return
+	if icon_b64.is_empty():
+		token.set_custom_icon_texture(null)
+	else:
+		var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
+		if tex != null:
+			token.set_custom_icon_texture(tex)
+
+
+func _handle_token_icon(data: Dictionary) -> void:
+	var token_id: String = str(data.get("id", ""))
+	var icon_b64: String = str(data.get("icon_image_b64", ""))
+	if token_id.is_empty() or icon_b64.is_empty() or _map_view == null:
+		return
+	var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
+	if tex != null:
+		_map_view.set_token_icon_texture(token_id, tex)
 
 
 # ---------------------------------------------------------------------------

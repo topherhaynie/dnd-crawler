@@ -25,6 +25,17 @@ func load_map_from_bundle(bundle_path: String) -> Object:
 		var img_ref: String = d["image_path"]
 		if not img_ref.is_absolute_path() and not img_ref.begins_with("user://"):
 			d["image_path"] = bundle_path.path_join(img_ref)
+	# Resolve relative token icon paths to absolute so the renderer can load them.
+	var token_arr: Variant = d.get("tokens", [])
+	if token_arr is Array:
+		for raw in token_arr:
+			if raw is Dictionary:
+				var td: Dictionary = raw as Dictionary
+				var icon_ref: Variant = td.get("icon_image_path", "")
+				if icon_ref is String and not (icon_ref as String).is_empty():
+					var icon_str: String = icon_ref as String
+					if not icon_str.is_absolute_path() and not icon_str.begins_with("user://"):
+						td["icon_image_path"] = bundle_path.path_join(icon_str)
 	var map := MapData.from_dict(d)
 	load_map(map)
 	return map
@@ -69,6 +80,18 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 	# Store image filename relative to bundle to match existing behaviour
 	if payload.has("image_path") and payload["image_path"] is String:
 		payload["image_path"] = str(payload["image_path"]).get_file()
+	# Store token icon paths as relative (e.g. "token_icons/<id>.png") so bundles
+	# remain portable.  The absolute path was resolved at load time.
+	var tok_arr: Variant = payload.get("tokens", [])
+	if tok_arr is Array:
+		for raw in tok_arr:
+			if raw is Dictionary:
+				var td: Dictionary = raw as Dictionary
+				var abs_icon: Variant = td.get("icon_image_path", "")
+				if abs_icon is String and not (abs_icon as String).is_empty():
+					var p: String = abs_icon as String
+					if p.begins_with(bundle_path):
+						td["icon_image_path"] = p.substr(bundle_path.length()).lstrip("/")
 	fa.store_string(JSON.stringify(payload, "\t"))
 	fa.close()
 	return true

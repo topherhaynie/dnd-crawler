@@ -69,6 +69,10 @@ var _passage_paths: Array = []
 var _passage_width_px: float = 48.0
 var _is_detected: bool = false
 var _trigger_radius_px: float = 96.0
+## Custom icon image texture (circular-masked) — set from local file or network.
+var _custom_icon_texture: ImageTexture = null
+## Absolute path to the custom icon image file (for lazy loading via shared cache).
+var _icon_image_path: String = ""
 
 
 func _ready() -> void:
@@ -95,32 +99,44 @@ func _draw() -> void:
 	var fill_color: Color = CATEGORY_COLORS.get(_category, Color.GRAY)
 	var seg: int = 40
 
+	# Lazy-load custom icon texture on first draw.
+	if _custom_icon_texture == null and not _icon_image_path.is_empty():
+		_custom_icon_texture = TokenIconUtils.get_or_load_circular_texture(_icon_image_path)
+
 	if _category == TokenData.TokenCategory.SECRET_PASSAGE and _passage_paths.size() > 0:
 		_draw_passage_corridors()
 		return
 
 	if _shape == 1: # RECTANGLE
-		draw_rect(Rect2(-rx, -ry, _width_px, _height_px), fill_color)
-		# Icon or letter symbol.
-		if _icon_texture != null:
-			var icon_size: float = inner_r * 2.0 * 0.85
+		# Custom icon image fills the entire rect (already circular-masked).
+		if _custom_icon_texture != null:
 			draw_texture_rect(
-				_icon_texture,
-				Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+				_custom_icon_texture,
+				Rect2(-rx, -ry, _width_px, _height_px),
 				false
 			)
 		else:
-			var sym_size: int = maxi(8, int(inner_r * 0.7))
-			var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
-			draw_string(
-				ThemeDB.fallback_font,
-				Vector2(-inner_r, sym_size * 0.38),
-				sym,
-				HORIZONTAL_ALIGNMENT_CENTER,
-				int(inner_r * 2.0),
-				sym_size,
-				Color(1.0, 1.0, 1.0, 0.9)
-			)
+			draw_rect(Rect2(-rx, -ry, _width_px, _height_px), fill_color)
+			# Icon or letter symbol.
+			if _icon_texture != null:
+				var icon_size: float = inner_r * 2.0 * 0.85
+				draw_texture_rect(
+					_icon_texture,
+					Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+					false
+				)
+			else:
+				var sym_size: int = maxi(8, int(inner_r * 0.7))
+				var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
+				draw_string(
+					ThemeDB.fallback_font,
+					Vector2(-inner_r, sym_size * 0.38),
+					sym,
+					HORIZONTAL_ALIGNMENT_CENTER,
+					int(inner_r * 2.0),
+					sym_size,
+					Color(1.0, 1.0, 1.0, 0.9)
+				)
 		# Rectangle border.
 		draw_rect(Rect2(-rx, -ry, _width_px, _height_px), Color(0.0, 0.0, 0.0, 0.6), false, 2.0)
 		# Hidden badge: top-right corner (DM view only).
@@ -156,30 +172,38 @@ func _draw() -> void:
 			draw_line(Vector2(0.0, -ry), Vector2(0.0, rot_y), Color(1.0, 1.0, 1.0, 0.7), 1.5)
 			draw_circle(Vector2(0.0, rot_y), 5.0, Color(1.0, 1.0, 0.3, 0.9))
 	else: # ELLIPSE (default)
-		# Ellipse fill via scaled draw context.
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2(rx, ry))
-		draw_circle(Vector2.ZERO, 1.0, fill_color)
-		draw_set_transform(Vector2.ZERO)
-		# Icon or letter symbol.
-		if _icon_texture != null:
-			var icon_size: float = inner_r * 2.0 * 0.85
+		# Custom icon image fills the ellipse bounding box (already circular-masked).
+		if _custom_icon_texture != null:
 			draw_texture_rect(
-				_icon_texture,
-				Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+				_custom_icon_texture,
+				Rect2(-rx, -ry, _width_px, _height_px),
 				false
 			)
 		else:
-			var sym_size: int = maxi(8, int(inner_r * 0.7))
-			var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
-			draw_string(
-				ThemeDB.fallback_font,
-				Vector2(-inner_r, sym_size * 0.38),
-				sym,
-				HORIZONTAL_ALIGNMENT_CENTER,
-				int(inner_r * 2.0),
-				sym_size,
-				Color(1.0, 1.0, 1.0, 0.9)
-			)
+			# Ellipse fill via scaled draw context.
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2(rx, ry))
+			draw_circle(Vector2.ZERO, 1.0, fill_color)
+			draw_set_transform(Vector2.ZERO)
+			# Icon or letter symbol.
+			if _icon_texture != null:
+				var icon_size: float = inner_r * 2.0 * 0.85
+				draw_texture_rect(
+					_icon_texture,
+					Rect2(-icon_size * 0.5, -icon_size * 0.5, icon_size, icon_size),
+					false
+				)
+			else:
+				var sym_size: int = maxi(8, int(inner_r * 0.7))
+				var sym: String = CATEGORY_SYMBOLS.get(_category, "G")
+				draw_string(
+					ThemeDB.fallback_font,
+					Vector2(-inner_r, sym_size * 0.38),
+					sym,
+					HORIZONTAL_ALIGNMENT_CENTER,
+					int(inner_r * 2.0),
+					sym_size,
+					Color(1.0, 1.0, 1.0, 0.9)
+				)
 		# Ellipse border.
 		var border_pts := PackedVector2Array()
 		for i: int in seg:
@@ -291,6 +315,11 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	_passage_paths = data.passage_paths.duplicate()
 	_passage_width_px = data.passage_width_px
 	_trigger_radius_px = maxf(0.0, data.trigger_radius_px)
+	# Custom icon image — store path for lazy loading; clear stale texture.
+	var new_icon_path: String = data.icon_image_path
+	if new_icon_path != _icon_image_path:
+		_icon_image_path = new_icon_path
+		_custom_icon_texture = null  # Will be lazy-loaded on next _draw()
 	_refresh_visibility()
 	queue_redraw()
 
@@ -314,6 +343,13 @@ func get_trigger_radius_px() -> float:
 
 func set_trigger_radius_px(radius: float) -> void:
 	_trigger_radius_px = maxf(0.0, radius)
+	queue_redraw()
+
+
+## Set a pre-built circular icon texture (used by the player display for
+## network-received icons where the file path is not available locally).
+func set_custom_icon_texture(tex: ImageTexture) -> void:
+	_custom_icon_texture = tex
 	queue_redraw()
 
 

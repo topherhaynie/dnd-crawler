@@ -94,6 +94,14 @@ var icon_key: String = ""
 ## Rendering shape: ELLIPSE (0) or RECTANGLE (1). Defaults ELLIPSE for
 ## backwards compat; RECTANGLE is recommended for doors/passages.
 var token_shape: int = TokenShape.ELLIPSE
+## Relative path to a custom icon image inside the .map bundle
+## (e.g. "token_icons/<id>.png"). Empty = no custom image.
+var icon_image_path: String = ""
+## Crop editor state: pixel offset of the source image centre under the crop
+## circle. Zero = auto-centred.
+var icon_crop_offset: Vector2 = Vector2.ZERO
+## Crop editor state: zoom factor applied before cropping. 1.0 = fit-to-circle.
+var icon_crop_zoom: float = 1.0
 
 # --- Passage geometry (SECRET_PASSAGE category only) ---------------------
 ## Array of polyline chains defining the passage corridor geometry.
@@ -153,6 +161,9 @@ func to_dict() -> Dictionary:
 		"passage_paths": _serialize_passage_paths(),
 		"passage_width_px": passage_width_px,
 		"puzzle_notes": _serialize_puzzle_notes(),
+		"icon_image_path": icon_image_path,
+		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
+		"icon_crop_zoom": icon_crop_zoom,
 	}
 
 
@@ -185,6 +196,12 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.passage_width_px = float(d.get("passage_width_px", 48.0))
 	t.passage_paths = _deserialize_passage_paths(d)
 	t.puzzle_notes = _deserialize_puzzle_notes(d)
+	t.icon_image_path = str(d.get("icon_image_path", ""))
+	var ico: Variant = d.get("icon_crop_offset", {"x": 0.0, "y": 0.0})
+	if ico is Dictionary:
+		var icd := ico as Dictionary
+		t.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
+	t.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
 	return t
 
 

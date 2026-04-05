@@ -875,6 +875,15 @@ func set_token_detected(token_id: String, detected: bool) -> void:
 			return
 
 
+## Assign a pre-decoded icon texture to a token sprite (used by player display).
+func set_token_icon_texture(token_id: String, tex: ImageTexture) -> void:
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == token_id:
+			ts.set_custom_icon_texture(tex)
+			return
+
+
 # ---------------------------------------------------------------------------
 # Effect layer management (DM-placed magic effects)
 # ---------------------------------------------------------------------------

@@ -25,6 +25,12 @@ var input_type: int = InputType.NONE
 var table_orientation: int = 0
 # Indicator color shown on the DM freeze panel and token overlay.
 var indicator_color: Color = Color.WHITE
+# Relative path to a custom icon image (e.g. "profile_icons/<id>.png").
+# Stored under user://data/. Empty = no custom image.
+var icon_image_path: String = ""
+# Crop editor state for the icon image.
+var icon_crop_offset: Vector2 = Vector2.ZERO
+var icon_crop_zoom: float = 1.0
 # Future-proof payload for custom fields (status effects, inventory, etc.)
 var extras: Dictionary = {}
 
@@ -52,6 +58,9 @@ func to_dict() -> Dictionary:
 		"input_type": input_type,
 		"table_orientation": table_orientation,
 		"indicator_color": indicator_color.to_html(false),
+		"icon_image_path": icon_image_path,
+		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
+		"icon_crop_zoom": icon_crop_zoom,
 		"extras": extras.duplicate(true),
 	}
 
@@ -69,6 +78,12 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 	p.table_orientation = int(d.get("table_orientation", 0))
 	var color_raw: Variant = d.get("indicator_color", "ffffff")
 	p.indicator_color = Color.html(str(color_raw)) if (str(color_raw).length() >= 6) else Color.WHITE
+	p.icon_image_path = str(d.get("icon_image_path", ""))
+	var ico: Variant = d.get("icon_crop_offset", {"x": 0.0, "y": 0.0})
+	if ico is Dictionary:
+		var icd := ico as Dictionary
+		p.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
+	p.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
 
 	# Keep explicit extras, then absorb unknown top-level keys so future schema
 	# additions survive load/save even before code knows about them.
@@ -88,6 +103,9 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 			"input_type",
 			"table_orientation",
 			"indicator_color",
+			"icon_image_path",
+			"icon_crop_offset",
+			"icon_crop_zoom",
 			"extras",
 		]:
 			continue

@@ -400,6 +400,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 					"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
 				},
 			})
+			_apply_profile_icon(existing, profile)
 			return existing
 		_dm_tokens.erase(profile.id)
 
@@ -427,8 +428,17 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 			"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
 		},
 	})
+	_apply_profile_icon(token, profile)
 	_dm_tokens[profile.id] = token
 	return token
+
+
+func _apply_profile_icon(token: PlayerSprite, profile: PlayerProfile) -> void:
+	if profile.icon_image_path.is_empty():
+		token.set_custom_icon_texture(null)
+		return
+	var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(profile.icon_image_path)
+	token.set_custom_icon_texture(tex)
 
 
 func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float:

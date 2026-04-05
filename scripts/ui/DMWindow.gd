@@ -164,6 +164,17 @@ var _token_rotation_spin: SpinBox = null
 var _token_shape_option: OptionButton = null
 var _token_blocks_los_check: CheckBox = null
 var _token_blocks_los_row: HBoxContainer = null
+## Token icon image picker
+var _token_icon_preview: TextureRect = null
+var _token_icon_choose_btn: Button = null
+var _token_icon_clear_btn: Button = null
+var _token_icon_path_edit: LineEdit = null
+var _token_icon_load_btn: Button = null
+var _token_icon_pending_source: String = ""  ## source file picked by file dialog
+var _token_icon_file_dialog: FileDialog = null
+var _token_icon_crop_btn: Button = null
+var _token_icon_crop_offset: Vector2 = Vector2.ZERO
+var _token_icon_crop_zoom: float = 1.0
 ## Puzzle notes sub-section
 var _puzzle_notes_container: VBoxContainer = null
 var _puzzle_notes_scroll: ScrollContainer = null
@@ -227,6 +238,34 @@ var _profile_color_btn: ColorPickerButton = null
 var _profile_active_check: CheckBox = null
 var _profile_search_edit: LineEdit = null
 var _profile_display_indices: Array = []
+## Profile icon picker.
+var _profile_icon_preview: TextureRect = null
+var _profile_icon_choose_btn: Button = null
+var _profile_icon_clear_btn: Button = null
+var _profile_icon_path_edit: LineEdit = null
+var _profile_icon_load_btn: Button = null
+var _profile_icon_pending_source: String = ""
+var _profile_icon_file_dialog: FileDialog = null
+var _profile_icon_crop_btn: Button = null
+var _profile_icon_crop_offset: Vector2 = Vector2.ZERO
+var _profile_icon_crop_zoom: float = 1.0
+## Shared crop editor dialog (used by both token and profile editors).
+var _crop_editor_dialog: Window = null
+var _crop_editor_canvas: Control = null
+var _crop_editor_source_img: Image = null
+var _crop_editor_source_tex: ImageTexture = null
+var _crop_editor_offset: Vector2 = Vector2.ZERO
+var _crop_editor_zoom: float = 1.0
+var _crop_editor_dragging: bool = false
+var _crop_editor_drag_start: Vector2 = Vector2.ZERO
+var _crop_editor_offset_start: Vector2 = Vector2.ZERO
+var _crop_editor_callback: Callable = Callable()
+var _crop_editor_vbox: VBoxContainer = null
+var _crop_editor_btn_row: HBoxContainer = null
+var _crop_editor_hint: Label = null
+var _crop_editor_reset_btn: Button = null
+var _crop_editor_cancel_btn: Button = null
+var _crop_editor_ok_btn: Button = null
 ## Legacy autoload reference removed — use registry-first `_network()` helper
 
 # ── Measurement panel ────────────────────────────────────────────────────────
@@ -1350,6 +1389,49 @@ func _on_display_sync_applied(peer_id: int, payload: Dictionary) -> void:
 		int(payload.get("snapshot_bytes", -1)),
 		int(payload.get("snapshot_hash", -1)),
 	])
+	# Send icon data now that the main sync payload has been delivered and the
+	# outbound buffer has drained.
+	_send_display_icon_sync()
+
+
+## Send each player/token icon as a separate small message so the WebSocket
+## outbound buffer is not overwhelmed by a single giant payload.
+func _send_display_icon_sync() -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	# Player profile icons.
+	var gs := _game_state()
+	if gs != null:
+		for raw in gs.list_profiles():
+			if not raw is PlayerProfile:
+				continue
+			var p := raw as PlayerProfile
+			if p.icon_image_path.is_empty():
+				continue
+			var b64: String = TokenIconUtils.encode_icon_to_b64(p.icon_image_path)
+			if not b64.is_empty():
+				nm.broadcast_to_displays({"msg": "player_icon", "id": p.id, "icon_image_b64": b64})
+	# Token icons.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.token != null:
+		for raw in registry.token.get_all_tokens():
+			var td: TokenData = raw as TokenData
+			if td == null or td.icon_image_path.is_empty():
+				continue
+			var b64: String = TokenIconUtils.encode_icon_to_b64(td.icon_image_path)
+			if not b64.is_empty():
+				nm.broadcast_to_displays({"msg": "token_icon", "id": td.id, "icon_image_b64": b64})
+
+
+func _broadcast_player_icon(p: PlayerProfile) -> void:
+	var nm := _network()
+	if nm == null:
+		return
+	var b64 := ""
+	if not p.icon_image_path.is_empty():
+		b64 = TokenIconUtils.encode_icon_to_b64(p.icon_image_path)
+	nm.broadcast_to_displays({"msg": "player_icon", "id": p.id, "icon_image_b64": b64})
 
 
 func _on_client_disconnected(peer_id: int) -> void:
@@ -2889,6 +2971,41 @@ func _build_profiles_dialog() -> void:
 	)
 	form.add_child(_profile_color_btn)
 
+	# Profile icon image row.
+	var pi_lbl := Label.new(); pi_lbl.text = "Icon Image:"; form.add_child(pi_lbl)
+	var pi_row := HBoxContainer.new()
+	pi_row.add_theme_constant_override("separation", 6)
+	_profile_icon_preview = TextureRect.new()
+	_profile_icon_preview.custom_minimum_size = Vector2(48, 48)
+	_profile_icon_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_profile_icon_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pi_row.add_child(_profile_icon_preview)
+	_profile_icon_choose_btn = Button.new()
+	_profile_icon_choose_btn.text = "Choose..."
+	_profile_icon_choose_btn.pressed.connect(_on_profile_icon_choose_pressed)
+	pi_row.add_child(_profile_icon_choose_btn)
+	_profile_icon_clear_btn = Button.new()
+	_profile_icon_clear_btn.text = "Clear"
+	_profile_icon_clear_btn.pressed.connect(_on_profile_icon_clear_pressed)
+	pi_row.add_child(_profile_icon_clear_btn)
+	_profile_icon_crop_btn = Button.new()
+	_profile_icon_crop_btn.text = "Edit Crop"
+	_profile_icon_crop_btn.disabled = true
+	_profile_icon_crop_btn.pressed.connect(_on_profile_icon_crop_pressed)
+	pi_row.add_child(_profile_icon_crop_btn)
+	form.add_child(pi_row)
+	var pi_path_row := HBoxContainer.new()
+	pi_path_row.add_theme_constant_override("separation", 4)
+	_profile_icon_path_edit = LineEdit.new()
+	_profile_icon_path_edit.placeholder_text = "Or paste image path..."
+	_profile_icon_path_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pi_path_row.add_child(_profile_icon_path_edit)
+	_profile_icon_load_btn = Button.new()
+	_profile_icon_load_btn.text = "Load"
+	_profile_icon_load_btn.pressed.connect(_on_profile_icon_load_pressed)
+	pi_path_row.add_child(_profile_icon_load_btn)
+	form.add_child(pi_path_row)
+
 	var bind_sep := HSeparator.new()
 	right_panel.add_child(bind_sep)
 
@@ -3147,6 +3264,22 @@ func _load_selected_profile_into_form(index: int) -> void:
 		_profile_orientation_spin.value = p.table_orientation
 	if _profile_color_btn:
 		_profile_color_btn.color = p.indicator_color
+	# Populate profile icon preview.
+	_profile_icon_pending_source = ""
+	_profile_icon_crop_offset = p.icon_crop_offset
+	_profile_icon_crop_zoom = p.icon_crop_zoom
+	if _profile_icon_preview != null:
+		if not p.icon_image_path.is_empty():
+			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(p.icon_image_path)
+			_profile_icon_preview.texture = tex
+			if _profile_icon_path_edit != null:
+				_profile_icon_path_edit.text = p.icon_image_path
+		else:
+			_profile_icon_preview.texture = null
+			if _profile_icon_path_edit != null:
+				_profile_icon_path_edit.text = ""
+	if _profile_icon_crop_btn != null:
+		_profile_icon_crop_btn.disabled = p.icon_image_path.is_empty()
 	if _profile_active_check:
 		var gs := _game_state()
 		var has_session: bool = gs != null and gs.has_active_session()
@@ -3319,6 +3452,7 @@ func _on_profile_save_pressed() -> void:
 	if pm != null:
 		pm.update_profile_at(_profile_selected_index, p)
 	_apply_profile_bindings()
+	_broadcast_player_icon(p)
 	_refresh_profiles_list()
 	_update_profile_action_state()
 	_set_status("Saved profile: %s (PP %d) to user://data/profiles.json" % [p.player_name, p.get_passive_perception()])
@@ -3373,6 +3507,33 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	if _profile_color_btn:
 		p.indicator_color = _profile_color_btn.color
 
+	# Save profile icon image.
+	if not _profile_icon_pending_source.is_empty():
+		# Delete old icon if present.
+		if not p.icon_image_path.is_empty():
+			TokenIconUtils.delete_icon_file(p.icon_image_path)
+			TokenIconUtils.evict(p.icon_image_path)
+		var dest_dir: String = "user://data/profile_icons"
+		p.ensure_id()
+		var dest_path: String = dest_dir.path_join("%s.png" % p.id)
+		var err: Error = TokenIconUtils.process_and_save_icon(
+			_profile_icon_pending_source, dest_path,
+			_profile_icon_crop_offset, _profile_icon_crop_zoom)
+		if err == OK:
+			p.icon_image_path = dest_path
+			p.icon_crop_offset = _profile_icon_crop_offset
+			p.icon_crop_zoom = _profile_icon_crop_zoom
+		else:
+			_set_status("Failed to save profile icon (error %d)" % err)
+	elif _profile_icon_preview != null and _profile_icon_preview.texture == null:
+		# DM cleared the icon.
+		if not p.icon_image_path.is_empty():
+			TokenIconUtils.delete_icon_file(p.icon_image_path)
+			TokenIconUtils.evict(p.icon_image_path)
+		p.icon_image_path = ""
+		p.icon_crop_offset = Vector2.ZERO
+		p.icon_crop_zoom = 1.0
+
 	var extras_raw := _profile_extras_edit.text.strip_edges()
 	if extras_raw.is_empty():
 		p.extras = {}
@@ -3424,6 +3585,64 @@ func _on_profile_vision_selected(index: int) -> void:
 		return
 	var vision_id := _profile_vision_option.get_item_id(index)
 	_profile_darkvision_spin.editable = (vision_id == PlayerProfile.VisionType.DARKVISION)
+
+
+# ── Profile icon image helpers ──────────────────────────────────────────────
+
+func _on_profile_icon_choose_pressed() -> void:
+	if _profile_icon_file_dialog == null:
+		_profile_icon_file_dialog = FileDialog.new()
+		_profile_icon_file_dialog.use_native_dialog = true
+		_profile_icon_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_profile_icon_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_profile_icon_file_dialog.title = "Select Profile Icon Image"
+		for f: String in TokenIconUtils.FILE_DIALOG_FILTERS:
+			_profile_icon_file_dialog.add_filter(f)
+		_profile_icon_file_dialog.file_selected.connect(_on_profile_icon_file_selected)
+		add_child(_profile_icon_file_dialog)
+	_profile_icon_file_dialog.popup_centered(Vector2i(800, 500))
+
+
+func _on_profile_icon_file_selected(path: String) -> void:
+	_load_profile_icon_from_path(path)
+
+
+func _on_profile_icon_load_pressed() -> void:
+	if _profile_icon_path_edit == null:
+		return
+	var path: String = _profile_icon_path_edit.text.strip_edges()
+	if path.is_empty():
+		return
+	_load_profile_icon_from_path(path)
+
+
+func _load_profile_icon_from_path(path: String) -> void:
+	var img: Image = TokenIconUtils.load_image_from_path(path)
+	if img == null:
+		_set_status("Failed to load icon image: %s" % path)
+		return
+	_profile_icon_pending_source = path
+	_profile_icon_crop_offset = Vector2.ZERO
+	_profile_icon_crop_zoom = 1.0
+	var tex: ImageTexture = TokenIconUtils.create_circular_texture(img)
+	if _profile_icon_preview != null:
+		_profile_icon_preview.texture = tex
+	if _profile_icon_path_edit != null:
+		_profile_icon_path_edit.text = path
+	if _profile_icon_crop_btn != null:
+		_profile_icon_crop_btn.disabled = false
+
+
+func _on_profile_icon_clear_pressed() -> void:
+	_profile_icon_pending_source = ""
+	_profile_icon_crop_offset = Vector2.ZERO
+	_profile_icon_crop_zoom = 1.0
+	if _profile_icon_preview != null:
+		_profile_icon_preview.texture = null
+	if _profile_icon_path_edit != null:
+		_profile_icon_path_edit.text = ""
+	if _profile_icon_crop_btn != null:
+		_profile_icon_crop_btn.disabled = true
 
 
 func _on_profile_perception_changed(value: float) -> void:
@@ -4044,6 +4263,9 @@ func _delete_token(token_id: String) -> void:
 	var del_snapshot: TokenData = null
 	if del_data != null:
 		del_snapshot = TokenData.from_dict(del_data.to_dict())
+	# Clean up the token icon file from the map bundle.
+	if del_data != null and not del_data.icon_image_path.is_empty():
+		_delete_token_icon(token_id)
 	tm.remove_token(token_id)
 	if _map_view != null:
 		_map_view.remove_token_sprite(token_id)
@@ -4322,6 +4544,22 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_blocks_los_row.visible = is_door_type
 	if _token_notes_edit != null:
 		_token_notes_edit.text = data.notes
+	# Populate icon preview.
+	_token_icon_pending_source = ""
+	_token_icon_crop_offset = data.icon_crop_offset
+	_token_icon_crop_zoom = data.icon_crop_zoom
+	if _token_icon_preview != null:
+		if not data.icon_image_path.is_empty():
+			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(data.icon_image_path)
+			_token_icon_preview.texture = tex
+			if _token_icon_path_edit != null:
+				_token_icon_path_edit.text = data.icon_image_path
+		else:
+			_token_icon_preview.texture = null
+			if _token_icon_path_edit != null:
+				_token_icon_path_edit.text = ""
+	if _token_icon_crop_btn != null:
+		_token_icon_crop_btn.disabled = data.icon_image_path.is_empty()
 	# Populate puzzle notes rows.
 	_populate_puzzle_note_rows(data.puzzle_notes)
 	# Store temporary placement position in editor id if brand new.
@@ -4372,6 +4610,48 @@ func _build_token_editor_dialog() -> void:
 		_token_category_option.add_item(TokenData.category_name(cat_val), cat_val)
 	cat_row.add_child(_token_category_option)
 	vbox.add_child(cat_row)
+
+	# Icon Image
+	var icon_row := HBoxContainer.new()
+	icon_row.add_theme_constant_override("separation", 6)
+	var icon_label := Label.new()
+	icon_label.text = "Icon Image:"
+	icon_label.custom_minimum_size = Vector2(120, 0)
+	icon_row.add_child(icon_label)
+	_token_icon_preview = TextureRect.new()
+	_token_icon_preview.custom_minimum_size = Vector2(48, 48)
+	_token_icon_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_token_icon_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_row.add_child(_token_icon_preview)
+	_token_icon_choose_btn = Button.new()
+	_token_icon_choose_btn.text = "Choose..."
+	_token_icon_choose_btn.pressed.connect(_on_token_icon_choose_pressed)
+	icon_row.add_child(_token_icon_choose_btn)
+	_token_icon_clear_btn = Button.new()
+	_token_icon_clear_btn.text = "Clear"
+	_token_icon_clear_btn.pressed.connect(_on_token_icon_clear_pressed)
+	icon_row.add_child(_token_icon_clear_btn)
+	_token_icon_crop_btn = Button.new()
+	_token_icon_crop_btn.text = "Edit Crop"
+	_token_icon_crop_btn.disabled = true
+	_token_icon_crop_btn.pressed.connect(_on_token_icon_crop_pressed)
+	icon_row.add_child(_token_icon_crop_btn)
+	vbox.add_child(icon_row)
+	# Optional path / URL input row.
+	var icon_path_row := HBoxContainer.new()
+	icon_path_row.add_theme_constant_override("separation", 4)
+	var ipr_spacer := Control.new()
+	ipr_spacer.custom_minimum_size = Vector2(120, 0)
+	icon_path_row.add_child(ipr_spacer)
+	_token_icon_path_edit = LineEdit.new()
+	_token_icon_path_edit.placeholder_text = "Or paste image path..."
+	_token_icon_path_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	icon_path_row.add_child(_token_icon_path_edit)
+	_token_icon_load_btn = Button.new()
+	_token_icon_load_btn.text = "Load"
+	_token_icon_load_btn.pressed.connect(_on_token_icon_load_pressed)
+	icon_path_row.add_child(_token_icon_load_btn)
+	vbox.add_child(icon_path_row)
 
 	# Width
 	var width_row := HBoxContainer.new()
@@ -4641,6 +4921,358 @@ func _on_token_category_changed(idx: int) -> void:
 			_token_auto_reveal_check.button_pressed = true
 
 
+# ── Token icon image helpers ────────────────────────────────────────────────
+
+func _on_token_icon_choose_pressed() -> void:
+	if _token_icon_file_dialog == null:
+		_token_icon_file_dialog = FileDialog.new()
+		_token_icon_file_dialog.use_native_dialog = true
+		_token_icon_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_token_icon_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_token_icon_file_dialog.title = "Select Token Icon Image"
+		for f: String in TokenIconUtils.FILE_DIALOG_FILTERS:
+			_token_icon_file_dialog.add_filter(f)
+		_token_icon_file_dialog.file_selected.connect(_on_token_icon_file_selected)
+		add_child(_token_icon_file_dialog)
+	_token_icon_file_dialog.popup_centered(Vector2i(800, 500))
+
+
+func _on_token_icon_file_selected(path: String) -> void:
+	_load_token_icon_from_path(path)
+
+
+func _on_token_icon_load_pressed() -> void:
+	if _token_icon_path_edit == null:
+		return
+	var path: String = _token_icon_path_edit.text.strip_edges()
+	if path.is_empty():
+		return
+	_load_token_icon_from_path(path)
+
+
+func _load_token_icon_from_path(path: String) -> void:
+	var img: Image = TokenIconUtils.load_image_from_path(path)
+	if img == null:
+		_set_status("Failed to load icon image: %s" % path)
+		return
+	_token_icon_pending_source = path
+	_token_icon_crop_offset = Vector2.ZERO
+	_token_icon_crop_zoom = 1.0
+	# Show circular preview.
+	var tex: ImageTexture = TokenIconUtils.create_circular_texture(img)
+	if _token_icon_preview != null:
+		_token_icon_preview.texture = tex
+	if _token_icon_path_edit != null:
+		_token_icon_path_edit.text = path
+	if _token_icon_crop_btn != null:
+		_token_icon_crop_btn.disabled = false
+
+
+func _on_token_icon_clear_pressed() -> void:
+	_token_icon_pending_source = ""
+	_token_icon_crop_offset = Vector2.ZERO
+	_token_icon_crop_zoom = 1.0
+	if _token_icon_preview != null:
+		_token_icon_preview.texture = null
+	if _token_icon_path_edit != null:
+		_token_icon_path_edit.text = ""
+	if _token_icon_crop_btn != null:
+		_token_icon_crop_btn.disabled = true
+
+
+## Persist the pending token icon into the .map bundle and return the relative path.
+## Returns empty string if no pending icon or the bundle path is unavailable.
+func _save_pending_token_icon(token_id: String) -> String:
+	if _token_icon_pending_source.is_empty() or _active_map_bundle_path.is_empty():
+		return ""
+	var dest_dir: String = _active_map_bundle_path.path_join("token_icons")
+	var dest_path: String = dest_dir.path_join("%s.png" % token_id)
+	var err: Error = TokenIconUtils.process_and_save_icon(
+		_token_icon_pending_source, dest_path,
+		_token_icon_crop_offset, _token_icon_crop_zoom)
+	if err != OK:
+		_set_status("Failed to save token icon (error %d)" % err)
+		return ""
+	return dest_path
+
+
+## Delete a token's icon file from the .map bundle directory.
+func _delete_token_icon(token_id: String) -> void:
+	if _active_map_bundle_path.is_empty():
+		return
+	var icon_path: String = _active_map_bundle_path.path_join("token_icons/%s.png" % token_id)
+	TokenIconUtils.delete_icon_file(icon_path)
+	TokenIconUtils.evict(icon_path)
+
+
+# ── Crop editor ─────────────────────────────────────────────────────────────
+
+## Open the crop editor with the given source image path, starting offset/zoom,
+## and a callback `fn(offset: Vector2, zoom: float)` invoked on confirm.
+func _open_crop_editor(source_path: String, offset: Vector2, zoom: float, on_confirm: Callable) -> void:
+	var img: Image = TokenIconUtils.load_image_from_path(source_path)
+	if img == null:
+		_set_status("Cannot open crop editor — failed to load image.")
+		return
+	_crop_editor_source_img = img
+	_crop_editor_source_tex = ImageTexture.create_from_image(img)
+	_crop_editor_offset = offset
+	_crop_editor_zoom = maxf(zoom, 1.0)
+	_crop_editor_dragging = false
+	_crop_editor_callback = on_confirm
+	if _crop_editor_dialog == null:
+		_build_crop_editor_dialog()
+	_crop_editor_canvas.queue_redraw()
+	var _ce_mgr := _get_ui_scale_mgr()
+	if _ce_mgr != null:
+		_crop_editor_dialog.min_size = Vector2i(_ce_mgr.scaled(460.0), _ce_mgr.scaled(520.0))
+	_crop_editor_dialog.reset_size()
+	_crop_editor_dialog.popup_centered()
+
+
+func _build_crop_editor_dialog() -> void:
+	var mgr := _get_ui_scale_mgr()
+	_crop_editor_dialog = Window.new()
+	_crop_editor_dialog.title = "Crop Icon Image"
+	_crop_editor_dialog.wrap_controls = true
+	_crop_editor_dialog.transient = true
+	_crop_editor_dialog.close_requested.connect(_on_crop_editor_cancel)
+	add_child(_crop_editor_dialog)
+
+	_crop_editor_vbox = VBoxContainer.new()
+	_crop_editor_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
+	if mgr != null:
+		_crop_editor_vbox.add_theme_constant_override("separation", mgr.scaled(8.0))
+	else:
+		_crop_editor_vbox.add_theme_constant_override("separation", 8)
+	_crop_editor_dialog.add_child(_crop_editor_vbox)
+
+	_crop_editor_hint = Label.new()
+	_crop_editor_hint.text = "Drag to pan · Scroll to zoom"
+	_crop_editor_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if mgr != null:
+		_crop_editor_hint.add_theme_font_size_override("font_size", mgr.scaled(14.0))
+	_crop_editor_vbox.add_child(_crop_editor_hint)
+
+	var panel := Panel.new()
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+	_crop_editor_vbox.add_child(panel)
+
+	_crop_editor_canvas = Control.new()
+	_crop_editor_canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crop_editor_canvas.mouse_filter = Control.MOUSE_FILTER_STOP
+	_crop_editor_canvas.draw.connect(_on_crop_editor_draw)
+	_crop_editor_canvas.gui_input.connect(_on_crop_editor_input)
+	panel.add_child(_crop_editor_canvas)
+
+	_crop_editor_btn_row = HBoxContainer.new()
+	_crop_editor_btn_row.alignment = BoxContainer.ALIGNMENT_END
+	if mgr != null:
+		_crop_editor_btn_row.add_theme_constant_override("separation", mgr.scaled(8.0))
+	else:
+		_crop_editor_btn_row.add_theme_constant_override("separation", 8)
+	_crop_editor_vbox.add_child(_crop_editor_btn_row)
+
+	_crop_editor_reset_btn = Button.new()
+	_crop_editor_reset_btn.text = "Reset"
+	_crop_editor_reset_btn.pressed.connect(_on_crop_editor_reset)
+	if mgr != null:
+		mgr.scale_button(_crop_editor_reset_btn)
+	_crop_editor_btn_row.add_child(_crop_editor_reset_btn)
+
+	_crop_editor_cancel_btn = Button.new()
+	_crop_editor_cancel_btn.text = "Cancel"
+	_crop_editor_cancel_btn.pressed.connect(_on_crop_editor_cancel)
+	if mgr != null:
+		mgr.scale_button(_crop_editor_cancel_btn)
+	_crop_editor_btn_row.add_child(_crop_editor_cancel_btn)
+
+	_crop_editor_ok_btn = Button.new()
+	_crop_editor_ok_btn.text = "OK"
+	_crop_editor_ok_btn.pressed.connect(_on_crop_editor_confirm)
+	if mgr != null:
+		mgr.scale_button(_crop_editor_ok_btn)
+	_crop_editor_btn_row.add_child(_crop_editor_ok_btn)
+
+	# Theme the crop editor dialog.
+	var _ce_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _ce_reg != null and _ce_reg.ui_theme != null:
+		_ce_reg.ui_theme.theme_control_tree(_crop_editor_dialog, _ui_scale())
+
+
+func _on_crop_editor_draw() -> void:
+	if _crop_editor_canvas == null or _crop_editor_source_tex == null:
+		return
+	var canvas: Control = _crop_editor_canvas
+	var cw: float = canvas.size.x
+	var ch: float = canvas.size.y
+	var preview_side: float = minf(cw, ch) - 16.0
+	if preview_side <= 0.0:
+		return
+	var cx: float = cw * 0.5
+	var cy: float = ch * 0.5
+
+	var src_w: float = float(_crop_editor_source_img.get_width())
+	var src_h: float = float(_crop_editor_source_img.get_height())
+	var base_side: float = minf(src_w, src_h)
+	# Effective crop region size in source pixels.
+	var crop_px: float = base_side / maxf(_crop_editor_zoom, 1.0)
+	# Scale factor: preview pixels per source pixel.
+	var scale: float = preview_side / crop_px
+
+	# Centre of the crop region in source-pixel space.
+	var src_cx: float = src_w * 0.5 + _crop_editor_offset.x
+	var src_cy: float = src_h * 0.5 + _crop_editor_offset.y
+
+	# Draw the source image scaled and positioned so the crop centre maps to
+	# the canvas centre.
+	var draw_w: float = src_w * scale
+	var draw_h: float = src_h * scale
+	var draw_x: float = cx - src_cx * scale
+	var draw_y: float = cy - src_cy * scale
+	canvas.draw_texture_rect(_crop_editor_source_tex,
+		Rect2(draw_x, draw_y, draw_w, draw_h), false)
+
+	# Semi-transparent overlay outside the circular crop region.
+	var mask_color := Color(0, 0, 0, 0.55)
+	var radius: float = preview_side * 0.5
+	# Draw four rects covering the area outside the circle's bounding square.
+	var sq_x: float = cx - radius
+	var sq_y: float = cy - radius
+	var sq_side: float = radius * 2.0
+	# Top bar.
+	canvas.draw_rect(Rect2(0, 0, cw, sq_y), mask_color)
+	# Bottom bar.
+	canvas.draw_rect(Rect2(0, sq_y + sq_side, cw, ch - sq_y - sq_side), mask_color)
+	# Left bar (between top/bottom).
+	canvas.draw_rect(Rect2(0, sq_y, sq_x, sq_side), mask_color)
+	# Right bar (between top/bottom).
+	canvas.draw_rect(Rect2(sq_x + sq_side, sq_y, cw - sq_x - sq_side, sq_side), mask_color)
+	# Draw circle-corner masks using arcs for the four corners of the bounding square.
+	# A cheap approach: draw a large ring using canvas_item primitives.
+	# Instead, draw a series of thin horizontal scanline rects to mask corners.
+	var steps: int = ceili(radius)
+	for i: int in range(steps):
+		var y_off: float = float(i)
+		var x_inset: float = radius - sqrt(maxf(radius * radius - (radius - y_off) * (radius - y_off), 0.0))
+		if x_inset < 1.0:
+			continue
+		# Top half: two rects on left + right of circle at this scanline.
+		canvas.draw_rect(Rect2(sq_x, sq_y + y_off, x_inset, 1.0), mask_color)
+		canvas.draw_rect(Rect2(sq_x + sq_side - x_inset, sq_y + y_off, x_inset, 1.0), mask_color)
+		# Bottom half (mirror).
+		canvas.draw_rect(Rect2(sq_x, sq_y + sq_side - y_off - 1.0, x_inset, 1.0), mask_color)
+		canvas.draw_rect(Rect2(sq_x + sq_side - x_inset, sq_y + sq_side - y_off - 1.0, x_inset, 1.0), mask_color)
+
+	# Circle outline.
+	canvas.draw_arc(Vector2(cx, cy), radius, 0.0, TAU, 64, Color.WHITE, 2.0)
+
+
+func _on_crop_editor_input(event: InputEvent) -> void:
+	if _crop_editor_canvas == null or _crop_editor_source_img == null:
+		return
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_crop_editor_dragging = true
+				_crop_editor_drag_start = mb.position
+				_crop_editor_offset_start = _crop_editor_offset
+			else:
+				_crop_editor_dragging = false
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			_crop_editor_zoom = minf(_crop_editor_zoom + 0.1, 10.0)
+			_crop_editor_canvas.queue_redraw()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_crop_editor_zoom = maxf(_crop_editor_zoom - 0.1, 1.0)
+			_crop_editor_canvas.queue_redraw()
+	elif event is InputEventMouseMotion and _crop_editor_dragging:
+		var mm: InputEventMouseMotion = event as InputEventMouseMotion
+		var cw: float = _crop_editor_canvas.size.x
+		var ch: float = _crop_editor_canvas.size.y
+		var preview_side: float = minf(cw, ch) - 16.0
+		if preview_side <= 0.0:
+			return
+		var src_w: float = float(_crop_editor_source_img.get_width())
+		var src_h: float = float(_crop_editor_source_img.get_height())
+		var base_side: float = minf(src_w, src_h)
+		var crop_px: float = base_side / maxf(_crop_editor_zoom, 1.0)
+		var scale: float = preview_side / crop_px
+		# Convert pixel drag delta to source-pixel offset.
+		var delta: Vector2 = mm.position - _crop_editor_drag_start
+		_crop_editor_offset = _crop_editor_offset_start - delta / scale
+		_crop_editor_canvas.queue_redraw()
+
+
+func _on_crop_editor_reset() -> void:
+	_crop_editor_offset = Vector2.ZERO
+	_crop_editor_zoom = 1.0
+	if _crop_editor_canvas != null:
+		_crop_editor_canvas.queue_redraw()
+
+
+func _on_crop_editor_cancel() -> void:
+	if _crop_editor_dialog != null:
+		_crop_editor_dialog.hide()
+
+
+func _on_crop_editor_confirm() -> void:
+	if _crop_editor_dialog != null:
+		_crop_editor_dialog.hide()
+	if _crop_editor_callback.is_valid():
+		_crop_editor_callback.call(_crop_editor_offset, _crop_editor_zoom)
+
+
+func _on_token_icon_crop_pressed() -> void:
+	# Determine source path: pending source (freshly picked) or existing saved icon.
+	var source: String = _token_icon_pending_source
+	if source.is_empty() and _token_icon_path_edit != null:
+		source = _token_icon_path_edit.text.strip_edges()
+	if source.is_empty():
+		return
+	_open_crop_editor(source, _token_icon_crop_offset, _token_icon_crop_zoom,
+		func(offset: Vector2, zoom: float) -> void:
+			_token_icon_crop_offset = offset
+			_token_icon_crop_zoom = zoom
+			# Re-generate preview with new crop.
+			var img: Image = TokenIconUtils.load_image_from_path(source)
+			if img == null:
+				return
+			img = TokenIconUtils.crop_with_params(img, offset, zoom)
+			img = TokenIconUtils.resize_to_max(img, TokenIconUtils.MAX_ICON_SIZE)
+			img = TokenIconUtils.apply_circular_alpha_mask(img)
+			var tex: ImageTexture = ImageTexture.create_from_image(img)
+			if _token_icon_preview != null:
+				_token_icon_preview.texture = tex
+			# Ensure pending source is set so confirm handler re-saves.
+			if _token_icon_pending_source.is_empty():
+				_token_icon_pending_source = source)
+
+
+func _on_profile_icon_crop_pressed() -> void:
+	var source: String = _profile_icon_pending_source
+	if source.is_empty() and _profile_icon_path_edit != null:
+		source = _profile_icon_path_edit.text.strip_edges()
+	if source.is_empty():
+		return
+	_open_crop_editor(source, _profile_icon_crop_offset, _profile_icon_crop_zoom,
+		func(offset: Vector2, zoom: float) -> void:
+			_profile_icon_crop_offset = offset
+			_profile_icon_crop_zoom = zoom
+			var img: Image = TokenIconUtils.load_image_from_path(source)
+			if img == null:
+				return
+			img = TokenIconUtils.crop_with_params(img, offset, zoom)
+			img = TokenIconUtils.resize_to_max(img, TokenIconUtils.MAX_ICON_SIZE)
+			img = TokenIconUtils.apply_circular_alpha_mask(img)
+			var tex: ImageTexture = ImageTexture.create_from_image(img)
+			if _profile_icon_preview != null:
+				_profile_icon_preview.texture = tex
+			if _profile_icon_pending_source.is_empty():
+				_profile_icon_pending_source = source)
+
+
 # ── Puzzle notes helpers ────────────────────────────────────────────────────
 
 func _populate_puzzle_note_rows(notes: Array) -> void:
@@ -4805,6 +5437,25 @@ func _on_token_editor_confirmed() -> void:
 	data.rotation_deg = rot_deg
 	data.token_shape = shape_val
 	data.blocks_los = blos_val
+
+	# Persist custom icon image.
+	if not _token_icon_pending_source.is_empty():
+		# Delete the previous icon file if it differs.
+		if not data.icon_image_path.is_empty():
+			TokenIconUtils.delete_icon_file(data.icon_image_path)
+			TokenIconUtils.evict(data.icon_image_path)
+		var abs_path: String = _save_pending_token_icon(data.id)
+		data.icon_image_path = abs_path
+		data.icon_crop_offset = _token_icon_crop_offset
+		data.icon_crop_zoom = _token_icon_crop_zoom
+	elif _token_icon_preview != null and _token_icon_preview.texture == null:
+		# DM cleared the icon — remove existing file.
+		if not data.icon_image_path.is_empty():
+			TokenIconUtils.delete_icon_file(data.icon_image_path)
+			TokenIconUtils.evict(data.icon_image_path)
+		data.icon_image_path = ""
+		data.icon_crop_offset = Vector2.ZERO
+		data.icon_crop_zoom = 1.0
 
 	if existing != null:
 		tm.update_token(data)
@@ -5100,7 +5751,11 @@ func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 	if not data.is_visible_to_players and not is_passthrough_category:
 		return
 	var msg_type: String = "token_added" if is_new else "token_updated"
-	_nm_broadcast_to_displays({"msg": msg_type, "token": data.to_dict(),
+	var token_dict: Dictionary = data.to_dict()
+	# Attach inline base64 icon for the player display.
+	if not data.icon_image_path.is_empty():
+		token_dict["icon_image_b64"] = TokenIconUtils.encode_icon_to_b64(data.icon_image_path)
+	_nm_broadcast_to_displays({"msg": msg_type, "token": token_dict,
 		"puzzle_notes": _collect_revealed_puzzle_notes()})
 
 
@@ -5761,7 +6416,8 @@ func _broadcast_token_state() -> void:
 	for raw in visible:
 		var td: TokenData = raw as TokenData
 		if td != null:
-			dicts.append(td.to_dict())
+			var d: Dictionary = td.to_dict()
+			dicts.append(d)
 	# Include non-visible DOOR and SECRET_PASSAGE tokens so the player display
 	# can rebuild wall/passthrough geometry even for tokens the player can't see.
 	for raw in registry.token.get_all_tokens():
@@ -5770,7 +6426,8 @@ func _broadcast_token_state() -> void:
 			continue
 		if td.category == TokenData.TokenCategory.DOOR \
 				or td.category == TokenData.TokenCategory.SECRET_PASSAGE:
-			dicts.append(td.to_dict())
+			var d: Dictionary = td.to_dict()
+			dicts.append(d)
 	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts,
 		"puzzle_notes": _collect_revealed_puzzle_notes()})
 
@@ -7471,6 +8128,22 @@ func _apply_ui_scale() -> void:
 		_progress_dialog.min_size = Vector2i(mgr.scaled(360.0), 0)
 		_progress_label.add_theme_font_size_override("font_size", mgr.scaled(14.0))
 		mgr.scale_button(_progress_dialog.get_ok_button())
+
+	# ── Crop editor dialog ──
+	if _crop_editor_dialog != null:
+		_crop_editor_dialog.min_size = Vector2i(mgr.scaled(460.0), mgr.scaled(520.0))
+	if _crop_editor_vbox != null:
+		_crop_editor_vbox.add_theme_constant_override("separation", mgr.scaled(8.0))
+	if _crop_editor_btn_row != null:
+		_crop_editor_btn_row.add_theme_constant_override("separation", mgr.scaled(8.0))
+	if _crop_editor_hint != null:
+		_crop_editor_hint.add_theme_font_size_override("font_size", mgr.scaled(14.0))
+	if _crop_editor_reset_btn != null:
+		mgr.scale_button(_crop_editor_reset_btn)
+	if _crop_editor_cancel_btn != null:
+		mgr.scale_button(_crop_editor_cancel_btn)
+	if _crop_editor_ok_btn != null:
+		mgr.scale_button(_crop_editor_ok_btn)
 
 
 func _ui_scale() -> float:

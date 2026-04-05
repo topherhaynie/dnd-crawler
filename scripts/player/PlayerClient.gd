@@ -216,6 +216,9 @@ func _handle_packet(raw: String) -> void:
 		"token_moved":
 			# Lightweight position update for a live token
 			state_received.emit(data)
+		"player_icon", "token_icon":
+			# Deferred icon image data (separate from bulk state)
+			state_received.emit(data)
 		"puzzle_notes_state":
 			# Revealed puzzle notes from all tokens (independent of visibility)
 			state_received.emit(data)

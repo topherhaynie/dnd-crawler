@@ -19,6 +19,8 @@ var is_locked: bool = false
 var vision_scale: float = 1.0
 var vision_radius_px: float = 60.0
 var indicator_color_str: String = "" ## hex from PlayerProfile.indicator_color; empty = fall back to id-hash
+var _custom_icon_texture: ImageTexture = null ## Circular-masked custom icon from profile or network
+var _icon_image_b64_hash: int = 0 ## CRC of the last decoded icon b64 — avoids redundant decode
 var _movement_input: Vector2 = Vector2.ZERO
 var _last_nonzero_dir: Vector2 = Vector2.RIGHT
 var _remote_smoothing_enabled: bool = false
@@ -36,6 +38,10 @@ static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
 static var _cone_light_texture: Texture2D = null
 const _TOKEN_TEXTURE_DIAMETER_PX: float = 48.0
+## Visible diameter of the default token circle (40px fill + 2px border ring each side).
+const _TOKEN_VISIBLE_DIAMETER_PX: float = 44.0
+## Minimum rendered pixel size for any token sprite.
+const _MIN_RENDERED_PX: float = 7.0
 
 
 func _ready() -> void:
@@ -130,6 +136,20 @@ func apply_from_state(data: Dictionary) -> void:
 		or absf(vision_scale - prev_vision_scale) > 0.001
 		or absf(vision_radius_px - prev_vision_radius_px) > 0.01
 	)
+	# Custom icon image from network (base64-encoded PNG).
+	if data.has("icon_image_b64"):
+		var icon_b64: String = str(data["icon_image_b64"])
+		if not icon_b64.is_empty():
+			var b64_hash: int = icon_b64.hash()
+			if b64_hash != _icon_image_b64_hash:
+				_icon_image_b64_hash = b64_hash
+				_custom_icon_texture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
+				visuals_changed = true
+		elif _custom_icon_texture != null:
+			# Icon was explicitly removed.
+			_custom_icon_texture = null
+			_icon_image_b64_hash = 0
+			visuals_changed = true
 	if visuals_changed:
 		_update_visuals()
 
@@ -177,9 +197,21 @@ func set_light_suppressed(suppressed: bool) -> void:
 
 func set_token_diameter_px(diameter_px: float) -> void:
 	_token_diameter_px = diameter_px
-	var factor := maxf(diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, 0.15)
-	sprite.scale = Vector2.ONE * factor
-	collision.scale = Vector2.ONE * factor
+	var tex_diam: float = _TOKEN_TEXTURE_DIAMETER_PX
+	if _custom_icon_texture != null:
+		# Custom icons fill their full texture; scale down to match the default
+		# token's visible footprint (44 of 48 px).
+		tex_diam = float(_custom_icon_texture.get_width()) / (_TOKEN_VISIBLE_DIAMETER_PX / _TOKEN_TEXTURE_DIAMETER_PX)
+	var min_scale: float = _MIN_RENDERED_PX / tex_diam
+	sprite.scale = Vector2.ONE * maxf(diameter_px / tex_diam, min_scale)
+	collision.scale = Vector2.ONE * maxf(diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, _MIN_RENDERED_PX / _TOKEN_TEXTURE_DIAMETER_PX)
+
+
+## Set a pre-built circular icon texture directly (used on the DM side where
+## the profile image file is available locally).
+func set_custom_icon_texture(tex: ImageTexture) -> void:
+	_custom_icon_texture = tex
+	_update_visuals()
 
 
 func step_authoritative_motion(_delta: float, speed_px_per_second: float, bounds: Vector2) -> void:
@@ -193,12 +225,23 @@ func step_authoritative_motion(_delta: float, speed_px_per_second: float, bounds
 
 
 func _update_visuals() -> void:
-	# Use the profile-assigned indicator color when available; fall back to
-	# the id-hash color for backwards-compat (e.g. player display client).
-	if indicator_color_str.length() >= 6:
-		sprite.modulate = Color.html(indicator_color_str)
+	# Custom icon image overrides the default white-circle + color-modulate.
+	if _custom_icon_texture != null:
+		sprite.texture = _custom_icon_texture
+		sprite.modulate = Color.WHITE
+		var tex_w: float = float(_custom_icon_texture.get_width())
+		var effective: float = tex_w / (_TOKEN_VISIBLE_DIAMETER_PX / _TOKEN_TEXTURE_DIAMETER_PX)
+		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / effective, _MIN_RENDERED_PX / effective)
 	else:
-		sprite.modulate = _color_from_id(player_id)
+		sprite.texture = _get_or_create_token_texture()
+		# Restore scale for default 48px texture.
+		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, _MIN_RENDERED_PX / _TOKEN_TEXTURE_DIAMETER_PX)
+		# Use the profile-assigned indicator color when available; fall back to
+		# the id-hash color for backwards-compat (e.g. player display client).
+		if indicator_color_str.length() >= 6:
+			sprite.modulate = Color.html(indicator_color_str)
+		else:
+			sprite.modulate = _color_from_id(player_id)
 	if vision_type == VisionType.DARKVISION:
 		vision_light.texture = _get_or_create_radial_light_texture()
 	else:
