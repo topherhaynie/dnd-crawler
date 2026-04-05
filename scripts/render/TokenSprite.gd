@@ -319,7 +319,7 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	var new_icon_path: String = data.icon_image_path
 	if new_icon_path != _icon_image_path:
 		_icon_image_path = new_icon_path
-		_custom_icon_texture = null  # Will be lazy-loaded on next _draw()
+		_custom_icon_texture = null # Will be lazy-loaded on next _draw()
 	_refresh_visibility()
 	queue_redraw()
 
