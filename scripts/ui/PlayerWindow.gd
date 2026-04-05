@@ -99,7 +99,7 @@ func on_state(data: Dictionary) -> void:
 		"token_removed":
 			_handle_token_removed(str(data.get("token_id", "")))
 		"token_moved":
-			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary)
+			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary, data)
 		"token_updated":
 			_handle_token_added(data.get("token", {}) as Dictionary)
 		"player_icon":
@@ -498,18 +498,22 @@ func _handle_token_removed(id: String) -> void:
 	_map_view.clear_token_passthrough(id)
 
 
-func _handle_token_moved(id: String, pos_dict: Dictionary) -> void:
+func _handle_token_moved(id: String, pos_dict: Dictionary, full_data: Dictionary) -> void:
 	if _map_view == null or id.is_empty():
 		return
 	var new_pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("y", 0.0)))
 	var token_layer: Node2D = _map_view.get_token_layer()
 	if token_layer == null:
 		return
+	var has_rotation: bool = full_data.has("rotation_deg")
+	var rotation_deg: float = float(full_data.get("rotation_deg", 0.0))
 	var matched_sprite: TokenSprite = null
 	for child in token_layer.get_children():
 		var ts: TokenSprite = child as TokenSprite
 		if ts != null and ts.token_id == id:
-			ts.global_position = new_pos
+			ts.set_remote_target(new_pos)
+			if has_rotation:
+				ts.set_rotation_deg(rotation_deg)
 			matched_sprite = ts
 			break
 	# Rebuild door wall / passthrough rect at the new position.

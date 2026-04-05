@@ -28,9 +28,13 @@ var indicator_color: Color = Color.WHITE
 # Relative path to a custom icon image (e.g. "profile_icons/<id>.png").
 # Stored under user://data/. Empty = no custom image.
 var icon_image_path: String = ""
+# Absolute filesystem path to the original source image for re-cropping.
+var icon_source_path: String = ""
 # Crop editor state for the icon image.
 var icon_crop_offset: Vector2 = Vector2.ZERO
 var icon_crop_zoom: float = 1.0
+# Forward-facing direction of the icon in degrees (0 = right, 90 = down, etc.).
+var icon_facing_deg: float = 0.0
 # Future-proof payload for custom fields (status effects, inventory, etc.)
 var extras: Dictionary = {}
 
@@ -59,8 +63,10 @@ func to_dict() -> Dictionary:
 		"table_orientation": table_orientation,
 		"indicator_color": indicator_color.to_html(false),
 		"icon_image_path": icon_image_path,
+		"icon_source_path": icon_source_path,
 		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
 		"icon_crop_zoom": icon_crop_zoom,
+		"icon_facing_deg": icon_facing_deg,
 		"extras": extras.duplicate(true),
 	}
 
@@ -79,11 +85,13 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 	var color_raw: Variant = d.get("indicator_color", "ffffff")
 	p.indicator_color = Color.html(str(color_raw)) if (str(color_raw).length() >= 6) else Color.WHITE
 	p.icon_image_path = str(d.get("icon_image_path", ""))
+	p.icon_source_path = str(d.get("icon_source_path", ""))
 	var ico: Variant = d.get("icon_crop_offset", {"x": 0.0, "y": 0.0})
 	if ico is Dictionary:
 		var icd := ico as Dictionary
 		p.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
 	p.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
+	p.icon_facing_deg = float(d.get("icon_facing_deg", 0.0))
 
 	# Keep explicit extras, then absorb unknown top-level keys so future schema
 	# additions survive load/save even before code knows about them.
@@ -104,8 +112,10 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 			"table_orientation",
 			"indicator_color",
 			"icon_image_path",
+			"icon_source_path",
 			"icon_crop_offset",
 			"icon_crop_zoom",
+			"icon_facing_deg",
 			"extras",
 		]:
 			continue

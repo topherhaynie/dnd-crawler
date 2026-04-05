@@ -56,6 +56,9 @@ func _ready() -> void:
 	var ui_theme_svc := UIThemeService.new()
 	ui_theme_svc.name = "UIThemeService"
 
+	var movement_svc := MovementService.new()
+	movement_svc.name = "MovementService"
+
 	# --- Build registry and wire managers ---
 	registry = ServiceRegistry.new()
 	registry.name = "ServiceRegistry"
@@ -127,6 +130,10 @@ func _ready() -> void:
 	ui_theme_svc.theme_changed.connect(ui_theme_mgr.on_theme_changed)
 	registry.ui_theme = ui_theme_mgr
 
+	var movement_mgr := MovementManager.new()
+	movement_mgr.service = movement_svc
+	registry.movement = movement_mgr
+
 	# --- Add to scene tree (deferred to avoid ready-order races) ---
 	# Views that need a scale factor early get it via UIScaleManager's DPI
 	# fallback (no tree lookup required).  ToolPalette stores its manager ref
@@ -147,5 +154,6 @@ func _ready() -> void:
 	root.call_deferred("add_child", selection_svc)
 	root.call_deferred("add_child", ui_scale_svc)
 	root.call_deferred("add_child", ui_theme_svc)
+	root.call_deferred("add_child", movement_svc)
 
 	print("ServiceBootstrap: all services registered")

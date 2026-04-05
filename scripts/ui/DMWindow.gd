@@ -160,6 +160,8 @@ var _token_width_spin: SpinBox = null
 var _token_height_spin: SpinBox = null
 var _token_size_ft_spin: SpinBox = null
 var _token_size_ft_row: HBoxContainer = null
+var _token_roam_info_row: HBoxContainer = null
+var _token_roam_info_label: Label = null
 var _token_rotation_spin: SpinBox = null
 var _token_shape_option: OptionButton = null
 var _token_blocks_los_check: CheckBox = null
@@ -175,6 +177,7 @@ var _token_icon_file_dialog: FileDialog = null
 var _token_icon_crop_btn: Button = null
 var _token_icon_crop_offset: Vector2 = Vector2.ZERO
 var _token_icon_crop_zoom: float = 1.0
+var _token_icon_facing_deg: float = 0.0
 ## Puzzle notes sub-section
 var _puzzle_notes_container: VBoxContainer = null
 var _puzzle_notes_scroll: ScrollContainer = null
@@ -200,6 +203,25 @@ var _passage_brush_label: Label = null
 var _passage_commit_btn: Button = null
 var _passage_clear_btn: Button = null
 var _selected_passage_token_id: String = ""
+
+# ── Roam path panel ────────────────────────────────────────────────────────
+var _roam_panel: PanelContainer = null
+var _roam_token_label: Label = null
+var _roam_mode_option: OptionButton = null
+var _roam_loop_check: CheckBox = null
+var _roam_speed_slider: HSlider = null
+var _roam_speed_value_label: Label = null
+var _roam_smooth_btn: Button = null
+var _roam_play_btn: Button = null
+var _roam_reset_btn: Button = null
+var _roam_commit_btn: Button = null
+var _roam_clear_btn: Button = null
+var _selected_roam_token_id: String = ""
+# Roam animation state: token_id → { progress: float, direction: int, playing: bool }
+var _roaming_tokens: Dictionary = {}
+const _ROAM_BROADCAST_INTERVAL: float = 0.033 # seconds between position broadcasts
+# Drag state for roam-path offset: token_id → pre-drag world_pos.
+var _drag_start_positions: Dictionary = {}
 
 # ── Phase 3: player profiles ------------------------------------------------
 var _profiles_dialog: AcceptDialog = null
@@ -249,6 +271,7 @@ var _profile_icon_file_dialog: FileDialog = null
 var _profile_icon_crop_btn: Button = null
 var _profile_icon_crop_offset: Vector2 = Vector2.ZERO
 var _profile_icon_crop_zoom: float = 1.0
+var _profile_icon_facing_deg: float = 0.0
 ## Shared crop editor dialog (used by both token and profile editors).
 var _crop_editor_dialog: Window = null
 var _crop_editor_canvas: Control = null
@@ -260,6 +283,8 @@ var _crop_editor_dragging: bool = false
 var _crop_editor_drag_start: Vector2 = Vector2.ZERO
 var _crop_editor_offset_start: Vector2 = Vector2.ZERO
 var _crop_editor_callback: Callable = Callable()
+var _crop_editor_facing_deg: float = 0.0
+var _crop_editor_facing_dragging: bool = false
 var _crop_editor_vbox: VBoxContainer = null
 var _crop_editor_btn_row: HBoxContainer = null
 var _crop_editor_hint: Label = null
@@ -698,6 +723,9 @@ func _process(delta: float) -> void:
 		_player_state_dirty = false
 		_broadcast_player_state()
 
+	# Advance roam animations for any playing tokens.
+	_tick_roam_animations(delta)
+
 	# Periodic perception-proximity check — auto-reveal tokens whose DC is
 	# met by a nearby player's passive perception.
 	# Autopause collision runs every frame for reliable swept-path detection.
@@ -750,6 +778,7 @@ func _build_ui() -> void:
 	_map_view.background_right_clicked.connect(_on_background_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
 	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
+	_map_view.roam_path_committed.connect(_on_roam_path_committed)
 	_map_view.effect_place_requested.connect(_on_effect_place_requested)
 	_map_view.effect_shape_place_requested.connect(_on_effect_shape_place_requested)
 	_map_view.effect_drag_completed.connect(_on_effect_drag_completed)
@@ -990,6 +1019,7 @@ func _build_ui() -> void:
 	_build_freeze_panel()
 	_build_effect_panel()
 	_build_passage_panel()
+	_build_roam_panel()
 
 	# ── Apply chrome theme backgrounds to all panels ────────────────────────
 	var _theme_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -1007,6 +1037,8 @@ func _build_ui() -> void:
 			tm.apply_chrome(_effect_panel as PanelContainer)
 		if _passage_panel is PanelContainer:
 			tm.apply_chrome(_passage_panel as PanelContainer)
+		if _roam_panel is PanelContainer:
+			tm.apply_chrome(_roam_panel as PanelContainer)
 		# Signal subscription: IUIThemeService extends Node; signals live on the
 		# Node instance.  RefCounted manager cannot re-emit — approved exception.
 		if tm.service != null:
@@ -1026,6 +1058,8 @@ func _build_ui() -> void:
 			tm.theme_control_tree(_effect_panel, _ui_scale())
 		if _passage_panel != null:
 			tm.theme_control_tree(_passage_panel, _ui_scale())
+		if _roam_panel != null:
+			tm.theme_control_tree(_roam_panel, _ui_scale())
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -3268,6 +3302,7 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_icon_pending_source = ""
 	_profile_icon_crop_offset = p.icon_crop_offset
 	_profile_icon_crop_zoom = p.icon_crop_zoom
+	_profile_icon_facing_deg = p.icon_facing_deg
 	if _profile_icon_preview != null:
 		if not p.icon_image_path.is_empty():
 			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(p.icon_image_path)
@@ -3523,6 +3558,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 			p.icon_image_path = dest_path
 			p.icon_crop_offset = _profile_icon_crop_offset
 			p.icon_crop_zoom = _profile_icon_crop_zoom
+			p.icon_facing_deg = _profile_icon_facing_deg
+			p.icon_source_path = _profile_icon_pending_source
 		else:
 			_set_status("Failed to save profile icon (error %d)" % err)
 	elif _profile_icon_preview != null and _profile_icon_preview.texture == null:
@@ -3531,8 +3568,13 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 			TokenIconUtils.delete_icon_file(p.icon_image_path)
 			TokenIconUtils.evict(p.icon_image_path)
 		p.icon_image_path = ""
+		p.icon_source_path = ""
 		p.icon_crop_offset = Vector2.ZERO
 		p.icon_crop_zoom = 1.0
+		p.icon_facing_deg = 0.0
+
+	# Always persist icon facing direction (can change via crop editor without new source).
+	p.icon_facing_deg = _profile_icon_facing_deg
 
 	var extras_raw := _profile_extras_edit.text.strip_edges()
 	if extras_raw.is_empty():
@@ -3624,6 +3666,7 @@ func _load_profile_icon_from_path(path: String) -> void:
 	_profile_icon_pending_source = path
 	_profile_icon_crop_offset = Vector2.ZERO
 	_profile_icon_crop_zoom = 1.0
+	_profile_icon_facing_deg = 0.0
 	var tex: ImageTexture = TokenIconUtils.create_circular_texture(img)
 	if _profile_icon_preview != null:
 		_profile_icon_preview.texture = tex
@@ -3637,6 +3680,7 @@ func _on_profile_icon_clear_pressed() -> void:
 	_profile_icon_pending_source = ""
 	_profile_icon_crop_offset = Vector2.ZERO
 	_profile_icon_crop_zoom = 1.0
+	_profile_icon_facing_deg = 0.0
 	if _profile_icon_preview != null:
 		_profile_icon_preview.texture = null
 	if _profile_icon_path_edit != null:
@@ -3792,6 +3836,13 @@ func _on_session_changed(_save_name: String) -> void:
 func _on_token_drag_started(token_id: Variant) -> void:
 	if _backend != null:
 		_backend.begin_token_drag(token_id)
+	# Snapshot pre-drag position so drag-complete can compute a correct delta
+	# even if a roam tick mutated world_pos in-between.
+	var registry_ds := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_ds != null and registry_ds.token != null:
+		var data: TokenData = registry_ds.token.get_token_by_id(str(token_id))
+		if data != null:
+			_drag_start_positions[str(token_id)] = data.world_pos
 
 
 func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
@@ -3812,19 +3863,31 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	if registry_drag != null and registry_drag.token != null:
 		data = registry_drag.token.get_token_by_id(id)
 		if data != null:
-			var old_pos := data.world_pos
+			# Use the pre-drag snapshot (immune to roam-tick mutations mid-drag).
+			var old_pos: Vector2 = _drag_start_positions.get(id, data.world_pos) as Vector2
+			_drag_start_positions.erase(id)
 			data.world_pos = new_world_pos
+			# Offset roam path by the drag delta so the path follows the token.
+			var drag_delta: Vector2 = new_world_pos - old_pos
+			var old_roam: PackedVector2Array = data.roam_path.duplicate()
+			if drag_delta.length_squared() > 0.01 and data.roam_path.size() > 0:
+				var shifted := PackedVector2Array()
+				for pt: Vector2 in data.roam_path:
+					shifted.append(pt + drag_delta)
+				data.roam_path = shifted
 			registry_drag.token.update_token(data)
 			if _map_view != null:
 				_map_view.apply_token_passthrough_state(data)
-			# Push undo command capturing before/after world positions.
+			# Push undo command capturing before/after world positions + roam path.
 			if registry_drag.history != null and old_pos != new_world_pos:
 				var mv := _map_view
+				var new_roam: PackedVector2Array = data.roam_path.duplicate()
 				registry_drag.history.push_command(HistoryCommand.create("Token moved",
 					func():
 						var td: TokenData = registry_drag.token.get_token_by_id(id)
 						if td == null: return
 						td.world_pos = old_pos
+						td.roam_path = old_roam
 						registry_drag.token.update_token(td)
 						if mv != null:
 							mv.update_token_sprite(td)
@@ -3834,6 +3897,7 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 						var td: TokenData = registry_drag.token.get_token_by_id(id)
 						if td == null: return
 						td.world_pos = new_world_pos
+						td.roam_path = new_roam
 						registry_drag.token.update_token(td)
 						if mv != null:
 							mv.update_token_sprite(td)
@@ -4043,21 +4107,143 @@ func _build_passage_panel() -> void:
 	hbox.add_child(_passage_clear_btn)
 
 
+func _build_roam_panel() -> void:
+	# Bottom-bar panel for roam-path editing, parallel to `_build_passage_panel`.
+	_roam_panel = PanelContainer.new()
+	_roam_panel.name = "RoamPanel"
+	_roam_panel.visible = false
+	_roam_panel.anchor_left = 0.0
+	_roam_panel.anchor_right = 1.0
+	_roam_panel.anchor_top = 1.0
+	_roam_panel.anchor_bottom = 1.0
+	_roam_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_roam_panel.offset_left = 0.0
+	_roam_panel.offset_right = 0.0
+	_roam_panel.offset_top = -44.0
+	_roam_panel.offset_bottom = 0.0
+	_ui_layer.add_child(_roam_panel)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 8)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 6)
+	margin.add_theme_constant_override("margin_right", 6)
+	margin.add_theme_constant_override("margin_top", 4)
+	margin.add_theme_constant_override("margin_bottom", 4)
+	margin.add_child(hbox)
+	_roam_panel.add_child(margin)
+
+	var icon_label := Label.new()
+	icon_label.text = "🐾"
+	hbox.add_child(icon_label)
+
+	_roam_token_label = Label.new()
+	_roam_token_label.text = "Roam Path"
+	hbox.add_child(_roam_token_label)
+
+	var mode_label := Label.new()
+	mode_label.text = "Mode:"
+	hbox.add_child(mode_label)
+
+	_roam_mode_option = OptionButton.new()
+	_roam_mode_option.add_item("Off", 0)
+	_roam_mode_option.add_item("Freehand", 1)
+	_roam_mode_option.add_item("Polyline", 2)
+	_roam_mode_option.add_item("Erase", 3)
+	_roam_mode_option.selected = 0
+	_roam_mode_option.focus_mode = Control.FOCUS_NONE
+	_roam_mode_option.item_selected.connect(_on_roam_mode_selected)
+	hbox.add_child(_roam_mode_option)
+
+	_roam_loop_check = CheckBox.new()
+	_roam_loop_check.text = "Loop"
+	_roam_loop_check.button_pressed = true
+	_roam_loop_check.focus_mode = Control.FOCUS_NONE
+	_roam_loop_check.tooltip_text = "Loop: return to start.  Uncheck for ping-pong."
+	_roam_loop_check.toggled.connect(_on_roam_loop_toggled)
+	hbox.add_child(_roam_loop_check)
+
+	var speed_label := Label.new()
+	speed_label.text = "Speed:"
+	hbox.add_child(speed_label)
+
+	_roam_speed_slider = HSlider.new()
+	_roam_speed_slider.min_value = 5.0
+	_roam_speed_slider.max_value = 120.0
+	_roam_speed_slider.step = 5.0
+	_roam_speed_slider.value = 30.0
+	_roam_speed_slider.custom_minimum_size = Vector2(100.0, 0.0)
+	_roam_speed_slider.focus_mode = Control.FOCUS_NONE
+	_roam_speed_slider.value_changed.connect(_on_roam_speed_changed)
+	hbox.add_child(_roam_speed_slider)
+
+	_roam_speed_value_label = Label.new()
+	_roam_speed_value_label.text = "30 ft/rd"
+	_roam_speed_value_label.custom_minimum_size = Vector2(60.0, 0.0)
+	hbox.add_child(_roam_speed_value_label)
+
+	_roam_smooth_btn = Button.new()
+	_roam_smooth_btn.text = "⌇"
+	_roam_smooth_btn.focus_mode = Control.FOCUS_NONE
+	_roam_smooth_btn.tooltip_text = "Smooth path (Chaikin corner-cutting)"
+	_roam_smooth_btn.pressed.connect(_on_roam_smooth_pressed)
+	hbox.add_child(_roam_smooth_btn)
+
+	_roam_play_btn = Button.new()
+	_roam_play_btn.text = "▶"
+	_roam_play_btn.focus_mode = Control.FOCUS_NONE
+	_roam_play_btn.tooltip_text = "Play / pause roam animation"
+	_roam_play_btn.pressed.connect(_on_roam_play_pressed)
+	hbox.add_child(_roam_play_btn)
+
+	_roam_reset_btn = Button.new()
+	_roam_reset_btn.text = "↺"
+	_roam_reset_btn.focus_mode = Control.FOCUS_NONE
+	_roam_reset_btn.tooltip_text = "Reset token to path start"
+	_roam_reset_btn.pressed.connect(_on_roam_reset_pressed)
+	hbox.add_child(_roam_reset_btn)
+
+	_roam_commit_btn = Button.new()
+	_roam_commit_btn.text = "Commit"
+	_roam_commit_btn.focus_mode = Control.FOCUS_NONE
+	_roam_commit_btn.tooltip_text = "Save roam path to this token"
+	_roam_commit_btn.pressed.connect(_on_roam_commit_pressed)
+	hbox.add_child(_roam_commit_btn)
+
+	_roam_clear_btn = Button.new()
+	_roam_clear_btn.text = "Clear"
+	_roam_clear_btn.focus_mode = Control.FOCUS_NONE
+	_roam_clear_btn.tooltip_text = "Erase the WIP roam path"
+	_roam_clear_btn.pressed.connect(_on_roam_clear_pressed)
+	hbox.add_child(_roam_clear_btn)
+
+
 func _on_token_selected(token_id: String) -> void:
-	## Show the passage paint panel when a SECRET_PASSAGE token is selected.
+	## Show the passage paint panel when a SECRET_PASSAGE token is selected,
+	## or the roam panel when a MONSTER / NPC token is selected.
 	var tm := _token_manager()
 	if tm == null:
 		return
 	var data: TokenData = tm.get_token_by_id(token_id)
-	if data == null or data.category != TokenData.TokenCategory.SECRET_PASSAGE:
+	if data == null:
 		_hide_passage_panel()
+		_hide_roam_panel()
 		return
-	_selected_passage_token_id = token_id
-	if _passage_panel != null:
-		_passage_panel.visible = true
-		_passage_token_label.text = "Passage: %s" % data.label if not data.label.is_empty() else "Secret Passage"
-	if _passage_mode_option != null:
-		_passage_mode_option.selected = 0
+	# Mutually exclusive panels: passage vs roam.
+	if data.category == TokenData.TokenCategory.SECRET_PASSAGE:
+		_hide_roam_panel()
+		_selected_passage_token_id = token_id
+		if _passage_panel != null:
+			_passage_panel.visible = true
+			_passage_token_label.text = "Passage: %s" % data.label if not data.label.is_empty() else "Secret Passage"
+		if _passage_mode_option != null:
+			_passage_mode_option.selected = 0
+	elif data.category == TokenData.TokenCategory.MONSTER or data.category == TokenData.TokenCategory.NPC:
+		_hide_passage_panel()
+		_show_roam_panel(token_id, data)
+	else:
+		_hide_passage_panel()
+		_hide_roam_panel()
 
 
 func _hide_passage_panel() -> void:
@@ -4178,6 +4364,361 @@ func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float
 
 
 # ---------------------------------------------------------------------------
+# Roam path panel — show / hide / handlers
+# ---------------------------------------------------------------------------
+
+func _show_roam_panel(token_id: String, data: TokenData) -> void:
+	_selected_roam_token_id = token_id
+	if _roam_panel == null:
+		return
+	_roam_panel.visible = true
+	var lbl: String = data.label if not data.label.is_empty() else "Token"
+	_roam_token_label.text = "Roam: %s" % lbl
+	if _roam_loop_check != null:
+		_roam_loop_check.set_pressed_no_signal(data.roam_loop)
+	if _roam_speed_slider != null:
+		_roam_speed_slider.set_value_no_signal(data.roam_speed)
+	if _roam_speed_value_label != null:
+		_roam_speed_value_label.text = "%d ft/rd" % int(data.roam_speed)
+	if _roam_mode_option != null:
+		_roam_mode_option.selected = 0
+	if _roam_play_btn != null:
+		_roam_play_btn.text = "⏸" if _is_roam_playing(token_id) else "▶"
+
+
+func _hide_roam_panel() -> void:
+	if _map_view != null and _map_view._roam_tool != MapView.RoamTool.NONE:
+		_map_view.deactivate_roam_tool()
+	_selected_roam_token_id = ""
+	if _roam_panel != null:
+		_roam_panel.visible = false
+	if _roam_mode_option != null:
+		_roam_mode_option.selected = 0
+
+
+func _on_roam_mode_selected(index: int) -> void:
+	if _map_view == null or _selected_roam_token_id.is_empty():
+		return
+	var mode: int = _roam_mode_option.get_item_id(index)
+	if mode == 0: # Off
+		if _map_view._roam_tool != MapView.RoamTool.NONE:
+			_map_view.deactivate_roam_tool()
+		return
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var loop_val: bool = _roam_loop_check.button_pressed if _roam_loop_check != null else true
+	if _map_view._active_roam_token_id != _selected_roam_token_id:
+		var data: TokenData = tm.get_token_by_id(_selected_roam_token_id)
+		var initial_path: PackedVector2Array = data.roam_path if data != null else PackedVector2Array()
+		_map_view.activate_roam_tool(_selected_roam_token_id, initial_path, loop_val)
+	_map_view.set_roam_tool(mode)
+
+
+func _on_roam_loop_toggled(pressed: bool) -> void:
+	if _map_view != null and _map_view._active_roam_token_id != "":
+		_map_view.set_roam_loop(pressed)
+
+
+func _on_roam_speed_changed(value: float) -> void:
+	if _roam_speed_value_label != null:
+		_roam_speed_value_label.text = "%d ft/rd" % int(value)
+	# Apply immediately so a running animation picks up the new speed.
+	if _selected_roam_token_id.is_empty():
+		return
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(_selected_roam_token_id)
+	if data != null:
+		data.roam_speed = value
+
+
+func _on_roam_smooth_pressed() -> void:
+	if _map_view != null and _map_view._active_roam_token_id != "":
+		_map_view.smooth_roam_path()
+
+
+func _on_roam_play_pressed() -> void:
+	if _selected_roam_token_id.is_empty():
+		return
+	if _is_roam_playing(_selected_roam_token_id):
+		_pause_roam(_selected_roam_token_id)
+	else:
+		_start_roam(_selected_roam_token_id)
+
+
+func _on_roam_reset_pressed() -> void:
+	if _selected_roam_token_id.is_empty():
+		return
+	_reset_roam(_selected_roam_token_id)
+
+
+func _on_roam_commit_pressed() -> void:
+	if _map_view != null:
+		_map_view.deactivate_roam_tool()
+	if _roam_mode_option != null:
+		_roam_mode_option.selected = 0
+
+
+func _on_roam_clear_pressed() -> void:
+	if _map_view != null:
+		_map_view.clear_roam_wip()
+	if _selected_roam_token_id.is_empty():
+		return
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(_selected_roam_token_id)
+	if data == null:
+		return
+	data.roam_path = PackedVector2Array()
+	data.roam_speed = _roam_speed_slider.value if _roam_speed_slider != null else 30.0
+	data.roam_loop = _roam_loop_check.button_pressed if _roam_loop_check != null else true
+	tm.update_token(data)
+	_player_state_dirty = true
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+	_broadcast_token_change(data, false)
+	_set_status("Roam path cleared")
+
+
+func _on_roam_path_committed(token_id: String, path: PackedVector2Array, loop: bool) -> void:
+	_player_state_dirty = true
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null:
+		return
+	var old_path := data.roam_path.duplicate()
+	var old_speed := data.roam_speed
+	var old_loop := data.roam_loop
+	var speed_val: float = _roam_speed_slider.value if _roam_speed_slider != null else 30.0
+	data.roam_path = path
+	data.roam_speed = speed_val
+	data.roam_loop = loop
+	tm.update_token(data)
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+	var registry_r := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_r != null and registry_r.history != null:
+		var new_path := path.duplicate()
+		var new_speed := speed_val
+		var new_loop := loop
+		var mv := _map_view
+		registry_r.history.push_command(HistoryCommand.create("Roam path edited",
+			func():
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				td.roam_path = old_path.duplicate()
+				td.roam_speed = old_speed
+				td.roam_loop = old_loop
+				tm.update_token(td)
+				if mv != null: mv.update_token_sprite(td)
+				_broadcast_token_change(td, false),
+			func():
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				td.roam_path = new_path.duplicate()
+				td.roam_speed = new_speed
+				td.roam_loop = new_loop
+				tm.update_token(td)
+				if mv != null: mv.update_token_sprite(td)
+				_broadcast_token_change(td, false)))
+	_broadcast_token_change(data, false)
+	_hide_roam_panel()
+	_set_status("Roam path saved")
+
+
+# ---------------------------------------------------------------------------
+# Roam animation engine
+# ---------------------------------------------------------------------------
+
+func _tick_roam_animations(delta: float) -> void:
+	if _roaming_tokens.is_empty():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.movement == null:
+		return
+	var map: MapData = _map()
+	if map == null:
+		return
+	var ids_to_remove: Array = []
+	for tid in _roaming_tokens.keys():
+		var state: Dictionary = _roaming_tokens[tid] as Dictionary
+		var playing: bool = state.get("playing", false) as bool
+		if not playing:
+			continue
+		# Skip tokens currently being dragged.
+		if _drag_start_positions.has(str(tid)):
+			continue
+		var data: TokenData = registry.token.get_token_by_id(str(tid))
+		if data == null or data.roam_path.size() < 2:
+			ids_to_remove.append(tid)
+			continue
+		var speed_px: float = registry.movement.get_roam_speed_px_per_sec(data, map)
+		if speed_px <= 0.0:
+			continue
+		var total_len: float = _roam_path_total_length(data.roam_path, data.roam_loop)
+		if total_len <= 0.0:
+			continue
+		var progress: float = state.get("progress", 0.0) as float
+		var direction: int = state.get("direction", 1) as int
+		progress += speed_px * delta * direction
+		# Boundary handling
+		if data.roam_loop:
+			progress = fmod(progress, total_len)
+			if progress < 0.0:
+				progress += total_len
+		else:
+			# Ping-pong
+			if progress >= total_len:
+				progress = total_len
+				direction = -1
+			elif progress <= 0.0:
+				progress = 0.0
+				direction = 1
+		state["progress"] = progress
+		state["direction"] = direction
+		var new_pos: Vector2 = _roam_position_at_progress(data.roam_path, progress, data.roam_loop)
+		# Compute facing angle from movement direction, offset by icon's natural facing.
+		var prev_pos: Vector2 = data.world_pos
+		var move_dir: Vector2 = new_pos - prev_pos
+		if move_dir.length_squared() > 0.01:
+			data.rotation_deg = rad_to_deg(move_dir.angle()) - data.icon_facing_deg
+		registry.token.move_token(str(tid), new_pos)
+		if _map_view != null:
+			_map_view.update_token_sprite(data)
+		# Throttled broadcast to player displays
+		var last_broadcast: float = state.get("last_broadcast", 0.0) as float
+		last_broadcast += delta
+		if last_broadcast >= _ROAM_BROADCAST_INTERVAL:
+			last_broadcast = 0.0
+			_nm_broadcast_to_displays({
+				"msg": "token_moved",
+				"token_id": str(tid),
+				"world_pos": {"x": new_pos.x, "y": new_pos.y},
+				"rotation_deg": data.rotation_deg,
+			})
+		state["last_broadcast"] = last_broadcast
+	for tid in ids_to_remove:
+		_roaming_tokens.erase(tid)
+
+
+func _roam_path_total_length(path: PackedVector2Array, loop: bool) -> float:
+	var total: float = 0.0
+	for i: int in range(1, path.size()):
+		total += path[i - 1].distance_to(path[i])
+	if loop and path.size() >= 2:
+		total += path[path.size() - 1].distance_to(path[0])
+	return total
+
+
+func _roam_position_at_progress(path: PackedVector2Array, progress: float, loop: bool) -> Vector2:
+	if path.size() == 0:
+		return Vector2.ZERO
+	if path.size() == 1:
+		return path[0]
+	var remaining: float = progress
+	var seg_count: int = path.size() - 1
+	if loop:
+		seg_count = path.size()
+	for i: int in range(seg_count):
+		var a: Vector2 = path[i]
+		var b: Vector2 = path[(i + 1) % path.size()]
+		var seg_len: float = a.distance_to(b)
+		if seg_len <= 0.0:
+			continue
+		if remaining <= seg_len:
+			return a.lerp(b, remaining / seg_len)
+		remaining -= seg_len
+	# Clamp to end
+	if loop:
+		return path[0]
+	return path[path.size() - 1]
+
+
+func _roam_snap_progress(path: PackedVector2Array, pos: Vector2, loop: bool) -> float:
+	## Find the progress value closest to the given world position.
+	var best_progress: float = 0.0
+	var best_dist_sq: float = INF
+	var cumulative: float = 0.0
+	var seg_count: int = path.size() - 1
+	if loop:
+		seg_count = path.size()
+	for i: int in range(seg_count):
+		var a: Vector2 = path[i]
+		var b: Vector2 = path[(i + 1) % path.size()]
+		var seg_len: float = a.distance_to(b)
+		if seg_len <= 0.0:
+			continue
+		var ab: Vector2 = b - a
+		var t: float = clampf(ab.dot(pos - a) / ab.dot(ab), 0.0, 1.0)
+		var proj: Vector2 = a + ab * t
+		var d_sq: float = pos.distance_squared_to(proj)
+		if d_sq < best_dist_sq:
+			best_dist_sq = d_sq
+			best_progress = cumulative + seg_len * t
+		cumulative += seg_len
+	return best_progress
+
+
+func _start_roam(token_id: String) -> void:
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null or data.roam_path.size() < 2:
+		return
+	var state: Dictionary = _roaming_tokens.get(token_id, {}) as Dictionary
+	if state.is_empty():
+		# Fresh start — snap progress to current token position.
+		var p: float = _roam_snap_progress(data.roam_path, data.world_pos, data.roam_loop)
+		state = {"progress": p, "direction": 1, "playing": true, "last_broadcast": 0.0}
+	else:
+		state["playing"] = true
+	_roaming_tokens[token_id] = state
+	if _roam_play_btn != null:
+		_roam_play_btn.text = "⏸"
+
+
+func _pause_roam(token_id: String) -> void:
+	if _roaming_tokens.has(token_id):
+		var state: Dictionary = _roaming_tokens[token_id] as Dictionary
+		state["playing"] = false
+	if _roam_play_btn != null:
+		_roam_play_btn.text = "▶"
+
+
+func _reset_roam(token_id: String) -> void:
+	_pause_roam(token_id)
+	_roaming_tokens.erase(token_id)
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null or data.roam_path.is_empty():
+		return
+	var start_pos: Vector2 = data.roam_path[0]
+	tm.move_token(token_id, start_pos)
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+	_nm_broadcast_to_displays({
+		"msg": "token_moved",
+		"token_id": token_id,
+		"world_pos": {"x": start_pos.x, "y": start_pos.y},
+	})
+
+
+func _is_roam_playing(token_id: String) -> bool:
+	if not _roaming_tokens.has(token_id):
+		return false
+	var state: Dictionary = _roaming_tokens[token_id] as Dictionary
+	return state.get("playing", false) as bool
+
+
+# ---------------------------------------------------------------------------
 # Token clipboard — copy / cut / paste
 # ---------------------------------------------------------------------------
 
@@ -4227,6 +4768,13 @@ func _paste_token(world_pos: Vector2) -> void:
 					new_chain.append(pt + delta)
 				shifted.append(new_chain)
 		data.passage_paths = shifted
+	# Offset roam path relative to the position delta.
+	if not data.roam_path.is_empty():
+		var roam_delta: Vector2 = world_pos - old_world_pos
+		var shifted_roam := PackedVector2Array()
+		for pt: Vector2 in data.roam_path:
+			shifted_roam.append(pt + roam_delta)
+		data.roam_path = shifted_roam
 	tm.add_token(data)
 	var mv := _map_view
 	if mv != null:
@@ -4461,6 +5009,14 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 		else:
 			toggle_label = "Close (restore LOS)" if not td.blocks_los else "Open (allow LOS)"
 		_token_context_menu.add_item(toggle_label, 3)
+	# Show roam play/pause/reset for MONSTER and NPC with a roam path.
+	if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC) and td.roam_path.size() >= 2:
+		_token_context_menu.add_separator()
+		if _is_roam_playing(id):
+			_token_context_menu.add_item("Pause Roam", 10)
+		else:
+			_token_context_menu.add_item("Play Roam", 10)
+		_token_context_menu.add_item("Reset Roam", 11)
 	_token_context_menu.add_separator()
 	_token_context_menu.add_item("Delete Token", 2)
 	_token_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
@@ -4495,6 +5051,13 @@ func _on_token_context_menu_id(id: int) -> void:
 			_copy_token(_token_context_id)
 		5: # Cut Token
 			_cut_token(_token_context_id)
+		10: # Play / Pause Roam
+			if _is_roam_playing(_token_context_id):
+				_pause_roam(_token_context_id)
+			else:
+				_start_roam(_token_context_id)
+		11: # Reset Roam
+			_reset_roam(_token_context_id)
 
 
 func _open_token_editor(data: TokenData) -> void:
@@ -4522,6 +5085,15 @@ func _open_token_editor(data: TokenData) -> void:
 	if _token_size_ft_row != null:
 		var is_creature: bool = data.category == TokenData.TokenCategory.MONSTER or data.category == TokenData.TokenCategory.NPC
 		_token_size_ft_row.visible = is_creature
+	if _token_roam_info_row != null:
+		var is_creature_r: bool = data.category == TokenData.TokenCategory.MONSTER or data.category == TokenData.TokenCategory.NPC
+		_token_roam_info_row.visible = is_creature_r
+	if _token_roam_info_label != null:
+		if data.roam_path.size() >= 2:
+			var mode_str: String = "loop" if data.roam_loop else "ping-pong"
+			_token_roam_info_label.text = "%d pts, %d ft/rd (%s)" % [data.roam_path.size(), int(data.roam_speed), mode_str]
+		else:
+			_token_roam_info_label.text = "None"
 	if _token_rotation_spin != null:
 		_token_rotation_spin.value = data.rotation_deg
 	if _token_trigger_spin != null:
@@ -4548,6 +5120,7 @@ func _open_token_editor(data: TokenData) -> void:
 	_token_icon_pending_source = ""
 	_token_icon_crop_offset = data.icon_crop_offset
 	_token_icon_crop_zoom = data.icon_crop_zoom
+	_token_icon_facing_deg = data.icon_facing_deg
 	if _token_icon_preview != null:
 		if not data.icon_image_path.is_empty():
 			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(data.icon_image_path)
@@ -4702,6 +5275,18 @@ func _build_token_editor_dialog() -> void:
 	_token_size_ft_row.add_child(_token_size_ft_spin)
 	_token_size_ft_row.visible = false
 	vbox.add_child(_token_size_ft_row)
+
+	# Roam path info (read-only, MONSTER/NPC only)
+	_token_roam_info_row = HBoxContainer.new()
+	var roam_info_lbl := Label.new()
+	roam_info_lbl.text = "Roam Path:"
+	roam_info_lbl.custom_minimum_size = Vector2(120, 0)
+	_token_roam_info_row.add_child(roam_info_lbl)
+	_token_roam_info_label = Label.new()
+	_token_roam_info_label.text = "None"
+	_token_roam_info_row.add_child(_token_roam_info_label)
+	_token_roam_info_row.visible = false
+	vbox.add_child(_token_roam_info_row)
 
 	# Rotation
 	var rot_row := HBoxContainer.new()
@@ -4907,6 +5492,8 @@ func _on_token_category_changed(idx: int) -> void:
 	var is_creature: bool = cat == TokenData.TokenCategory.MONSTER or cat == TokenData.TokenCategory.NPC
 	if _token_size_ft_row != null:
 		_token_size_ft_row.visible = is_creature
+	if _token_roam_info_row != null:
+		_token_roam_info_row.visible = is_creature
 	if is_creature and _token_size_ft_spin != null and _token_size_ft_spin.value <= 0.0:
 		_token_size_ft_spin.value = 5.0
 	# Default trap flags: autopause (collision-only), pause-on-interact, auto-reveal.
@@ -4958,6 +5545,7 @@ func _load_token_icon_from_path(path: String) -> void:
 	_token_icon_pending_source = path
 	_token_icon_crop_offset = Vector2.ZERO
 	_token_icon_crop_zoom = 1.0
+	_token_icon_facing_deg = 0.0
 	# Show circular preview.
 	var tex: ImageTexture = TokenIconUtils.create_circular_texture(img)
 	if _token_icon_preview != null:
@@ -4972,6 +5560,7 @@ func _on_token_icon_clear_pressed() -> void:
 	_token_icon_pending_source = ""
 	_token_icon_crop_offset = Vector2.ZERO
 	_token_icon_crop_zoom = 1.0
+	_token_icon_facing_deg = 0.0
 	if _token_icon_preview != null:
 		_token_icon_preview.texture = null
 	if _token_icon_path_edit != null:
@@ -5008,8 +5597,8 @@ func _delete_token_icon(token_id: String) -> void:
 # ── Crop editor ─────────────────────────────────────────────────────────────
 
 ## Open the crop editor with the given source image path, starting offset/zoom,
-## and a callback `fn(offset: Vector2, zoom: float)` invoked on confirm.
-func _open_crop_editor(source_path: String, offset: Vector2, zoom: float, on_confirm: Callable) -> void:
+## facing direction, and a callback `fn(offset: Vector2, zoom: float, facing_deg: float)` invoked on confirm.
+func _open_crop_editor(source_path: String, offset: Vector2, zoom: float, facing_deg: float, on_confirm: Callable) -> void:
 	var img: Image = TokenIconUtils.load_image_from_path(source_path)
 	if img == null:
 		_set_status("Cannot open crop editor — failed to load image.")
@@ -5019,6 +5608,8 @@ func _open_crop_editor(source_path: String, offset: Vector2, zoom: float, on_con
 	_crop_editor_offset = offset
 	_crop_editor_zoom = maxf(zoom, 1.0)
 	_crop_editor_dragging = false
+	_crop_editor_facing_deg = facing_deg
+	_crop_editor_facing_dragging = false
 	_crop_editor_callback = on_confirm
 	if _crop_editor_dialog == null:
 		_build_crop_editor_dialog()
@@ -5048,7 +5639,7 @@ func _build_crop_editor_dialog() -> void:
 	_crop_editor_dialog.add_child(_crop_editor_vbox)
 
 	_crop_editor_hint = Label.new()
-	_crop_editor_hint.text = "Drag to pan · Scroll to zoom"
+	_crop_editor_hint.text = "Drag to pan · Scroll to zoom · Right-drag circle edge to set facing"
 	_crop_editor_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if mgr != null:
 		_crop_editor_hint.add_theme_font_size_override("font_size", mgr.scaled(14.0))
@@ -5168,46 +5759,94 @@ func _on_crop_editor_draw() -> void:
 	# Circle outline.
 	canvas.draw_arc(Vector2(cx, cy), radius, 0.0, TAU, 64, Color.WHITE, 2.0)
 
+	# ── Facing direction handle ─────────────────────────────────────────────
+	var facing_rad: float = deg_to_rad(_crop_editor_facing_deg)
+	var handle_pos := Vector2(cx + cos(facing_rad) * radius, cy + sin(facing_rad) * radius)
+	var handle_radius: float = 8.0
+	# Draw a small direction line from centre outward toward the handle.
+	var dir_start := Vector2(cx + cos(facing_rad) * (radius - 30.0), cy + sin(facing_rad) * (radius - 30.0))
+	canvas.draw_line(dir_start, handle_pos, Color(1.0, 0.85, 0.0, 0.7), 2.0)
+	# Handle circle (filled yellow dot).
+	canvas.draw_circle(handle_pos, handle_radius, Color(1.0, 0.85, 0.0, 0.9))
+	canvas.draw_arc(handle_pos, handle_radius, 0.0, TAU, 16, Color.WHITE, 1.5)
+
 
 func _on_crop_editor_input(event: InputEvent) -> void:
 	if _crop_editor_canvas == null or _crop_editor_source_img == null:
 		return
+	var cw: float = _crop_editor_canvas.size.x
+	var ch: float = _crop_editor_canvas.size.y
+	var cx: float = cw * 0.5
+	var cy: float = ch * 0.5
 	if event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT:
+		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			if mb.pressed:
-				_crop_editor_dragging = true
-				_crop_editor_drag_start = mb.position
-				_crop_editor_offset_start = _crop_editor_offset
+				# Start facing drag if click is near the circle edge.
+				var preview_side: float = minf(cw, ch) - 16.0
+				var radius: float = preview_side * 0.5
+				var dist: float = mb.position.distance_to(Vector2(cx, cy))
+				if absf(dist - radius) < 24.0:
+					_crop_editor_facing_dragging = true
+					_crop_editor_facing_deg = rad_to_deg(atan2(mb.position.y - cy, mb.position.x - cx))
+					if _crop_editor_facing_deg < 0.0:
+						_crop_editor_facing_deg += 360.0
+					_crop_editor_canvas.queue_redraw()
+			else:
+				_crop_editor_facing_dragging = false
+		elif mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				# Check if clicking on the facing handle first.
+				var preview_side: float = minf(cw, ch) - 16.0
+				var radius: float = preview_side * 0.5
+				var facing_rad: float = deg_to_rad(_crop_editor_facing_deg)
+				var handle_pos := Vector2(cx + cos(facing_rad) * radius, cy + sin(facing_rad) * radius)
+				if mb.position.distance_to(handle_pos) < 16.0:
+					_crop_editor_facing_dragging = true
+				else:
+					_crop_editor_dragging = true
+					_crop_editor_drag_start = mb.position
+					_crop_editor_offset_start = _crop_editor_offset
 			else:
 				_crop_editor_dragging = false
+				_crop_editor_facing_dragging = false
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
 			_crop_editor_zoom = minf(_crop_editor_zoom + 0.1, 10.0)
 			_crop_editor_canvas.queue_redraw()
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_crop_editor_zoom = maxf(_crop_editor_zoom - 0.1, 1.0)
 			_crop_editor_canvas.queue_redraw()
-	elif event is InputEventMouseMotion and _crop_editor_dragging:
-		var mm: InputEventMouseMotion = event as InputEventMouseMotion
-		var cw: float = _crop_editor_canvas.size.x
-		var ch: float = _crop_editor_canvas.size.y
-		var preview_side: float = minf(cw, ch) - 16.0
-		if preview_side <= 0.0:
-			return
-		var src_w: float = float(_crop_editor_source_img.get_width())
-		var src_h: float = float(_crop_editor_source_img.get_height())
-		var base_side: float = minf(src_w, src_h)
-		var crop_px: float = base_side / maxf(_crop_editor_zoom, 1.0)
-		var scale: float = preview_side / crop_px
-		# Convert pixel drag delta to source-pixel offset.
-		var delta: Vector2 = mm.position - _crop_editor_drag_start
-		_crop_editor_offset = _crop_editor_offset_start - delta / scale
+	elif event is InputEventMagnifyGesture:
+		# Trackpad pinch-to-zoom (macOS).
+		var step: float = (event.factor - 1.0) * 2.0
+		_crop_editor_zoom = clampf(_crop_editor_zoom + step, 1.0, 10.0)
 		_crop_editor_canvas.queue_redraw()
+	elif event is InputEventMouseMotion:
+		var mm: InputEventMouseMotion = event as InputEventMouseMotion
+		if _crop_editor_facing_dragging:
+			_crop_editor_facing_deg = rad_to_deg(atan2(mm.position.y - cy, mm.position.x - cx))
+			if _crop_editor_facing_deg < 0.0:
+				_crop_editor_facing_deg += 360.0
+			_crop_editor_canvas.queue_redraw()
+		elif _crop_editor_dragging:
+			var preview_side: float = minf(cw, ch) - 16.0
+			if preview_side <= 0.0:
+				return
+			var src_w: float = float(_crop_editor_source_img.get_width())
+			var src_h: float = float(_crop_editor_source_img.get_height())
+			var base_side: float = minf(src_w, src_h)
+			var crop_px: float = base_side / maxf(_crop_editor_zoom, 1.0)
+			var scale: float = preview_side / crop_px
+			# Convert pixel drag delta to source-pixel offset.
+			var delta: Vector2 = mm.position - _crop_editor_drag_start
+			_crop_editor_offset = _crop_editor_offset_start - delta / scale
+			_crop_editor_canvas.queue_redraw()
 
 
 func _on_crop_editor_reset() -> void:
 	_crop_editor_offset = Vector2.ZERO
 	_crop_editor_zoom = 1.0
+	_crop_editor_facing_deg = 0.0
 	if _crop_editor_canvas != null:
 		_crop_editor_canvas.queue_redraw()
 
@@ -5221,20 +5860,28 @@ func _on_crop_editor_confirm() -> void:
 	if _crop_editor_dialog != null:
 		_crop_editor_dialog.hide()
 	if _crop_editor_callback.is_valid():
-		_crop_editor_callback.call(_crop_editor_offset, _crop_editor_zoom)
+		_crop_editor_callback.call(_crop_editor_offset, _crop_editor_zoom, _crop_editor_facing_deg)
 
 
 func _on_token_icon_crop_pressed() -> void:
-	# Determine source path: pending source (freshly picked) or existing saved icon.
+	# Determine source: pending (freshly picked), original source, or saved crop.
 	var source: String = _token_icon_pending_source
+	if source.is_empty():
+		# Try original source path from existing token data.
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.token != null and not _token_editor_id.is_empty():
+			var td: TokenData = reg.token.get_token_by_id(_token_editor_id)
+			if td != null and not td.icon_source_path.is_empty() and FileAccess.file_exists(td.icon_source_path):
+				source = td.icon_source_path
 	if source.is_empty() and _token_icon_path_edit != null:
 		source = _token_icon_path_edit.text.strip_edges()
 	if source.is_empty():
 		return
-	_open_crop_editor(source, _token_icon_crop_offset, _token_icon_crop_zoom,
-		func(offset: Vector2, zoom: float) -> void:
+	_open_crop_editor(source, _token_icon_crop_offset, _token_icon_crop_zoom, _token_icon_facing_deg,
+		func(offset: Vector2, zoom: float, facing_deg: float) -> void:
 			_token_icon_crop_offset = offset
 			_token_icon_crop_zoom = zoom
+			_token_icon_facing_deg = facing_deg
 			# Re-generate preview with new crop.
 			var img: Image = TokenIconUtils.load_image_from_path(source)
 			if img == null:
@@ -5252,14 +5899,24 @@ func _on_token_icon_crop_pressed() -> void:
 
 func _on_profile_icon_crop_pressed() -> void:
 	var source: String = _profile_icon_pending_source
+	if source.is_empty():
+		# Try original source path from existing profile data.
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.profile != null and _profile_selected_index >= 0:
+			var profiles: Array = reg.profile.get_profiles()
+			if _profile_selected_index < profiles.size():
+				var prof: PlayerProfile = profiles[_profile_selected_index] as PlayerProfile
+				if prof != null and not prof.icon_source_path.is_empty() and FileAccess.file_exists(prof.icon_source_path):
+					source = prof.icon_source_path
 	if source.is_empty() and _profile_icon_path_edit != null:
 		source = _profile_icon_path_edit.text.strip_edges()
 	if source.is_empty():
 		return
-	_open_crop_editor(source, _profile_icon_crop_offset, _profile_icon_crop_zoom,
-		func(offset: Vector2, zoom: float) -> void:
+	_open_crop_editor(source, _profile_icon_crop_offset, _profile_icon_crop_zoom, _profile_icon_facing_deg,
+		func(offset: Vector2, zoom: float, facing_deg: float) -> void:
 			_profile_icon_crop_offset = offset
 			_profile_icon_crop_zoom = zoom
+			_profile_icon_facing_deg = facing_deg
 			var img: Image = TokenIconUtils.load_image_from_path(source)
 			if img == null:
 				return
@@ -5438,6 +6095,9 @@ func _on_token_editor_confirmed() -> void:
 	data.token_shape = shape_val
 	data.blocks_los = blos_val
 
+	# Icon facing direction.
+	data.icon_facing_deg = _token_icon_facing_deg
+
 	# Persist custom icon image.
 	if not _token_icon_pending_source.is_empty():
 		# Delete the previous icon file if it differs.
@@ -5448,12 +6108,15 @@ func _on_token_editor_confirmed() -> void:
 		data.icon_image_path = abs_path
 		data.icon_crop_offset = _token_icon_crop_offset
 		data.icon_crop_zoom = _token_icon_crop_zoom
+		# Preserve original source so re-cropping operates on the full image.
+		data.icon_source_path = _token_icon_pending_source
 	elif _token_icon_preview != null and _token_icon_preview.texture == null:
 		# DM cleared the icon — remove existing file.
 		if not data.icon_image_path.is_empty():
 			TokenIconUtils.delete_icon_file(data.icon_image_path)
 			TokenIconUtils.evict(data.icon_image_path)
 		data.icon_image_path = ""
+		data.icon_source_path = ""
 		data.icon_crop_offset = Vector2.ZERO
 		data.icon_crop_zoom = 1.0
 
@@ -8030,6 +8693,68 @@ func _apply_passage_panel_size() -> void:
 		_passage_clear_btn.add_theme_font_size_override("font_size", font_size)
 
 
+func _apply_roam_panel_size() -> void:
+	## Reposition and rescale the roam panel at the screen bottom.
+	## Same pattern as _apply_passage_panel_size — explicit scaling because
+	## the panel lives in _ui_layer, outside _ui_root.scale.
+	if _roam_panel == null:
+		return
+	var scale := _ui_scale()
+	var panel_h := roundi(56.0 * scale)
+	_roam_panel.offset_left = 0.0
+	_roam_panel.offset_right = 0.0
+	_roam_panel.offset_top = float(-panel_h)
+	_roam_panel.offset_bottom = 0.0
+	var font_size: int = roundi(15.0 * scale)
+	var btn_h: int = roundi(34.0 * scale)
+	var icon_font: int = roundi(18.0 * scale)
+	# Icon label (🐾)
+	for child in _roam_panel.get_children():
+		var margin: MarginContainer = child as MarginContainer
+		if margin == null:
+			continue
+		margin.add_theme_constant_override("margin_left", roundi(6.0 * scale))
+		margin.add_theme_constant_override("margin_right", roundi(6.0 * scale))
+		margin.add_theme_constant_override("margin_top", roundi(4.0 * scale))
+		margin.add_theme_constant_override("margin_bottom", roundi(4.0 * scale))
+		for mc_child in margin.get_children():
+			var hbox: HBoxContainer = mc_child as HBoxContainer
+			if hbox != null:
+				hbox.add_theme_constant_override("separation", roundi(8.0 * scale))
+				# Scale all child Labels that are not tracked by a specific var
+				for hc in hbox.get_children():
+					if hc is Label:
+						(hc as Label).add_theme_font_size_override("font_size", font_size)
+	if _roam_token_label:
+		_roam_token_label.add_theme_font_size_override("font_size", font_size)
+	if _roam_mode_option:
+		_roam_mode_option.custom_minimum_size = Vector2(roundi(130.0 * scale), btn_h)
+		_roam_mode_option.add_theme_font_size_override("font_size", font_size)
+	if _roam_loop_check:
+		_roam_loop_check.custom_minimum_size = Vector2(0, btn_h)
+		_roam_loop_check.add_theme_font_size_override("font_size", font_size)
+	if _roam_speed_slider:
+		_roam_speed_slider.custom_minimum_size = Vector2(roundi(100.0 * scale), roundi(20.0 * scale))
+	if _roam_speed_value_label:
+		_roam_speed_value_label.custom_minimum_size = Vector2(roundi(60.0 * scale), 0)
+		_roam_speed_value_label.add_theme_font_size_override("font_size", font_size)
+	if _roam_smooth_btn:
+		_roam_smooth_btn.custom_minimum_size = Vector2(btn_h, btn_h)
+		_roam_smooth_btn.add_theme_font_size_override("font_size", icon_font)
+	if _roam_play_btn:
+		_roam_play_btn.custom_minimum_size = Vector2(btn_h, btn_h)
+		_roam_play_btn.add_theme_font_size_override("font_size", icon_font)
+	if _roam_reset_btn:
+		_roam_reset_btn.custom_minimum_size = Vector2(btn_h, btn_h)
+		_roam_reset_btn.add_theme_font_size_override("font_size", icon_font)
+	if _roam_commit_btn:
+		_roam_commit_btn.custom_minimum_size = Vector2(roundi(80.0 * scale), btn_h)
+		_roam_commit_btn.add_theme_font_size_override("font_size", font_size)
+	if _roam_clear_btn:
+		_roam_clear_btn.custom_minimum_size = Vector2(roundi(70.0 * scale), btn_h)
+		_roam_clear_btn.add_theme_font_size_override("font_size", font_size)
+
+
 func _apply_ui_scale() -> void:
 	var mgr := _get_ui_scale_mgr()
 	var scale := _ui_scale()
@@ -8045,6 +8770,8 @@ func _apply_ui_scale() -> void:
 		_apply_effect_panel_size()
 	if _passage_panel and _passage_panel.get_parent() == _ui_layer:
 		_apply_passage_panel_size()
+	if _roam_panel and _roam_panel.get_parent() == _ui_layer:
+		_apply_roam_panel_size()
 	# Update freeze panel static widget sizes and rebuild rows at new scale.
 	if _freeze_undock_btn:
 		_freeze_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))

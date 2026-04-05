@@ -235,6 +235,7 @@ func build_player_state_payload() -> Array:
 			"vision_scale": _vision_scale_for_profile(p),
 			"token_diameter_px": token_diameter_px,
 			"facing": token.rotation if token and is_instance_valid(token) else 0.0,
+			"icon_facing_deg": p.icon_facing_deg,
 			"indicator_color": p.indicator_color.to_html(false),
 			"position": {"x": pos.x, "y": pos.y},
 		})
@@ -395,6 +396,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 				"perception_mod": profile.perception_mod,
 				"is_dashing": dashing,
+				"icon_facing_deg": profile.icon_facing_deg,
 				"vision_scale": _vision_scale_for_profile(profile), "indicator_color": profile.indicator_color.to_html(false), "position": {
 					"x": _game_state().player_positions.get(profile.id, Vector2.ZERO).x,
 					"y": _game_state().player_positions.get(profile.id, Vector2.ZERO).y,
@@ -421,6 +423,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 		"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 		"perception_mod": profile.perception_mod,
 		"is_dashing": dashing,
+		"icon_facing_deg": profile.icon_facing_deg,
 		"vision_scale": _vision_scale_for_profile(profile),
 		"indicator_color": profile.indicator_color.to_html(false),
 		"position": {
@@ -442,9 +445,12 @@ func _apply_profile_icon(token: PlayerSprite, profile: PlayerProfile) -> void:
 
 
 func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float:
-	var px_per_5ft := _pixels_per_5ft(map)
-	var speed := (maxf(profile.base_speed, 5.0) / 5.0) * px_per_5ft
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.movement != null:
+		return registry.movement.get_player_speed_px_per_sec(profile, map)
+	# Fallback (pre-bootstrap or missing service)
+	var px_per_5ft := _pixels_per_5ft(map)
+	var speed := (maxf(profile.base_speed, 5.0) / 5.0) * px_per_5ft / IMovementService.ROUND_DURATION_SEC
 	if registry != null and registry.input != null and registry.input.is_dashing(profile.id):
 		speed *= 2.0
 	return speed
@@ -458,6 +464,9 @@ func _profile_vision_radius_px(profile: PlayerProfile, map: MapData) -> float:
 
 
 func _pixels_per_5ft(map: MapData) -> float:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.movement != null:
+		return registry.movement.pixels_per_5ft(map)
 	if map == null:
 		return 60.0
 	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0

@@ -97,11 +97,18 @@ var token_shape: int = TokenShape.ELLIPSE
 ## Relative path to a custom icon image inside the .map bundle
 ## (e.g. "token_icons/<id>.png"). Empty = no custom image.
 var icon_image_path: String = ""
+## Absolute filesystem path to the original source image used to create the
+## icon.  Preserved so re-cropping operates on the full-resolution original
+## rather than the 256×256 saved crop.  Empty = source unknown / legacy.
+var icon_source_path: String = ""
 ## Crop editor state: pixel offset of the source image centre under the crop
 ## circle. Zero = auto-centred.
 var icon_crop_offset: Vector2 = Vector2.ZERO
 ## Crop editor state: zoom factor applied before cropping. 1.0 = fit-to-circle.
 var icon_crop_zoom: float = 1.0
+## Direction the icon image faces, in degrees (0 = right, 90 = down).
+## Used to correct rotation during movement so the image faces forward.
+var icon_facing_deg: float = 0.0
 
 # --- Passage geometry (SECRET_PASSAGE category only) ---------------------
 ## Array of polyline chains defining the passage corridor geometry.
@@ -110,6 +117,14 @@ var icon_crop_zoom: float = 1.0
 var passage_paths: Array = []
 ## Half-width of the rendered corridor in world-space pixels.
 var passage_width_px: float = 48.0
+
+# --- Roam path (MONSTER / NPC categories) ---------------------------------
+## World-space waypoints defining the token's patrol / roam path.
+var roam_path: PackedVector2Array = PackedVector2Array()
+## Movement speed along the roam path, in feet per round.
+var roam_speed: float = 30.0
+## When true the token loops back to the start; when false it ping-pongs.
+var roam_loop: bool = true
 
 
 # ---------------------------------------------------------------------------
@@ -160,10 +175,15 @@ func to_dict() -> Dictionary:
 		"autopause_on_collision": autopause_on_collision,
 		"passage_paths": _serialize_passage_paths(),
 		"passage_width_px": passage_width_px,
+		"roam_path": _serialize_roam_path(),
+		"roam_speed": roam_speed,
+		"roam_loop": roam_loop,
 		"puzzle_notes": _serialize_puzzle_notes(),
 		"icon_image_path": icon_image_path,
+		"icon_source_path": icon_source_path,
 		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
 		"icon_crop_zoom": icon_crop_zoom,
+		"icon_facing_deg": icon_facing_deg,
 	}
 
 
@@ -195,13 +215,18 @@ static func from_dict(d: Dictionary) -> TokenData:
 	t.autopause_on_collision = bool(d.get("autopause_on_collision", false))
 	t.passage_width_px = float(d.get("passage_width_px", 48.0))
 	t.passage_paths = _deserialize_passage_paths(d)
+	t.roam_path = _deserialize_roam_path(d)
+	t.roam_speed = float(d.get("roam_speed", 30.0))
+	t.roam_loop = bool(d.get("roam_loop", true))
 	t.puzzle_notes = _deserialize_puzzle_notes(d)
 	t.icon_image_path = str(d.get("icon_image_path", ""))
+	t.icon_source_path = str(d.get("icon_source_path", ""))
 	var ico: Variant = d.get("icon_crop_offset", {"x": 0.0, "y": 0.0})
 	if ico is Dictionary:
 		var icd := ico as Dictionary
 		t.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
 	t.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
+	t.icon_facing_deg = float(d.get("icon_facing_deg", 0.0))
 	return t
 
 
@@ -253,6 +278,22 @@ static func _pts_array_to_packed(pts: Array) -> PackedVector2Array:
 		var pt := raw_pt as Dictionary
 		chain.append(Vector2(float(pt.get("x", 0.0)), float(pt.get("y", 0.0))))
 	return chain
+
+
+## Serialise roam_path to a JSON-safe Array[{x,y}].
+func _serialize_roam_path() -> Array:
+	var result: Array = []
+	for v: Vector2 in roam_path:
+		result.append({"x": v.x, "y": v.y})
+	return result
+
+
+## Deserialise roam_path from a dict.
+static func _deserialize_roam_path(d: Dictionary) -> PackedVector2Array:
+	var raw: Variant = d.get("roam_path", [])
+	if not raw is Array:
+		return PackedVector2Array()
+	return _pts_array_to_packed(raw as Array)
 
 
 ## Serialise puzzle_notes to a JSON-safe Array[{text, revealed}].

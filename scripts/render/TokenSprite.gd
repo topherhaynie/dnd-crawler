@@ -67,12 +67,35 @@ var _icon_key_map: Dictionary = {}
 var _show_handles: bool = false
 var _passage_paths: Array = []
 var _passage_width_px: float = 48.0
+var _roam_path: PackedVector2Array = PackedVector2Array()
+var _roam_loop: bool = true
 var _is_detected: bool = false
 var _trigger_radius_px: float = 96.0
 ## Custom icon image texture (circular-masked) — set from local file or network.
 var _custom_icon_texture: ImageTexture = null
 ## Absolute path to the custom icon image file (for lazy loading via shared cache).
 var _icon_image_path: String = ""
+
+# Remote position interpolation (player display smoothing).
+var _remote_smoothing: bool = false
+var _remote_target: Vector2 = Vector2.ZERO
+var _remote_initialized: bool = false
+const _REMOTE_LERP_SPEED: float = 24.0
+const _REMOTE_SNAP_EPSILON: float = 0.75
+const _REMOTE_TELEPORT_DIST: float = 200.0
+
+
+func _process(delta: float) -> void:
+	if not _remote_smoothing:
+		return
+	var dist: float = global_position.distance_to(_remote_target)
+	if dist <= _REMOTE_SNAP_EPSILON:
+		global_position = _remote_target
+		return
+	if dist > _REMOTE_TELEPORT_DIST:
+		global_position = _remote_target
+		return
+	global_position = global_position.lerp(_remote_target, clampf(delta * _REMOTE_LERP_SPEED, 0.0, 1.0))
 
 
 func _ready() -> void:
@@ -93,6 +116,10 @@ func _ready() -> void:
 
 
 func _draw() -> void:
+	# Roam path drawn first so the token renders on top.
+	if _is_dm and _roam_path.size() >= 2:
+		_draw_roam_path()
+
 	var rx: float = _width_px * 0.5
 	var ry: float = _height_px * 0.5
 	var inner_r: float = minf(rx, ry)
@@ -288,6 +315,16 @@ func set_detected(detected: bool) -> void:
 	queue_redraw()
 
 
+## Enable remote position smoothing and set the interpolation target.
+func set_remote_target(pos: Vector2) -> void:
+	_remote_target = pos
+	if not _remote_smoothing:
+		_remote_smoothing = true
+	if not _remote_initialized:
+		_remote_initialized = true
+		global_position = pos
+
+
 ## Apply all fields from a TokenData instance.
 func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	token_id = data.id
@@ -314,6 +351,8 @@ func apply_from_data(data: TokenData, is_dm: bool) -> void:
 	_shape = data.token_shape
 	_passage_paths = data.passage_paths.duplicate()
 	_passage_width_px = data.passage_width_px
+	_roam_path = data.roam_path.duplicate()
+	_roam_loop = data.roam_loop
 	_trigger_radius_px = maxf(0.0, data.trigger_radius_px)
 	# Custom icon image — store path for lazy loading; clear stale texture.
 	var new_icon_path: String = data.icon_image_path
@@ -511,3 +550,48 @@ func _classify_passage_endpoints() -> Dictionary:
 			var key: Vector2 = pt.snapped(Vector2.ONE * 0.01)
 			result[key] = int(result.get(key, 0)) + 1
 	return result
+
+
+## Draw the roam path overlay — DM view only.
+## Points are in world-space; to_local() converts them for draw_*.
+func _draw_roam_path() -> void:
+	const PATH_COLOR: Color = Color(0.2, 0.8, 0.9, 0.6)
+	const BORDER_COLOR: Color = Color(0.0, 0.0, 0.0, 0.35)
+	const LINE_WIDTH: float = 3.0
+	const DOT_RADIUS: float = 5.0
+	const ARROW_SIZE: float = 7.0
+
+	# Convert to local space
+	var local_pts := PackedVector2Array()
+	for v: Vector2 in _roam_path:
+		local_pts.append(to_local(v))
+
+	# Build draw path — optionally close for loops
+	var draw_pts: PackedVector2Array = local_pts.duplicate()
+	if _roam_loop and draw_pts.size() >= 2:
+		draw_pts.append(draw_pts[0])
+
+	# Border
+	draw_polyline(draw_pts, BORDER_COLOR, LINE_WIDTH + 2.0, true)
+	# Fill
+	draw_polyline(draw_pts, PATH_COLOR, LINE_WIDTH, true)
+
+	# Direction arrows at segment midpoints
+	for i: int in range(draw_pts.size() - 1):
+		var a: Vector2 = draw_pts[i]
+		var b: Vector2 = draw_pts[i + 1]
+		var seg_len: float = a.distance_to(b)
+		if seg_len < 20.0:
+			continue
+		var mid: Vector2 = (a + b) * 0.5
+		var dir: Vector2 = (b - a).normalized()
+		var perp: Vector2 = dir.rotated(PI * 0.5)
+		var tip: Vector2 = mid + dir * ARROW_SIZE
+		var left_pt: Vector2 = mid - dir * ARROW_SIZE * 0.5 + perp * ARROW_SIZE * 0.5
+		var right_pt: Vector2 = mid - dir * ARROW_SIZE * 0.5 - perp * ARROW_SIZE * 0.5
+		draw_colored_polygon(PackedVector2Array([tip, left_pt, right_pt]), PATH_COLOR)
+
+	# Waypoint dots
+	for pt: Vector2 in local_pts:
+		draw_circle(pt, DOT_RADIUS + 1.0, BORDER_COLOR)
+		draw_circle(pt, DOT_RADIUS, PATH_COLOR)

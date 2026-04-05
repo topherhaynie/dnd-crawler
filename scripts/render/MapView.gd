@@ -103,6 +103,18 @@ var fog_brush_radius_px: float = 64.0
 ## Secret passage paint tool mode.
 enum PassageTool {NONE, FREEHAND, POLYLINE, ERASE}
 var _passage_tool: int = PassageTool.NONE
+
+## Roam-path paint tool mode (MONSTER / NPC tokens).
+enum RoamTool {NONE, FREEHAND, POLYLINE, ERASE}
+var _roam_tool: int = RoamTool.NONE
+var _active_roam_token_id: String = ""
+var _wip_roam_path: PackedVector2Array = PackedVector2Array()
+var _roam_loop: bool = true
+var _roam_current_chain: PackedVector2Array = PackedVector2Array()
+var _roam_freehand_active: bool = false
+var _roam_overlay: Node2D = null
+var _roam_wip_lines: Array = []
+var _roam_current_line: Line2D = null
 var _active_passage_token_id: String = ""
 ## Committed WIP chains — Array[PackedVector2Array].
 var _wip_passage_paths: Array = []
@@ -213,6 +225,8 @@ func _set_active_tool(tool: Tool) -> void:
 		_indicator_overlay.show_handles = (tool == Tool.SELECT)
 	if _passage_tool != PassageTool.NONE:
 		deactivate_passage_tool()
+	if _roam_tool != RoamTool.NONE:
+		deactivate_roam_tool()
 
 signal viewport_indicator_moved(new_center: Vector2)
 signal viewport_indicator_resized(new_rect: Rect2)
@@ -259,6 +273,8 @@ signal effect_burst_moved(world_pos: Vector2)
 signal effect_burst_ended
 @warning_ignore("unused_signal")
 signal passage_paths_committed(token_id: String, paths: Array, width_px: float)
+@warning_ignore("unused_signal")
+signal roam_path_committed(token_id: String, path: PackedVector2Array, loop: bool)
 
 ## World-space rect — kept in sync with _indicator_overlay for hit-testing.
 var _viewport_indicator: Rect2 = Rect2()
@@ -1432,6 +1448,316 @@ static func _perp_distance(pt: Vector2, line_start: Vector2, line_end: Vector2) 
 	return pt.distance_to(line_start + t * (line_end - line_start))
 
 
+# ===========================================================================
+# Roam-path paint tool  (MONSTER / NPC tokens)
+# ===========================================================================
+
+const ROAM_WIP_COLOR: Color = Color(0.2, 0.8, 0.9, 0.7)
+const ROAM_WIP_BORDER_COLOR: Color = Color(0.0, 0.0, 0.0, 0.45)
+const ROAM_LINE_WIDTH: float = 4.0
+const ROAM_DOT_RADIUS: float = 6.0
+const ROAM_MIN_FREEHAND_SPACING: float = 12.0
+
+
+func activate_roam_tool(token_id: String, initial_path: PackedVector2Array, loop: bool) -> void:
+	if _roam_tool != RoamTool.NONE:
+		deactivate_roam_tool()
+	_active_roam_token_id = token_id
+	_wip_roam_path = initial_path.duplicate()
+	_roam_loop = loop
+	_roam_current_chain = PackedVector2Array()
+	_roam_freehand_active = false
+	_ensure_roam_overlay()
+	_rebuild_roam_overlay()
+
+
+func set_roam_tool(mode: int) -> void:
+	_finalize_roam_chain()
+	_roam_tool = mode
+	if mode == RoamTool.NONE:
+		_clear_roam_overlay_contents()
+
+
+func set_roam_loop(loop: bool) -> void:
+	_roam_loop = loop
+	_rebuild_roam_overlay()
+
+
+func deactivate_roam_tool() -> void:
+	_finalize_roam_chain()
+	var commit_token_id: String = _active_roam_token_id
+	var commit_path: PackedVector2Array = _wip_roam_path.duplicate()
+	var commit_loop: bool = _roam_loop
+	_roam_tool = RoamTool.NONE
+	_active_roam_token_id = ""
+	_wip_roam_path = PackedVector2Array()
+	_roam_current_chain = PackedVector2Array()
+	_roam_freehand_active = false
+	_clear_roam_overlay_contents()
+	if commit_token_id != "":
+		roam_path_committed.emit(commit_token_id, commit_path, commit_loop)
+
+
+func clear_roam_wip() -> void:
+	_roam_current_chain = PackedVector2Array()
+	_roam_freehand_active = false
+	_wip_roam_path = PackedVector2Array()
+	_clear_roam_overlay_contents()
+	_rebuild_roam_overlay()
+
+
+## Apply Chaikin's corner-cutting to smooth the WIP roam path in-place.
+func smooth_roam_path() -> void:
+	if _wip_roam_path.size() < 3:
+		return
+	_wip_roam_path = _chaikin_smooth(_wip_roam_path, _roam_loop, 2)
+	_rebuild_roam_overlay()
+
+
+# ---------------------------------------------------------------------------
+# Roam path — input handling
+# ---------------------------------------------------------------------------
+
+func _handle_roam_input(event: InputEvent) -> bool:
+	if _roam_tool == RoamTool.NONE:
+		return false
+	if event is InputEventMouseButton:
+		var btn := event as InputEventMouseButton
+		match btn.button_index:
+			MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN, MOUSE_BUTTON_MIDDLE:
+				return false
+		if btn.button_index == MOUSE_BUTTON_LEFT:
+			var world_pos := get_global_mouse_position()
+			match _roam_tool:
+				RoamTool.FREEHAND:
+					if btn.pressed:
+						_roam_freehand_active = true
+						_roam_current_chain = PackedVector2Array([world_pos])
+						_ensure_roam_current_line()
+						return true
+					else:
+						if _roam_freehand_active:
+							_roam_freehand_active = false
+							_finalize_roam_chain()
+						return true
+				RoamTool.POLYLINE:
+					if btn.pressed:
+						if (btn as InputEventMouseButton).double_click:
+							_finalize_roam_chain()
+						else:
+							_roam_current_chain.append(world_pos)
+							_update_roam_current_line()
+						return true
+				RoamTool.ERASE:
+					if btn.pressed:
+						_erase_roam_near(world_pos)
+						return true
+	if event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and key.keycode == KEY_ESCAPE:
+			if _roam_tool == RoamTool.POLYLINE and _roam_current_chain.size() > 0:
+				_finalize_roam_chain()
+				return true
+	if event is InputEventMouseMotion:
+		var world_pos := get_global_mouse_position()
+		match _roam_tool:
+			RoamTool.FREEHAND:
+				if _roam_freehand_active and _roam_current_chain.size() > 0:
+					var last: Vector2 = _roam_current_chain[_roam_current_chain.size() - 1]
+					if world_pos.distance_to(last) >= ROAM_MIN_FREEHAND_SPACING:
+						_roam_current_chain.append(world_pos)
+						_update_roam_current_line()
+					return true
+			RoamTool.POLYLINE:
+				if _roam_current_chain.size() > 0:
+					_update_roam_current_line_preview(world_pos)
+					return true
+			RoamTool.ERASE:
+				var motion_ev := event as InputEventMouseMotion
+				if motion_ev.button_mask & MOUSE_BUTTON_MASK_LEFT:
+					_erase_roam_near(world_pos)
+					return true
+	return false
+
+
+# ---------------------------------------------------------------------------
+# Roam path — overlay helpers
+# ---------------------------------------------------------------------------
+
+func _ensure_roam_overlay() -> void:
+	if _roam_overlay != null and is_instance_valid(_roam_overlay):
+		return
+	_roam_overlay = Node2D.new()
+	_roam_overlay.name = "RoamOverlay"
+	_roam_overlay.z_index = RenderLayer.FOG + 1
+	add_child(_roam_overlay)
+
+
+func _clear_roam_overlay_contents() -> void:
+	_roam_wip_lines.clear()
+	_roam_current_line = null
+	if _roam_overlay != null and is_instance_valid(_roam_overlay):
+		for child: Node in _roam_overlay.get_children():
+			child.queue_free()
+
+
+func _rebuild_roam_overlay() -> void:
+	_clear_roam_overlay_contents()
+	if _roam_overlay == null or not is_instance_valid(_roam_overlay):
+		return
+	if _wip_roam_path.size() < 2:
+		# Still draw dots for single-point paths
+		for pt: Vector2 in _wip_roam_path:
+			var dot := _make_roam_dot(pt)
+			_roam_overlay.add_child(dot)
+		return
+	# Build the path to draw — optionally close it for loops
+	var draw_pts: PackedVector2Array = _wip_roam_path.duplicate()
+	if _roam_loop and draw_pts.size() >= 2:
+		draw_pts.append(draw_pts[0])
+	# Border line
+	var border := Line2D.new()
+	border.default_color = ROAM_WIP_BORDER_COLOR
+	border.width = ROAM_LINE_WIDTH + 3.0
+	border.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	border.end_cap_mode = Line2D.LINE_CAP_ROUND
+	border.joint_mode = Line2D.LINE_JOINT_ROUND
+	border.points = draw_pts
+	_roam_overlay.add_child(border)
+	_roam_wip_lines.append(border)
+	# Fill line
+	var fill := Line2D.new()
+	fill.default_color = ROAM_WIP_COLOR
+	fill.width = ROAM_LINE_WIDTH
+	fill.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	fill.end_cap_mode = Line2D.LINE_CAP_ROUND
+	fill.joint_mode = Line2D.LINE_JOINT_ROUND
+	fill.points = draw_pts
+	_roam_overlay.add_child(fill)
+	_roam_wip_lines.append(fill)
+	# Direction arrows
+	_draw_roam_arrows(draw_pts)
+	# Waypoint dots
+	for pt: Vector2 in _wip_roam_path:
+		var dot := _make_roam_dot(pt)
+		_roam_overlay.add_child(dot)
+
+
+func _make_roam_dot(pos: Vector2) -> Line2D:
+	# Use a small circle polygon rendered as a Line2D ring
+	var ring := Line2D.new()
+	ring.default_color = ROAM_WIP_COLOR
+	ring.width = 2.0
+	var pts := PackedVector2Array()
+	for i: int in range(13):
+		var angle: float = TAU * float(i) / 12.0
+		pts.append(pos + Vector2(ROAM_DOT_RADIUS, 0.0).rotated(angle))
+	ring.points = pts
+	return ring
+
+
+func _draw_roam_arrows(draw_pts: PackedVector2Array) -> void:
+	if draw_pts.size() < 2:
+		return
+	for i: int in range(draw_pts.size() - 1):
+		var a: Vector2 = draw_pts[i]
+		var b: Vector2 = draw_pts[i + 1]
+		var seg_len: float = a.distance_to(b)
+		if seg_len < 20.0:
+			continue
+		var mid: Vector2 = (a + b) * 0.5
+		var dir: Vector2 = (b - a).normalized()
+		var perp: Vector2 = dir.rotated(PI * 0.5)
+		var arrow_size: float = 8.0
+		var tip: Vector2 = mid + dir * arrow_size
+		var left: Vector2 = mid - dir * arrow_size * 0.5 + perp * arrow_size * 0.5
+		var right: Vector2 = mid - dir * arrow_size * 0.5 - perp * arrow_size * 0.5
+		var arrow := Polygon2D.new()
+		arrow.polygon = PackedVector2Array([tip, left, right])
+		arrow.color = ROAM_WIP_COLOR
+		_roam_overlay.add_child(arrow)
+
+
+func _ensure_roam_current_line() -> void:
+	_ensure_roam_overlay()
+	if _roam_current_line != null and is_instance_valid(_roam_current_line):
+		return
+	_roam_current_line = Line2D.new()
+	_roam_current_line.default_color = Color(0.3, 0.9, 1.0, 0.8)
+	_roam_current_line.width = ROAM_LINE_WIDTH
+	_roam_current_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	_roam_current_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	_roam_current_line.joint_mode = Line2D.LINE_JOINT_ROUND
+	_roam_current_line.points = _roam_current_chain
+	_roam_overlay.add_child(_roam_current_line)
+
+
+func _update_roam_current_line() -> void:
+	_ensure_roam_current_line()
+	if _roam_current_chain.size() >= 2 and _roam_current_line != null:
+		_roam_current_line.points = _roam_current_chain
+
+
+func _update_roam_current_line_preview(cursor_world_pos: Vector2) -> void:
+	_ensure_roam_current_line()
+	if _roam_current_chain.size() >= 1 and _roam_current_line != null:
+		var pts: PackedVector2Array = _roam_current_chain.duplicate()
+		pts.append(cursor_world_pos)
+		_roam_current_line.points = pts
+
+
+func _finalize_roam_chain() -> void:
+	var chain: PackedVector2Array = _roam_current_chain.duplicate()
+	_roam_current_chain = PackedVector2Array()
+	if _roam_current_line != null and is_instance_valid(_roam_current_line):
+		_roam_current_line.queue_free()
+	_roam_current_line = null
+	if chain.size() < 2:
+		return
+	# Simplify freehand strokes
+	if _roam_tool == RoamTool.FREEHAND:
+		chain = _simplify_path_dp(chain, 4.0)
+	# Replace (not append) — single path per token
+	_wip_roam_path = chain
+	_rebuild_roam_overlay()
+
+
+func _erase_roam_near(world_pos: Vector2) -> void:
+	if _wip_roam_path.size() == 0:
+		return
+	var new_path := PackedVector2Array()
+	for pt: Vector2 in _wip_roam_path:
+		if pt.distance_to(world_pos) > ROAM_DOT_RADIUS * 3.0:
+			new_path.append(pt)
+	_wip_roam_path = new_path
+	_rebuild_roam_overlay()
+
+
+## Chaikin's corner-cutting algorithm for path smoothing.
+static func _chaikin_smooth(path: PackedVector2Array, loop: bool, iterations: int = 2) -> PackedVector2Array:
+	var result: PackedVector2Array = path
+	for _iter: int in range(iterations):
+		if result.size() < 3:
+			break
+		var smoothed := PackedVector2Array()
+		if loop:
+			for i: int in range(result.size()):
+				var a: Vector2 = result[i]
+				var b: Vector2 = result[(i + 1) % result.size()]
+				smoothed.append(a * 0.75 + b * 0.25)
+				smoothed.append(a * 0.25 + b * 0.75)
+		else:
+			smoothed.append(result[0])
+			for i: int in range(result.size() - 1):
+				var a: Vector2 = result[i]
+				var b: Vector2 = result[i + 1]
+				smoothed.append(a * 0.75 + b * 0.25)
+				smoothed.append(a * 0.25 + b * 0.75)
+			smoothed.append(result[result.size() - 1])
+		result = smoothed
+	return result
+
+
 ## Clip a wall polygon by all active passthrough rects and passage corridor
 ## polygons using exact geometry.  Returns polygon fragments remaining after
 ## subtracting all door/passage openings.  An empty return means the polygon
@@ -2101,6 +2427,10 @@ func get_map_rotation() -> int:
 
 func _unhandled_input(event: InputEvent) -> void:
 	# print("[DEBUG] _unhandled_input: event=", event, "active_tool=", active_tool, "wall_subtool=", wall_subtool)
+	if _roam_tool != RoamTool.NONE:
+		if _handle_roam_input(event):
+			get_viewport().set_input_as_handled()
+			return
 	if _passage_tool != PassageTool.NONE:
 		if _handle_passage_input(event):
 			get_viewport().set_input_as_handled()

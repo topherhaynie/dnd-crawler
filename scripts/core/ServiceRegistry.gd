@@ -27,6 +27,7 @@ var effect: EffectManager = null
 var selection: SelectionManager = null
 var ui_scale: UIScaleManager = null
 var ui_theme: UIThemeManager = null
+var movement: MovementManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.

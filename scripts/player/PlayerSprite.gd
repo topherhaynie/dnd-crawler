@@ -19,6 +19,7 @@ var is_locked: bool = false
 var vision_scale: float = 1.0
 var vision_radius_px: float = 60.0
 var indicator_color_str: String = "" ## hex from PlayerProfile.indicator_color; empty = fall back to id-hash
+var icon_facing_deg: float = 0.0 ## Natural forward direction of icon image (0=right, 90=down, etc.)
 var _custom_icon_texture: ImageTexture = null ## Circular-masked custom icon from profile or network
 var _icon_image_b64_hash: int = 0 ## CRC of the last decoded icon b64 — avoids redundant decode
 var _movement_input: Vector2 = Vector2.ZERO
@@ -110,6 +111,7 @@ func apply_from_state(data: Dictionary) -> void:
 	vision_scale = clampf(float(data.get("vision_scale", 1.0)), 0.1, 4.0)
 	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
 	vision_radius_px = maxf(float(data.get("vision_radius_px", default_radius_px)), 8.0)
+	icon_facing_deg = float(data.get("icon_facing_deg", icon_facing_deg))
 	var facing := float(data.get("facing", rotation))
 	if vision_type == VisionType.NORMAL:
 		_last_nonzero_dir = Vector2.RIGHT.rotated(facing).normalized()
@@ -158,7 +160,7 @@ func set_movement_input(vec: Vector2) -> void:
 	_movement_input = vec
 	if vec.length_squared() > 0.000001:
 		_last_nonzero_dir = vec.normalized()
-		rotation = _last_nonzero_dir.angle()
+		rotation = _last_nonzero_dir.angle() - deg_to_rad(icon_facing_deg)
 
 
 func enable_remote_smoothing(enabled: bool) -> void:
