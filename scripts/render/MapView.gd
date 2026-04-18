@@ -61,7 +61,7 @@ const PAN_GESTURE_SCALE_WINDOWS: float = 3.0
 const WALL_HANDLE_HIT_RADIUS_PX: float = 12.0
 const WALL_HANDLE_SIZE_WORLD: float = 6.0
 const ROTATION_STEP: int = 90 ## degrees per rotate click
-const HANDLE_HIT_RADIUS_PX: float = 8.0 ## world-space hit radius for each token bounding-box handle
+const HANDLE_HIT_RADIUS_SCREEN_PX: float = 6.0 ## screen-space hit radius for each token bounding-box handle
 const ROT_HANDLE_DIST_PX: float = 22.0 ## distance above bounding box top for the rotation handle
 
 @onready var camera: Camera2D = $Camera2D
@@ -251,6 +251,8 @@ signal token_resize_completed(token_id: String, new_width_px: float, new_height_
 signal token_rotation_completed(token_id: String, rotation_deg: float)
 signal token_place_requested(world_pos: Vector2)
 signal token_right_clicked(token_id: String, screen_pos: Vector2)
+signal measurement_right_clicked(meas_id: String, screen_pos: Vector2)
+signal measurement_selected(meas_id: String)
 signal background_right_clicked(world_pos: Vector2, screen_pos: Vector2)
 signal token_selected(token_id: String)
 signal token_trigger_radius_changed(token_id: String, new_radius_px: float)
@@ -307,6 +309,12 @@ var _rotate_start_mouse_angle: float = 0.0
 var _trigger_radius_dragging_id: Variant = null
 var _trigger_radius_drag_node: Node2D = null
 
+## Multi-selection box-drag state (Shift+drag in SELECT mode)
+var _box_selecting: bool = false
+var _box_select_start: Vector2 = Vector2.ZERO ## world-space start corner
+var _box_select_end: Vector2 = Vector2.ZERO ## world-space current corner
+var _box_select_overlay: Node2D = null ## overlay that draws the selection rect
+
 ## Effect selection / drag / resize state (DM-view only)
 var _selected_effect_id: String = ""
 var _dragging_effect_id: String = ""
@@ -325,6 +333,8 @@ var effect_place_type: int = 0
 var effect_place_size: float = 128.0
 var effect_place_shape: int = 0 ## EffectData.EffectShape
 var effect_place_palette: int = 0
+## Phase 11: non-empty when a manifest effect is selected
+var effect_place_definition_id: String = ""
 
 ## Click-and-drag shape placement state
 var _effect_drag_placing: bool = false
@@ -355,6 +365,9 @@ var _meas_edit_which: String = ""
 var _meas_edit_id: String = ""
 var _meas_edit_old_start: Vector2 = Vector2.ZERO
 var _meas_edit_old_end: Vector2 = Vector2.ZERO
+var _meas_edit_old_extra: float = 0.0
+## For corner drags: the world-space position of the opposite corner that stays fixed.
+var _meas_edit_fixed_corner: Vector2 = Vector2.ZERO
 
 ## Temporary opaque-black cover shown on the player side during map load.
 ## Prevents the map from flashing visible before the fog shader's GPU pipeline
@@ -545,7 +558,7 @@ func load_map(map: MapData) -> void:
 	# Rotation is applied by set_camera_state() from the network broadcast;
 	# do not rotate the camera here (DM view is never rotated).
 
-	print("MapView: loaded map '%s'" % map.map_name)
+	Log.info("MapView", "loaded map '%s'" % map.map_name)
 	# Sync measurement overlay scale with map calibration.
 	if measurement_overlay != null:
 		measurement_overlay.set_scale_px(_pixels_per_5ft(map))
@@ -857,6 +870,109 @@ func add_token_sprite(data: TokenData, is_dm: bool) -> void:
 	_add_token_sprite_node(data, is_dm)
 
 
+## Return the TokenSprite Node2D for the given token id, or null.
+func get_token_sprite(id: String) -> Node2D:
+	var v: Variant = _draggable_tokens.get(id, null)
+	if v is Node2D:
+		return v as Node2D
+	return null
+
+
+## Return token IDs whose world-space center falls inside the given measurement shape.
+func get_tokens_in_measurement(meas: MeasurementData) -> Array[String]:
+	var result: Array[String] = []
+	if meas == null:
+		return result
+	for tid: String in _draggable_tokens.keys():
+		var node: Node2D = _draggable_tokens[tid] as Node2D
+		if node == null:
+			continue
+		if _point_in_measurement(node.position, meas):
+			result.append(tid)
+	return result
+
+
+## Point-in-shape test for the five measurement shape types.
+func _point_in_measurement(world_pos: Vector2, m: MeasurementData) -> bool:
+	match m.shape_type:
+		MeasurementData.ShapeType.CIRCLE:
+			var radius: float = m.world_start.distance_to(m.world_end)
+			return world_pos.distance_to(m.world_start) <= radius
+		MeasurementData.ShapeType.CONE:
+			return _point_in_cone(world_pos, m.world_start, m.world_end)
+		MeasurementData.ShapeType.SQUARE:
+			return _point_in_rotated_square(world_pos, m.world_start, m.world_end)
+		MeasurementData.ShapeType.RECTANGLE:
+			return _point_in_rotated_rect(world_pos, m.world_start, m.world_end,
+				m.extra_value)
+		MeasurementData.ShapeType.LINE:
+			# Line has no area — check within a 5ft-wide corridor.
+			var half_w: float = _map_cell_px() * 0.5
+			return _point_near_line(world_pos, m.world_start, m.world_end, half_w)
+	return false
+
+
+func _point_in_cone(p: Vector2, apex: Vector2, tip: Vector2) -> bool:
+	var length: float = apex.distance_to(tip)
+	if length < 0.01:
+		return false
+	var dir: Vector2 = (tip - apex).normalized()
+	var to_p: Vector2 = p - apex
+	var proj: float = to_p.dot(dir)
+	if proj < 0.0 or proj > length:
+		return false
+	# D&D 5e RAW cone: half-angle = atan(0.5) ≈ 26.6°.
+	var half_angle: float = 0.4636476090008172
+	var edge_dist: float = length / cos(half_angle)
+	var max_perp: float = proj * tan(half_angle)
+	var perp_dist: float = absf(to_p.dot(dir.rotated(PI * 0.5)))
+	return perp_dist <= max_perp and to_p.length() <= edge_dist
+
+
+func _point_in_rotated_square(p: Vector2, s: Vector2, e: Vector2) -> bool:
+	var side: float = s.distance_to(e)
+	if side < 0.01:
+		return false
+	var dir: Vector2 = (e - s).normalized()
+	var perp: Vector2 = dir.rotated(PI * 0.5)
+	var half: float = side * 0.5
+	var center: Vector2 = (s + e) * 0.5
+	var local: Vector2 = p - center
+	return absf(local.dot(dir)) <= half and absf(local.dot(perp)) <= half
+
+
+func _point_in_rotated_rect(p: Vector2, s: Vector2, e: Vector2,
+		extra_value: float) -> bool:
+	var along: Vector2 = e - s
+	var length: float = along.length()
+	if length < 0.01:
+		return false
+	var dir: Vector2 = along.normalized()
+	var perp: Vector2 = dir.rotated(PI * 0.5)
+	var half_w: float = extra_value if extra_value >= 1.0 else length * 0.5
+	var mid: Vector2 = (s + e) * 0.5
+	var local: Vector2 = p - mid
+	return absf(local.dot(dir)) <= length * 0.5 and absf(local.dot(perp)) <= half_w
+
+
+func _point_near_line(p: Vector2, s: Vector2, e: Vector2,
+		half_width: float) -> bool:
+	var se: Vector2 = e - s
+	var len_sq: float = se.length_squared()
+	if len_sq < 0.01:
+		return p.distance_to(s) <= half_width
+	var t: float = clampf((p - s).dot(se) / len_sq, 0.0, 1.0)
+	var closest: Vector2 = s + se * t
+	return p.distance_to(closest) <= half_width
+
+
+func _map_cell_px() -> float:
+	var m: MapData = get_map()
+	if m != null and m.cell_px > 0:
+		return float(m.cell_px)
+	return 64.0
+
+
 ## Remove the token sprite for the given id.
 func remove_token_sprite(id: String) -> void:
 	if _hovered_token_id == id:
@@ -905,8 +1021,13 @@ func set_token_icon_texture(token_id: String, tex: ImageTexture) -> void:
 # ---------------------------------------------------------------------------
 
 ## Add a single effect node from EffectData.
+## If data.scene_path is set, instantiates the PackedScene instead
+## of using the legacy EffectNode shader path.
 func add_effect_node(data: EffectData) -> void:
 	remove_effect_node(data.id)
+	if not data.scene_path.is_empty():
+		_add_scene_effect_node(data)
+		return
 	var node := EffectNode.new()
 	node.name = "Effect_%s" % data.id
 	effect_layer.add_child(node)
@@ -914,12 +1035,40 @@ func add_effect_node(data: EffectData) -> void:
 	node.effect_finished.connect(_on_effect_finished)
 
 
+## Instantiate a manifest-driven PackedScene effect and add it to the effect layer.
+func _add_scene_effect_node(data: EffectData) -> void:
+	if not ResourceLoader.exists(data.scene_path):
+		push_warning("MapView._add_scene_effect_node: scene not found '%s'" % data.scene_path)
+		return
+	var packed: PackedScene = load(data.scene_path) as PackedScene
+	if packed == null:
+		push_error("MapView._add_scene_effect_node: failed to load '%s'" % data.scene_path)
+		return
+	var node: Node2D = packed.instantiate() as Node2D
+	if node == null:
+		push_error("MapView._add_scene_effect_node: scene root is not Node2D '%s'" % data.scene_path)
+		return
+	node.name = "Effect_%s" % data.id
+	node.set_meta("effect_id", data.id)
+	node.position = data.world_pos
+	if node.get("size") != null:
+		node.set("size", data.size_px)
+	effect_layer.add_child(node)
+	if node.has_signal("effect_finished"):
+		node.connect("effect_finished", _on_effect_finished.bind(data.id))
+
+
 ## Remove the effect node for the given id.
 func remove_effect_node(id: String) -> void:
 	for child in effect_layer.get_children():
+		var child_id: String = ""
 		var en: EffectNode = child as EffectNode
-		if en != null and en.effect_id == id:
-			en.queue_free()
+		if en != null:
+			child_id = en.effect_id
+		elif child.has_meta("effect_id"):
+			child_id = str(child.get_meta("effect_id"))
+		if child_id == id:
+			child.queue_free()
 			break
 
 
@@ -951,13 +1100,22 @@ func clear_effect_nodes() -> void:
 func hit_test_effect(world_pos: Vector2) -> String:
 	for child in effect_layer.get_children():
 		var en: EffectNode = child as EffectNode
-		if en == null:
-			continue
-		var dist: float = world_pos.distance_to(en.position)
-		# Use half the sprite scale as the hit radius
-		var half: float = en._sprite.scale.x * 0.5 if en._sprite != null else 48.0
-		if dist <= half:
-			return en.effect_id
+		if en != null:
+			var dist: float = world_pos.distance_to(en.position)
+			var half: float = en._sprite.scale.x * 0.5 if en._sprite != null else 48.0
+			if dist <= half:
+				return en.effect_id
+		elif child.has_meta("effect_id"):
+			## Scene effect — use a simple radius based on the size property.
+			var node: Node2D = child as Node2D
+			if node == null:
+				continue
+			var dist: float = world_pos.distance_to(node.position)
+			var half: float = 48.0
+			if node.get("size") != null:
+				half = float(node.get("size")) * 0.5
+			if dist <= half:
+				return str(child.get_meta("effect_id"))
 	return ""
 
 
@@ -2026,20 +2184,26 @@ func _hit_test_tokens(world_pos: Vector2) -> Variant:
 ## Returns the token_id if world_pos falls within the resize edge zone of any draggable token.
 ## Returns {token_id, handle} if world_pos hits a token handle; empty dict if none.
 ## handle 0-7 = bounding-box resize corners/edges (TL…L), handle 8 = rotation.
+## Only tests tokens whose handles are currently visible (hovered, selected, or
+## being dragged/resized/rotated) to prevent invisible handles from stealing clicks.
 func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
+	var hit_radius: float = HANDLE_HIT_RADIUS_SCREEN_PX / maxf(camera.zoom.x, 0.01)
 	for tid in _draggable_tokens.keys():
 		var node: Node2D = _draggable_tokens[tid] as Node2D
 		if node == null or not is_instance_valid(node):
 			continue
+		# Skip tokens that don't have visible handles.
+		var ts := node as TokenSprite
+		if ts != null and not ts._show_handles:
+			continue
 		var rx: float = 24.0
 		var ry: float = 24.0
-		var ts := node as TokenSprite
 		if ts != null:
 			rx = ts.get_token_width_px() * 0.5
 			ry = ts.get_token_height_px() * 0.5
 		var local_pos: Vector2 = node.to_local(world_pos)
 		# Rotation handle (above top bounding edge).
-		if local_pos.distance_to(Vector2(0.0, -ry - ROT_HANDLE_DIST_PX)) <= HANDLE_HIT_RADIUS_PX:
+		if local_pos.distance_to(Vector2(0.0, -ry - ROT_HANDLE_DIST_PX)) <= hit_radius:
 			return {"token_id": tid, "handle": 8}
 		# 8 bounding-box resize handles.
 		var handles: Array = [
@@ -2048,12 +2212,12 @@ func _hit_test_token_handle(world_pos: Vector2) -> Dictionary:
 			Vector2(-rx, ry), Vector2(-rx, 0.0),
 		]
 		for i: int in handles.size():
-			if local_pos.distance_to(handles[i]) <= HANDLE_HIT_RADIUS_PX:
+			if local_pos.distance_to(handles[i]) <= hit_radius:
 				return {"token_id": tid, "handle": i}
 		# Trigger-radius drag handle (rightmost point of trigger circle).
 		if ts != null and ts.get_trigger_radius_px() > 0.0:
 			var tr_handle := Vector2(ts.get_trigger_radius_px(), 0.0)
-			if local_pos.distance_to(tr_handle) <= HANDLE_HIT_RADIUS_PX:
+			if local_pos.distance_to(tr_handle) <= hit_radius:
 				return {"token_id": tid, "handle": 9}
 	return {}
 
@@ -2109,7 +2273,7 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 
 	# --- MEASUREMENT ---
 	if measurement_overlay != null and is_dm_view:
-		var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
+		var ep: Array = measurement_overlay.pick_endpoint(world_pos, 20.0)
 		var ep_which: String = ep[0] as String
 		var ep_id: String = ep[1] as String
 		if ep_which != "":
@@ -2141,14 +2305,12 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 	if sp_idx >= 0:
 		return SelectableHit.make(ISelectionService.SelectionLayer.SPAWN, sp_idx)
 
-	# --- INDICATOR ---
+	# --- INDICATOR (handles only; body drag is handled post-match) ---
 	if _viewport_indicator != Rect2() and _indicator_overlay != null:
 		var ind_handle: int = _indicator_overlay.get_handle_at(world_pos)
 		if ind_handle >= 0:
 			return SelectableHit.make(
 					ISelectionService.SelectionLayer.INDICATOR, null, ind_handle)
-		if _indicator_has_point(world_pos):
-			return SelectableHit.make(ISelectionService.SelectionLayer.INDICATOR, null)
 
 	# --- WALL (lowest priority) ---
 	# Check already-selected wall handle before looking for a new wall.
@@ -2323,6 +2485,21 @@ func _ready() -> void:
 	_fog_loading_cover.z_index = RenderLayer.FOG + 1
 	add_child(_fog_loading_cover)
 
+	# Box-select overlay — draws the selection rectangle while Shift+dragging.
+	_box_select_overlay = _BoxSelectOverlay.new()
+	_box_select_overlay.name = "BoxSelectOverlay"
+	_box_select_overlay.z_index = RenderLayer.FOG + 4
+	add_child(_box_select_overlay)
+
+	# Connect to selection_changed to sync TokenSprite visuals.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		var _sel_boot := get_node_or_null("/root/ServiceBootstrap")
+		if _sel_boot != null and _sel_boot.get("registry") != null:
+			reg = _sel_boot.registry as ServiceRegistry
+	if reg != null and reg.selection != null and reg.selection.service != null:
+		reg.selection.service.selection_changed.connect(_on_selection_changed)
+
 
 func set_viewport_indicator(world_rect: Rect2, rotation_deg: float = 0.0) -> void:
 	## Set the player-viewport indicator rect in world space. Pass Rect2() to hide.
@@ -2472,6 +2649,19 @@ func _unhandled_input(event: InputEvent) -> void:
 				_selected_effect_id = ""
 				get_viewport().set_input_as_handled()
 				return
+		# Escape clears token / entity selection in SELECT mode.
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ESCAPE:
+			if active_tool == Tool.SELECT:
+				var smgr_esc: SelectionManager = _selection_mgr()
+				if smgr_esc != null and not smgr_esc.get_selected_ids().is_empty():
+					smgr_esc.clear_selection()
+					_selected_effect_id = ""
+					_selected_meas_id = ""
+					if measurement_overlay != null:
+						measurement_overlay.set_selected("")
+					_set_selected_wall(-1)
+					get_viewport().set_input_as_handled()
+					return
 
 	# Fix: Deselect wall tools when SELECT or PAN is chosen
 	if active_tool == Tool.SELECT or active_tool == Tool.PAN:
@@ -2577,7 +2767,16 @@ func _unhandled_input(event: InputEvent) -> void:
 											_resize_start_height = handle_ts.get_token_height_px()
 										_resize_start_aspect = _resize_start_width / maxf(_resize_start_height, 1.0)
 									else:
-										token_selected.emit(str(htid))
+										# Body hit — update selection service.
+										var sel_id: String = str(htid)
+										var sel_layer: int = eff_hit.layer
+										var smgr: SelectionManager = _selection_mgr()
+										var additive: bool = btn_event.ctrl_pressed or btn_event.shift_pressed or btn_event.meta_pressed
+										if additive and smgr != null:
+											smgr.toggle_select(sel_id, sel_layer)
+										elif smgr != null:
+											smgr.select(sel_id, sel_layer)
+										token_selected.emit(sel_id)
 										_dragging_token_id = htid
 										_dragging_token_node = hit_node
 										_dragging_token_offset = hit_node.global_position - world_pos
@@ -2590,6 +2789,7 @@ func _unhandled_input(event: InputEvent) -> void:
 								_selected_meas_id = meas_id
 								if measurement_overlay != null:
 									measurement_overlay.set_selected(meas_id)
+								measurement_selected.emit(meas_id)
 								if eff_hit.endpoint != "":
 									var reg_m := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 									if reg_m != null and reg_m.measurement != null:
@@ -2600,6 +2800,11 @@ func _unhandled_input(event: InputEvent) -> void:
 											_meas_edit_id = meas_id
 											_meas_edit_old_start = md.world_start
 											_meas_edit_old_end = md.world_end
+											_meas_edit_old_extra = md.extra_value
+											if eff_hit.endpoint.begins_with("corner"):
+												var ci: int = eff_hit.endpoint.substr(6).to_int()
+												var corners: Array[Vector2] = measurement_overlay.get_corners(md)
+												_meas_edit_fixed_corner = corners[(ci + 2) % 4]
 								else:
 									var reg_m := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 									if reg_m != null and reg_m.measurement != null:
@@ -2640,8 +2845,6 @@ func _unhandled_input(event: InputEvent) -> void:
 									_resize_start_rect = _viewport_indicator
 									var corners := _indicator_corners()
 									_resize_anchor_world = corners[(eff_hit.handle + 2) % 4]
-								else:
-									_dragging_indicator = true
 								get_viewport().set_input_as_handled()
 								return
 							ISelectionService.SelectionLayer.WALL:
@@ -2660,6 +2863,21 @@ func _unhandled_input(event: InputEvent) -> void:
 										_selected_meas_id = ""
 										if measurement_overlay != null:
 											measurement_overlay.set_selected("")
+									# Shift+click on empty space starts box selection;
+									# otherwise clear multi-selection.
+									if btn_event.shift_pressed:
+										_start_box_select(world_pos)
+										get_viewport().set_input_as_handled()
+										return
+									var smgr_c: SelectionManager = _selection_mgr()
+									if smgr_c != null:
+										smgr_c.clear_selection()
+									# Start indicator body drag if click is inside the
+									# viewport indicator (lower priority than deselect).
+									if _indicator_has_point(world_pos):
+										_dragging_indicator = true
+									get_viewport().set_input_as_handled()
+									return
 								elif active_tool == Tool.PLACE_TOKEN:
 									var place_pos: Vector2 = world_pos
 									if Input.is_key_pressed(KEY_SHIFT) and _map != null:
@@ -2689,6 +2907,10 @@ func _unhandled_input(event: InputEvent) -> void:
 						return
 					if _effect_drag_placing:
 						_effect_drag_finish(get_global_mouse_position())
+						get_viewport().set_input_as_handled()
+						return
+					if _box_selecting:
+						_finish_box_select()
 						get_viewport().set_input_as_handled()
 						return
 					if _trigger_radius_dragging_id != null:
@@ -2760,6 +2982,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_RIGHT:
 				if btn_event.pressed and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_TOKEN or active_tool == Tool.PLACE_EFFECT):
 					var world_pos_r := get_global_mouse_position()
+					# Check measurements first (in SELECT mode only).
+					if active_tool == Tool.SELECT and measurement_overlay != null:
+						var meas_id: String = measurement_overlay.pick_nearest(world_pos_r, 16.0)
+						if not meas_id.is_empty():
+							measurement_right_clicked.emit(meas_id, btn_event.position)
+							get_viewport().set_input_as_handled()
+							return
 					var hit_id_r: Variant = _hit_test_tokens(world_pos_r)
 					if hit_id_r != null:
 						token_right_clicked.emit(str(hit_id_r), btn_event.position)
@@ -2772,6 +3001,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# --- Mouse motion (panning + indicator drag) ----------------------------
 	if event is InputEventMouseMotion:
 		var motion_world_pos := get_global_mouse_position()
+		if _box_selecting:
+			_update_box_select(motion_world_pos)
+			get_viewport().set_input_as_handled()
+			return
 		if _effect_drag_placing and _effect_drag_preview != null:
 			_effect_drag_preview_update(motion_world_pos)
 			get_viewport().set_input_as_handled()
@@ -2892,9 +3125,9 @@ func _process(delta: float) -> void:
 	if fog_overlay != null:
 		# Only player tokens (PlayerSprite) should act as fog revealers.
 		# DM-placed TokenSprite nodes must never receive a vision light.
-		var revealers: Array = token_layer.get_children().filter(
-				func(n: Node) -> bool: return not n is TokenSprite)
-		fog_overlay.sync_player_revealers(revealers)
+		# sync_player_revealers already filters by PlayerSprite internally,
+		# so pass the full child list directly and avoid an extra allocation.
+		fog_overlay.sync_player_revealers(token_layer.get_children())
 
 
 # ---------------------------------------------------------------------------
@@ -2974,6 +3207,49 @@ func _snap_meas_to_ft_from(raw_pos: Vector2, anchor: Vector2) -> Vector2:
 	return anchor + delta.normalized() * snapped_px
 
 
+## Computes new world_start, world_end, extra_value for a SQUARE or RECTANGLE
+## after dragging one corner, keeping the opposite corner fixed.
+## Returns a dictionary with keys "start", "end", "extra".
+func _corner_drag_result(md: MeasurementData, dragged_pos: Vector2,
+		fixed_corner: Vector2) -> Dictionary:
+	if md.shape_type == MeasurementData.ShapeType.SQUARE:
+		# Diagonal runs from fixed corner to dragged corner.
+		var diag: Vector2 = dragged_pos - fixed_corner
+		var diag_len: float = diag.length()
+		if diag_len < 1.0:
+			return {"start": md.world_start, "end": md.world_end, "extra": md.extra_value}
+		var new_side: float = diag_len / sqrt(2.0)
+		var new_center: Vector2 = (fixed_corner + dragged_pos) * 0.5
+		# The diagonal of a square bisects the dir and perp axes at 45°.
+		# dir = diagonal rotated -45°
+		var new_dir: Vector2 = diag.normalized().rotated(-PI * 0.25)
+		var half: float = new_side * 0.5
+		return {
+			"start": new_center - new_dir * half,
+			"end": new_center + new_dir * half,
+			"extra": 0.0,
+		}
+	else: # RECTANGLE
+		# Fixed corner = one of: s+p*hw, e+p*hw, e-p*hw, s-p*hw
+		# Dragged = the diagonally opposite one.
+		# The rectangle centre = midpoint, and axes = old dir/perp.
+		var old_dir: Vector2 = (md.world_end - md.world_start).normalized()
+		var old_perp: Vector2 = old_dir.rotated(PI * 0.5)
+		var new_center: Vector2 = (fixed_corner + dragged_pos) * 0.5
+		var half_diag: Vector2 = dragged_pos - new_center
+		var new_half_len: float = absf(half_diag.dot(old_dir))
+		var new_half_w: float = absf(half_diag.dot(old_perp))
+		if new_half_len < 1.0:
+			new_half_len = 1.0
+		if new_half_w < 1.0:
+			new_half_w = 1.0
+		return {
+			"start": new_center - old_dir * new_half_len,
+			"end": new_center + old_dir * new_half_len,
+			"extra": new_half_w,
+		}
+
+
 func _handle_measurement_input(event: InputEvent) -> bool:
 	if measurement_overlay == null or not is_dm_view:
 		return false
@@ -2988,7 +3264,7 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 				# If clicking on an existing shape, edit or move instead of drawing
 				var world_pos := get_global_mouse_position()
 				# Priority 1: endpoint edit (tighter snap)
-				var ep: Array = measurement_overlay.pick_endpoint(world_pos, 12.0)
+				var ep: Array = measurement_overlay.pick_endpoint(world_pos, 20.0)
 				var ep_which: String = ep[0] as String
 				var ep_id: String = ep[1] as String
 				if ep_which != "":
@@ -3001,14 +3277,21 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 							_meas_edit_id = ep_id
 							_meas_edit_old_start = md.world_start
 							_meas_edit_old_end = md.world_end
+							_meas_edit_old_extra = md.extra_value
+							if ep_which.begins_with("corner"):
+								var ci: int = ep_which.substr(6).to_int()
+								var corners: Array[Vector2] = measurement_overlay.get_corners(md)
+								_meas_edit_fixed_corner = corners[(ci + 2) % 4]
 							_selected_meas_id = ep_id
 							measurement_overlay.set_selected(ep_id)
+							measurement_selected.emit(ep_id)
 							return true
 				# Priority 2: body pick → move
 				var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
 				if picked_id != "":
 					_selected_meas_id = picked_id
 					measurement_overlay.set_selected(picked_id)
+					measurement_selected.emit(picked_id)
 					var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 					if registry != null and registry.measurement != null:
 						var md: MeasurementData = registry.measurement.get_by_id(picked_id)
@@ -3036,7 +3319,13 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 						if md != null:
 							var edited := MeasurementData.from_dict(md.to_dict())
 							var final_pos := get_global_mouse_position()
-							if _meas_edit_which == "start":
+							if _meas_edit_which.begins_with("corner"):
+								var res: Dictionary = _corner_drag_result(
+									md, final_pos, _meas_edit_fixed_corner)
+								edited.world_start = res["start"] as Vector2
+								edited.world_end = res["end"] as Vector2
+								edited.extra_value = res["extra"] as float
+							elif _meas_edit_which == "start":
 								edited.world_start = _snap_meas_to_ft_from(
 									final_pos, edited.world_end)
 							else:
@@ -3069,7 +3358,13 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 					var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
 					if md != null:
 						var preview := MeasurementData.from_dict(md.to_dict())
-						if _meas_edit_which == "start":
+						if _meas_edit_which.begins_with("corner"):
+							var res: Dictionary = _corner_drag_result(
+								md, world_pos, _meas_edit_fixed_corner)
+							preview.world_start = res["start"] as Vector2
+							preview.world_end = res["end"] as Vector2
+							preview.extra_value = res["extra"] as float
+						elif _meas_edit_which == "start":
 							preview.world_start = _snap_meas_to_ft_from(
 								world_pos, preview.world_end)
 						else:
@@ -3116,7 +3411,13 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 							if md != null:
 								var edited := MeasurementData.from_dict(md.to_dict())
 								var final_pos := get_global_mouse_position()
-								if _meas_edit_which == "start":
+								if _meas_edit_which.begins_with("corner"):
+									var res: Dictionary = _corner_drag_result(
+										md, final_pos, _meas_edit_fixed_corner)
+									edited.world_start = res["start"] as Vector2
+									edited.world_end = res["end"] as Vector2
+									edited.extra_value = res["extra"] as float
+								elif _meas_edit_which == "start":
 									edited.world_start = _snap_meas_to_ft_from(
 										final_pos, edited.world_end)
 								else:
@@ -3141,7 +3442,13 @@ func _handle_measurement_input(event: InputEvent) -> bool:
 					var md: MeasurementData = registry.measurement.get_by_id(_meas_edit_id)
 					if md != null:
 						var preview := MeasurementData.from_dict(md.to_dict())
-						if _meas_edit_which == "start":
+						if _meas_edit_which.begins_with("corner"):
+							var res: Dictionary = _corner_drag_result(
+								md, world_pos, _meas_edit_fixed_corner)
+							preview.world_start = res["start"] as Vector2
+							preview.world_end = res["end"] as Vector2
+							preview.extra_value = res["extra"] as float
+						elif _meas_edit_which == "start":
 							preview.world_start = _snap_meas_to_ft_from(
 								world_pos, preview.world_end)
 						else:
@@ -3205,7 +3512,6 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 					# print("[DEBUG] Wall Polygon: Polygon created with points", wall_polygon_points)
 					_apply_wall_polygon(wall_polygon_points)
 				else:
-					print("[DEBUG] Wall Polygon: Not enough points to create polygon")
 					pass
 				_clear_wall_polygon_preview()
 				wall_polygon_points.clear()
@@ -3221,8 +3527,7 @@ func _handle_fog_wall_input(event: InputEvent) -> bool:
 				_update_wall_polygon_preview(get_global_mouse_position())
 				return true
 		else:
-			print("[DEBUG] Wall Tool: Unknown wall_subtool value:", wall_subtool)
-			# Optionally, return false or handle as needed
+			push_warning("MapView: unknown wall_subtool value: %s" % str(wall_subtool))
 			return false
 
 	# Wall drag drain for SELECT mode (initial press handled by unified picker)
@@ -3639,6 +3944,21 @@ func set_fog_state(data: PackedByteArray) -> bool:
 	return apply_fog_snapshot(data)
 
 
+func clear_map() -> void:
+	## Unload the current map and return MapView to a blank state.
+	## Called when the DM closes the current map/save to return to the campaign hub.
+	reset_transient_state()
+	clear_effect_nodes()
+	_map = null
+	if map_image != null:
+		map_image.texture = null
+		map_image.visible = true
+	if video_bg != null and video_bg.is_playing():
+		video_bg.stop()
+		video_bg.stream = null
+	_is_video = false
+
+
 func reset_fog() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.fog == null:
@@ -3825,8 +4145,8 @@ func _build_dm_reveal_sources(map: MapData) -> Array:
 		# Placeholder logic (update as needed for your map data structure):
 		if "dm_reveal_objects" in map and map.dm_reveal_objects != null:
 			for obj in map.dm_reveal_objects:
-				var pos_raw = obj.get("position", {})
-				var pos = Vector2(float(pos_raw.get("x", 0.0)), float(pos_raw.get("y", 0.0)))
+				var pos_raw: Variant = obj.get("position", {})
+				var pos: Vector2 = Vector2(float(pos_raw.get("x", 0.0)), float(pos_raw.get("y", 0.0)))
 				reveals.append({
 					"position": pos,
 					"radius": maxf(float(obj.get("dm_reveal_radius", 56.0)), 12.0),
@@ -4326,3 +4646,101 @@ func _handle_spawn_point_input(event: InputEvent) -> bool:
 			return true
 
 	return false
+
+
+# ---------------------------------------------------------------------------
+# Multi-selection helpers
+# ---------------------------------------------------------------------------
+
+func _selection_mgr() -> SelectionManager:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		return null
+	return reg.selection
+
+
+## Sync TokenSprite._is_selected visuals whenever the selection set changes.
+func _on_selection_changed(selected_ids: Array) -> void:
+	for tid: Variant in _draggable_tokens.keys():
+		var node: Node2D = _draggable_tokens[tid] as Node2D
+		if node == null:
+			continue
+		var is_sel: bool = selected_ids.has(str(tid))
+		var ts: TokenSprite = node as TokenSprite
+		if ts != null:
+			ts.set_selected(is_sel)
+			continue
+		var ps: PlayerSprite = node as PlayerSprite
+		if ps != null:
+			ps.set_selected(is_sel)
+
+
+## Gather all token IDs whose centres fall inside a world-space rect.
+func _tokens_in_rect(rect: Rect2) -> Array:
+	var hits: Array = []
+	for tid: Variant in _draggable_tokens.keys():
+		var node: Node2D = _draggable_tokens[tid] as Node2D
+		if node != null and is_instance_valid(node) and rect.has_point(node.global_position):
+			var layer: int = ISelectionService.SelectionLayer.TOKEN
+			var ts: TokenSprite = node as TokenSprite
+			if ts != null and ts._category == TokenData.TokenCategory.MONSTER:
+				layer = ISelectionService.SelectionLayer.TOKEN
+			hits.append({"id": str(tid), "layer": layer})
+	return hits
+
+
+func _start_box_select(world_pos: Vector2) -> void:
+	_box_selecting = true
+	_box_select_start = world_pos
+	_box_select_end = world_pos
+	_update_box_select_overlay()
+
+
+func _update_box_select(world_pos: Vector2) -> void:
+	_box_select_end = world_pos
+	_update_box_select_overlay()
+
+
+func _finish_box_select() -> void:
+	if not _box_selecting:
+		return
+	_box_selecting = false
+	var rect := Rect2(_box_select_start, Vector2.ZERO).expand(_box_select_end)
+	var hits: Array = _tokens_in_rect(rect)
+	var mgr: SelectionManager = _selection_mgr()
+	if mgr != null:
+		mgr.box_select(hits)
+	_update_box_select_overlay()
+
+
+func _cancel_box_select() -> void:
+	_box_selecting = false
+	_update_box_select_overlay()
+
+
+func _update_box_select_overlay() -> void:
+	if _box_select_overlay == null:
+		return
+	if _box_selecting:
+		(_box_select_overlay as _BoxSelectOverlay).set_rect(
+			Rect2(_box_select_start, Vector2.ZERO).expand(_box_select_end))
+	else:
+		(_box_select_overlay as _BoxSelectOverlay).set_rect(Rect2())
+
+
+# ---------------------------------------------------------------------------
+# Inner class: lightweight overlay that draws the selection rectangle.
+# ---------------------------------------------------------------------------
+
+class _BoxSelectOverlay extends Node2D:
+	var _rect: Rect2 = Rect2()
+
+	func set_rect(r: Rect2) -> void:
+		_rect = r
+		queue_redraw()
+
+	func _draw() -> void:
+		if _rect.size.x == 0.0 and _rect.size.y == 0.0:
+			return
+		draw_rect(_rect, Color(0.2, 0.55, 1.0, 0.15), true)
+		draw_rect(_rect, Color(0.2, 0.55, 1.0, 0.7), false, 1.5)

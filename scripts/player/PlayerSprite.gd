@@ -34,6 +34,8 @@ var _token_diameter_px: float = _TOKEN_TEXTURE_DIAMETER_PX
 var _light_suppressed: bool = false
 var _saved_light_energy: float = 1.4
 var _lock_label: Label = null
+var _is_selected: bool = false
+var _is_active_turn: bool = false
 
 static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
@@ -197,15 +199,57 @@ func set_light_suppressed(suppressed: bool) -> void:
 		vision_light.energy = _saved_light_energy
 
 
+## Mark this sprite as selected; draws a coloured ring around the token.
+func set_selected(sel: bool) -> void:
+	if _is_selected == sel:
+		return
+	_is_selected = sel
+	queue_redraw()
+
+
+## Mark this sprite as the active combat turn (gold ring).
+func set_active_turn(active: bool) -> void:
+	if _is_active_turn == active:
+		return
+	_is_active_turn = active
+	queue_redraw()
+
+
+func _draw() -> void:
+	var r: float = _token_diameter_px * 0.5
+	var sel_pad: float = 4.0
+	var sel_r: float = r + sel_pad
+	var seg: int = 40
+	if _is_selected:
+		# Filled glow.
+		draw_circle(Vector2.ZERO, sel_r, Color(0.2, 0.55, 1.0, 0.18))
+		# Ring outline.
+		var pts := PackedVector2Array()
+		for i: int in seg:
+			var a: float = TAU * float(i) / float(seg)
+			pts.append(Vector2(cos(a) * sel_r, sin(a) * sel_r))
+		draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0.2, 0.55, 1.0, 0.9), 3.0)
+	if _is_active_turn:
+		var act_r: float = r + 9.0
+		# Filled glow.
+		draw_circle(Vector2.ZERO, act_r, Color(1.0, 0.85, 0.1, 0.15))
+		# Ring outline.
+		var act_pts := PackedVector2Array()
+		for i: int in seg:
+			var a: float = TAU * float(i) / float(seg)
+			act_pts.append(Vector2(cos(a) * act_r, sin(a) * act_r))
+		draw_polyline(act_pts + PackedVector2Array([act_pts[0]]), Color(1.0, 0.85, 0.1, 0.95), 4.0)
+
+
 func set_token_diameter_px(diameter_px: float) -> void:
 	_token_diameter_px = diameter_px
-	var tex_diam: float = _TOKEN_TEXTURE_DIAMETER_PX
+	var vis_diam: float = _TOKEN_VISIBLE_DIAMETER_PX
 	if _custom_icon_texture != null:
-		# Custom icons fill their full texture; scale down to match the default
-		# token's visible footprint (44 of 48 px).
-		tex_diam = float(_custom_icon_texture.get_width()) / (_TOKEN_VISIBLE_DIAMETER_PX / _TOKEN_TEXTURE_DIAMETER_PX)
-	var min_scale: float = _MIN_RENDERED_PX / tex_diam
-	sprite.scale = Vector2.ONE * maxf(diameter_px / tex_diam, min_scale)
+		# Custom icons fill their full texture; scale so they match the visible
+		# footprint without the border gap.
+		vis_diam = float(_custom_icon_texture.get_width())
+	var min_scale: float = _MIN_RENDERED_PX / vis_diam
+	sprite.scale = Vector2.ONE * maxf(diameter_px / vis_diam, min_scale)
 	collision.scale = Vector2.ONE * maxf(diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, _MIN_RENDERED_PX / _TOKEN_TEXTURE_DIAMETER_PX)
 
 
@@ -232,12 +276,12 @@ func _update_visuals() -> void:
 		sprite.texture = _custom_icon_texture
 		sprite.modulate = Color.WHITE
 		var tex_w: float = float(_custom_icon_texture.get_width())
-		var effective: float = tex_w / (_TOKEN_VISIBLE_DIAMETER_PX / _TOKEN_TEXTURE_DIAMETER_PX)
-		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / effective, _MIN_RENDERED_PX / effective)
+		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / tex_w, _MIN_RENDERED_PX / tex_w)
 	else:
 		sprite.texture = _get_or_create_token_texture()
-		# Restore scale for default 48px texture.
-		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / _TOKEN_TEXTURE_DIAMETER_PX, _MIN_RENDERED_PX / _TOKEN_TEXTURE_DIAMETER_PX)
+		# Scale the 48 px texture so that its 44 px visible circle fills the
+		# target diameter.  This eliminates the ~5 px gap vs. monster tokens.
+		sprite.scale = Vector2.ONE * maxf(_token_diameter_px / _TOKEN_VISIBLE_DIAMETER_PX, _MIN_RENDERED_PX / _TOKEN_VISIBLE_DIAMETER_PX)
 		# Use the profile-assigned indicator color when available; fall back to
 		# the id-hash color for backwards-compat (e.g. player display client).
 		if indicator_color_str.length() >= 6:

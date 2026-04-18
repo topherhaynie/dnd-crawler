@@ -41,7 +41,17 @@ registry.fog.set_fog_enabled(true)
 | `registry.token` | `ITokenService` | `TokenService` |
 | `registry.history` | `IHistoryService` | `HistoryService` |
 | `registry.measurement` | `IMeasurementService` | `MeasurementService` |
+| `registry.effect` | `IEffectService` | `EffectService` |
+| `registry.selection` | `ISelectionService` | `SelectionService` |
 | `registry.ui_scale` | `IUIScaleService` | `UIScaleService` |
+| `registry.ui_theme` | `IUIThemeService` | `UIThemeService` |
+| `registry.movement` | `IMovementService` | `MovementService` |
+| `registry.srd` | `ISRDLibraryService` | `SRDLibraryService` |
+| `registry.campaign` | `ICampaignService` | `CampaignService` |
+| `registry.character` | `ICharacterService` | `CharacterService` |
+| `registry.statblock` | `IStatblockService` | `StatblockService` |
+| `registry.dice` | `IDiceService` | `DiceService` |
+| `registry.combat` | `ICombatService` | `CombatService` |
 
 Never use `get_service(String)` in new code — always use the typed manager properties.
 
@@ -51,6 +61,22 @@ Never use `get_service(String)` in new code — always use the typed manager pro
 - Service registry: `scripts/core/ServiceRegistry.gd`
 - Autoloads: `scripts/autoloads/` — only `ServiceBootstrap.gd` and `HttpServer.cs`
 - Renderer nodes (not services): `scripts/render/` — `FogSystem.gd`, `MapView.gd`, `GridOverlay.gd`, `IndicatorOverlay.gd`
+- Utilities (static helpers): `scripts/utils/` — `Log.gd`, `GridSnap.gd`, `JsonUtils.gd`, etc.
+
+## Logging
+- Logger: [scripts/utils/Log.gd](scripts/utils/Log.gd) — static `class_name Log` (no autoload needed)
+- Levels: `Log.Level.DEBUG < INFO < WARN < ERROR < NONE`
+- Default threshold: `Log.level = Log.Level.INFO` (DEBUG messages hidden)
+- Usage: `Log.info("TagName", "message")`, `Log.debug(...)`, `Log.warn(...)`, `Log.error(...)`
+- `warn` routes through `push_warning()`; `error` routes through `push_error()`
+- **Never use bare `print()` in production code** — always use `Log.*` methods
+- To suppress all output at release: `Log.level = Log.Level.NONE`
+
+## Debug Mode
+- `Log.debug_mode` — `true` when running from the Godot editor, with `--debug`, or when env var `THE_VAULT_DEBUG=1` is set
+- Debug mode automatically sets `Log.level = Log.Level.DEBUG`
+- Developer-only features (e.g. DM arrow-key player movement) are gated behind `Log.debug_mode`
+- Gate new developer-only features with `if Log.debug_mode:` — never ship debug tools to end users
 
 ## Data and Persistence
 - Map bundles: directory package `*.map`

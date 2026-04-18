@@ -28,6 +28,13 @@ var selection: SelectionManager = null
 var ui_scale: UIScaleManager = null
 var ui_theme: UIThemeManager = null
 var movement: MovementManager = null
+var srd: SRDLibraryManager = null
+var campaign: CampaignManager = null
+var character: CharacterManager = null
+var statblock: StatblockManager = null
+var dice: DiceManager = null
+var combat: CombatManager = null
+var item: ItemManager = null
 
 ## Backwards-compat shim — returns the typed service for string-keyed callers.
 ## @deprecated Use typed manager properties instead.

@@ -463,7 +463,7 @@ func convert_video_to_ogv(
 	if not progress_file.is_empty():
 		args.append_array(["-progress", progress_file])
 	args.append_array(["-y", dest_path])
-	print("PersistenceService: running %s %s" % [ff, " ".join(args)])
+	Log.info("PersistenceService", "running %s %s" % [ff, " ".join(args)])
 	var output: Array = []
 	var exit_code: int = OS.execute(ff, args, output, true)
 	if exit_code != 0:

@@ -22,12 +22,12 @@
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
-            touch-action: none;
         }
 
         body {
             margin: 0;
-            min-height: 100svh;
+            height: 100svh;
+            overflow: hidden;
             font-family: "Avenir Next", "Segoe UI", sans-serif;
             color: var(--text);
             background:
@@ -35,7 +35,7 @@
                 radial-gradient(1000px 500px at 100% 100%, #5a3d2b 0%, transparent 35%),
                 var(--bg);
             display: grid;
-            grid-template-rows: auto 1fr auto;
+            grid-template-rows: auto auto 1fr;
             gap: 12px;
             padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
         }
@@ -105,11 +105,14 @@
         #joystickWrap {
             display: grid;
             place-items: center;
+            overflow: hidden;
         }
 
         #joystick {
             width: min(78vw, 360px);
-            height: min(78vw, 360px);
+            max-width: 100%;
+            max-height: 100%;
+            aspect-ratio: 1;
             border-radius: 50%;
             border: 2px solid rgba(255, 255, 255, 0.24);
             background:
@@ -168,6 +171,809 @@
             color: #201600;
             border-color: var(--accent);
         }
+
+        /* --- Tab bar --- */
+        .tab-bar {
+            display: flex;
+            gap: 4px;
+            background: var(--panel);
+            border-radius: 10px;
+            padding: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .tab-btn {
+            flex: 1;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--muted);
+            font-weight: 700;
+            font-size: 14px;
+            padding: 10px 0;
+            text-align: center;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .tab-btn.active {
+            background: var(--accent);
+            color: #201600;
+        }
+
+        .tab-content {
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .tab-content.active {
+            display: flex;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* --- Dice tab styles --- */
+        .dice-tray-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .dice-tray {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            min-height: 90px;
+            align-items: center;
+            justify-content: center;
+            padding: 8px;
+            perspective: 600px;
+        }
+
+        /* Phantom tray for Adv/Dis second set */
+        .dice-tray-phantom {
+            display: none;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 8px;
+            perspective: 600px;
+            border-top: 1px dashed rgba(255, 255, 255, 0.12);
+            margin-top: 4px;
+        }
+
+        .dice-tray-phantom.active {
+            display: flex;
+        }
+
+        .dice-tray-phantom .phantom-label {
+            width: 100%;
+            text-align: center;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            opacity: 0.6;
+            margin-bottom: 2px;
+        }
+
+        .phantom-die {
+            position: relative;
+            width: 56px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-style: preserve-3d;
+            --fl: #6e5c8a;
+            --fm: #574670;
+            --fd: #3f3258;
+            --fe: #2e2444;
+            --fn: #d4c090;
+            opacity: 0.7;
+        }
+
+        .phantom-die svg {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+        }
+
+        .phantom-die .fl {
+            fill: var(--fl);
+        }
+
+        .phantom-die .fm {
+            fill: var(--fm);
+        }
+
+        .phantom-die .fd {
+            fill: var(--fd);
+        }
+
+        .phantom-die .fo {
+            fill: none;
+            stroke: var(--fe);
+            stroke-width: 1.5;
+            stroke-linejoin: round;
+        }
+
+        .phantom-die .fe {
+            stroke: var(--fe);
+            stroke-width: 0.8;
+            fill: none;
+        }
+
+        .phantom-die .die-num {
+            text-anchor: middle;
+            dominant-baseline: central;
+            font-size: 16px;
+            font-weight: 800;
+            font-family: "Avenir Next", "Segoe UI", sans-serif;
+            fill: var(--fn);
+            opacity: 0.6;
+        }
+
+        .phantom-die .die-num.num-sm {
+            font-size: 14px;
+        }
+
+        .phantom-die .die-num.num-xs {
+            font-size: 12px;
+        }
+
+        .phantom-die.rolling {
+            animation: dieWobble 0.25s ease-in-out infinite;
+        }
+
+        .phantom-die.rolling .die-face {
+            animation: faceFlip 0.08s steps(1) infinite;
+        }
+
+        .phantom-die.rolling .die-corner {
+            animation: cornerFlip 0.08s steps(1) infinite;
+        }
+
+        .phantom-die.rolled {
+            --fl: #ffe070;
+            --fm: #e8c040;
+            --fd: #c8a028;
+            --fe: #a07818;
+            --fn: #1a1408;
+        }
+
+        .phantom-die.rolled .die-num {
+            opacity: 1;
+        }
+
+        .phantom-die.landing {
+            animation: dieLand 0.35s ease-out forwards;
+        }
+
+        /* Mini dice in the adv/dis result discarded pane */
+        .adv-dis-mini-tray {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .mini-die {
+            position: relative;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            --fl: #6e5c8a;
+            --fm: #574670;
+            --fd: #3f3258;
+            --fe: #2e2444;
+            --fn: #d4c090;
+        }
+
+        .adv-dis-roll.kept .mini-die {
+            --fl: #ffe070;
+            --fm: #e8c040;
+            --fd: #c8a028;
+            --fe: #a07818;
+            --fn: #1a1408;
+        }
+
+        .mini-die svg {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .mini-die .fl {
+            fill: var(--fl);
+        }
+
+        .mini-die .fm {
+            fill: var(--fm);
+        }
+
+        .mini-die .fd {
+            fill: var(--fd);
+        }
+
+        .mini-die .fo {
+            fill: none;
+            stroke: var(--fe);
+            stroke-width: 1.5;
+            stroke-linejoin: round;
+        }
+
+        .mini-die .fe {
+            stroke: var(--fe);
+            stroke-width: 0.8;
+            fill: none;
+        }
+
+        .mini-die .die-num {
+            text-anchor: middle;
+            dominant-baseline: central;
+            font-size: 12px;
+            font-weight: 800;
+            font-family: "Avenir Next", "Segoe UI", sans-serif;
+            fill: var(--fn);
+            opacity: 1;
+        }
+
+        .mini-die .die-num.num-sm {
+            font-size: 10px;
+        }
+
+        .mini-die .die-num.num-xs {
+            font-size: 9px;
+        }
+
+        .dice-tray-empty {
+            color: var(--muted);
+            font-size: 14px;
+            opacity: 0.6;
+        }
+
+        .dice-tray-total {
+            text-align: center;
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--accent);
+            min-height: 24px;
+            line-height: 1;
+            transition: transform 0.15s;
+        }
+
+        .dice-tray-total.crit {
+            color: #FFD700;
+            text-shadow: 0 0 16px rgba(255, 215, 0, 0.6), 0 0 40px rgba(255, 215, 0, 0.25);
+        }
+
+        .dice-tray-total.fumble {
+            color: #FF4444;
+            text-shadow: 0 0 16px rgba(255, 68, 68, 0.6), 0 0 40px rgba(255, 68, 68, 0.25);
+        }
+
+        /* Individual die in the tray */
+        .tray-die {
+            position: relative;
+            width: 64px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transform-style: preserve-3d;
+            transition: transform 0.15s ease-out;
+            --fl: #6e5c8a;
+            --fm: #574670;
+            --fd: #3f3258;
+            --fe: #2e2444;
+            --fn: #d4c090;
+        }
+
+        .tray-die.rolled {
+            --fl: #ffe070;
+            --fm: #e8c040;
+            --fd: #c8a028;
+            --fe: #a07818;
+            --fn: #1a1408;
+        }
+
+        .tray-die:active:not(.rolling) {
+            transform: scale(0.9);
+        }
+
+        .tray-die svg {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45));
+        }
+
+        .tray-die .fl {
+            fill: var(--fl);
+        }
+
+        .tray-die .fm {
+            fill: var(--fm);
+        }
+
+        .tray-die .fd {
+            fill: var(--fd);
+        }
+
+        .tray-die .fo {
+            fill: none;
+            stroke: var(--fe);
+            stroke-width: 1.5;
+            stroke-linejoin: round;
+        }
+
+        .tray-die .fe {
+            stroke: var(--fe);
+            stroke-width: 0.8;
+            fill: none;
+        }
+
+        .tray-die .die-num {
+            text-anchor: middle;
+            dominant-baseline: central;
+            font-size: 16px;
+            font-weight: 800;
+            font-family: "Avenir Next", "Segoe UI", sans-serif;
+            fill: var(--fn);
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .tray-die .die-num.num-sm {
+            font-size: 14px;
+        }
+
+        .tray-die .die-num.num-xs {
+            font-size: 12px;
+        }
+
+        .tray-die.rolled .die-num {
+            opacity: 1;
+        }
+
+        /* Face / corner / edge view toggle */
+        .tray-die .die-face {
+            opacity: 1;
+        }
+
+        .tray-die .die-corner {
+            opacity: 0;
+        }
+
+        .tray-die .die-edge {
+            opacity: 0;
+        }
+
+        .mini-die .die-face {
+            opacity: 1;
+        }
+
+        .mini-die .die-corner {
+            opacity: 0;
+        }
+
+        .mini-die .die-edge {
+            opacity: 0;
+        }
+
+        .phantom-die .die-face {
+            opacity: 1;
+        }
+
+        .phantom-die .die-corner {
+            opacity: 0;
+        }
+
+        .phantom-die .die-edge {
+            opacity: 0;
+        }
+
+        .tray-die .die-remove {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--warn);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            padding: 0;
+            line-height: 1;
+            z-index: 2;
+        }
+
+        .tray-die:hover .die-remove,
+        .tray-die:active .die-remove {
+            display: flex;
+        }
+
+        /* Wobble while rolling — no 3D rotation that reveals flatness */
+        @keyframes dieWobble {
+            0% {
+                transform: rotate(0deg) scale(1);
+            }
+
+            20% {
+                transform: rotate(6deg) scale(1.04);
+            }
+
+            40% {
+                transform: rotate(-5deg) scale(0.97);
+            }
+
+            60% {
+                transform: rotate(4deg) scale(1.03);
+            }
+
+            80% {
+                transform: rotate(-3deg) scale(0.98);
+            }
+
+            100% {
+                transform: rotate(0deg) scale(1);
+            }
+        }
+
+        .tray-die.rolling {
+            animation: dieWobble 0.25s ease-in-out infinite;
+        }
+
+        /* Toggle face/corner views during roll (2-state default) */
+        @keyframes faceFlip {
+
+            0%,
+            49.9% {
+                opacity: 1;
+            }
+
+            50%,
+            100% {
+                opacity: 0;
+            }
+        }
+
+        @keyframes cornerFlip {
+
+            0%,
+            49.9% {
+                opacity: 0;
+            }
+
+            50%,
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .tray-die.rolling .die-face {
+            animation: faceFlip 0.08s steps(1) infinite;
+        }
+
+        .tray-die.rolling .die-corner {
+            animation: cornerFlip 0.08s steps(1) infinite;
+        }
+
+        /* Landing settle when rolling stops */
+        @keyframes dieLand {
+            0% {
+                transform: rotate(3deg) scale(1.04);
+            }
+
+            40% {
+                transform: rotate(-2deg) scale(0.97);
+            }
+
+            70% {
+                transform: rotate(1deg) scale(1.01);
+            }
+
+            100% {
+                transform: rotate(0deg) scale(1);
+            }
+        }
+
+        .tray-die.landing {
+            animation: dieLand 0.35s ease-out forwards;
+        }
+
+        /* Glow pulse on the die shape when value is locked */
+        .tray-die.landed .fo {
+            filter: drop-shadow(0 0 8px rgba(240, 162, 2, 0.5));
+        }
+
+        /* Die picker row */
+        .die-picker {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+        }
+
+        .die-pick-btn {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            border: 2px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            background: var(--panel-2);
+            color: var(--text);
+            font-weight: 700;
+            font-size: 12px;
+            padding: 8px 4px 6px;
+            text-align: center;
+            transition: background 0.12s, border-color 0.12s;
+        }
+
+        .die-pick-btn:active {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: var(--accent);
+        }
+
+        .die-shape {
+            width: 28px;
+            height: 28px;
+            color: var(--muted);
+        }
+
+        .die-pick-btn:active .die-shape {
+            color: var(--accent);
+        }
+
+        .dice-mod-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .dice-mod-label {
+            color: var(--muted);
+            font-size: 13px;
+            margin-right: 4px;
+        }
+
+        /* Roll button held state */
+        .roll-btn.held {
+            background: #c47d00;
+            box-shadow: 0 0 16px rgba(240, 162, 2, 0.4);
+        }
+
+        .roll-adv.held {
+            background: var(--ok);
+            color: #fff;
+        }
+
+        .roll-dis.held {
+            background: var(--warn);
+            color: #fff;
+        }
+
+        .mod-btn {
+            width: 40px;
+            height: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 10px;
+            background: var(--panel-2);
+            color: var(--text);
+            font-size: 20px;
+            font-weight: 700;
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+        }
+
+        .mod-btn:active {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .mod-value {
+            color: var(--accent);
+            font-weight: 700;
+            font-size: 16px;
+            min-width: 32px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .roll-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .roll-btn {
+            flex: 2;
+            border: 0;
+            border-radius: 10px;
+            background: var(--accent);
+            color: #201600;
+            font-weight: 700;
+            font-size: 17px;
+            padding: 14px 0;
+        }
+
+        .roll-btn:active {
+            filter: brightness(0.85);
+        }
+
+        .roll-adv {
+            flex: 1;
+            border: 2px solid var(--ok);
+            border-radius: 10px;
+            background: transparent;
+            color: var(--ok);
+            font-weight: 700;
+            font-size: 14px;
+            padding: 14px 0;
+        }
+
+        .roll-dis {
+            flex: 1;
+            border: 2px solid var(--warn);
+            border-radius: 10px;
+            background: transparent;
+            color: var(--warn);
+            font-weight: 700;
+            font-size: 14px;
+            padding: 14px 0;
+        }
+
+        .dice-history {
+            max-height: 160px;
+            overflow-y: auto;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .dice-history-entry {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 4px 0;
+        }
+
+        .dice-history-entry .total {
+            color: var(--text);
+            font-weight: 700;
+        }
+
+        .dice-history-entry .expr {
+            color: var(--accent);
+        }
+
+        .dice-clear-btn {
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 8px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 13px;
+            padding: 8px 0;
+            width: 100%;
+        }
+
+        /* Roll result panel (adv/dis comparison, crit breakdown) */
+        .roll-result {
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .roll-result.visible {
+            display: flex;
+        }
+
+        .roll-result-label {
+            text-align: center;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }
+
+        .adv-dis-rolls {
+            display: flex;
+            gap: 6px;
+        }
+
+        .adv-dis-roll {
+            flex: 1;
+            border-radius: 10px;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            opacity: 0.45;
+            transition: opacity 0.3s, border-color 0.3s;
+        }
+
+        .adv-dis-roll.kept {
+            opacity: 1;
+            border-color: var(--accent);
+            box-shadow: 0 0 12px rgba(240, 162, 2, 0.25);
+        }
+
+        .adv-dis-tag {
+            font-weight: 700;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 3px;
+            color: var(--muted);
+        }
+
+        .adv-dis-roll.kept .adv-dis-tag {
+            color: var(--accent);
+        }
+
+        .adv-dis-dice {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .adv-dis-total {
+            font-weight: 700;
+            font-size: 18px;
+            color: var(--text);
+            margin-top: 2px;
+        }
+
+        .adv-dis-roll.kept .adv-dis-total {
+            color: var(--accent);
+        }
+
+        .crit-row {
+            display: flex;
+        }
+
+        .crit-btn {
+            flex: 1;
+            border: 2px solid #e74c3c;
+            border-radius: 10px;
+            background: transparent;
+            color: #e74c3c;
+            font-weight: 700;
+            font-size: 14px;
+            padding: 10px 0;
+            transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+        }
+
+        .crit-btn.active {
+            background: #e74c3c;
+            color: #fff;
+            box-shadow: 0 0 16px rgba(231, 76, 60, 0.4);
+        }
+
+        .crit-breakdown {
+            text-align: center;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .crit-breakdown b {
+            color: #FFD700;
+        }
     </style>
 </head>
 
@@ -189,21 +995,117 @@
         <div id="status">Disconnected</div>
     </section>
 
-    <section id="joystickWrap" class="card">
-        <div id="joystick">
-            <div id="knob"></div>
-        </div>
-    </section>
+    <!-- Tab bar -->
+    <nav class="tab-bar">
+        <button class="tab-btn active" data-tab="controls" type="button">Controls</button>
+        <button class="tab-btn" data-tab="dice" type="button">Dice</button>
+    </nav>
 
-    <section class="action-row">
-        <button id="dashBtn" class="action-btn" type="button">Dash</button>
-        <button id="interactBtn" class="action-btn" type="button">Interact</button>
-    </section>
+    <!-- Controls tab -->
+    <div id="tab-controls" class="tab-content active" style="flex:1; min-height:0; touch-action:none;">
+        <section id="joystickWrap" class="card" style="flex:1; min-height:0;">
+            <div id="joystick">
+                <div id="knob"></div>
+            </div>
+        </section>
 
-    <section class="telemetry card">
-        <div>x: <span id="xVal">0.00</span></div>
-        <div>y: <span id="yVal">0.00</span></div>
-    </section>
+        <section class="action-row">
+            <button id="dashBtn" class="action-btn" type="button">Dash</button>
+            <button id="interactBtn" class="action-btn" type="button">Interact</button>
+        </section>
+
+        <section class="telemetry card">
+            <div>x: <span id="xVal">0.00</span></div>
+            <div>y: <span id="yVal">0.00</span></div>
+        </section>
+    </div>
+
+    <!-- Dice tab -->
+    <div id="tab-dice" class="tab-content" style="flex:1; min-height:0;">
+        <!-- Dice tray — visual dice sit here -->
+        <section class="card dice-tray-section">
+            <div class="dice-tray" id="diceTray">
+                <div class="dice-tray-empty" id="diceTrayEmpty">Tap a die below to add it</div>
+            </div>
+            <div class="dice-tray-phantom" id="diceTrayPhantom"></div>
+            <div class="dice-tray-total" id="diceTrayTotal"></div>
+            <div class="roll-result" id="rollResult"></div>
+
+            <!-- Roll buttons — hold to roll, release to lock -->
+            <div class="roll-row">
+                <button class="roll-btn" id="rollBtn" type="button">Roll</button>
+                <button class="roll-adv" id="rollAdvBtn" type="button">Adv</button>
+                <button class="roll-dis" id="rollDisBtn" type="button">Dis</button>
+            </div>
+        </section>
+
+        <!-- Die type buttons -->
+        <section class="card" style="display:flex; flex-direction:column; gap:10px;">
+            <div class="die-picker">
+                <button class="die-pick-btn" data-sides="4" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <polygon points="24,4 44,40 4,40" fill="none" stroke="currentColor" stroke-width="2.5" />
+                    </svg>
+                    <span>d4</span>
+                </button>
+                <button class="die-pick-btn" data-sides="6" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <rect x="6" y="6" width="36" height="36" rx="4" fill="none" stroke="currentColor"
+                            stroke-width="2.5" />
+                    </svg>
+                    <span>d6</span>
+                </button>
+                <button class="die-pick-btn" data-sides="8" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <polygon points="24,2 46,24 24,46 2,24" fill="none" stroke="currentColor" stroke-width="2.5" />
+                    </svg>
+                    <span>d8</span>
+                </button>
+                <button class="die-pick-btn" data-sides="10" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <polygon points="3,24 24,8 45,24 24,40" fill="none" stroke="currentColor" stroke-width="2.5" />
+                    </svg>
+                    <span>d10</span>
+                </button>
+                <button class="die-pick-btn" data-sides="12" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <polygon points="24,3 45,18 37,42 11,42 3,18" fill="none" stroke="currentColor"
+                            stroke-width="2.5" />
+                    </svg>
+                    <span>d12</span>
+                </button>
+                <button class="die-pick-btn" data-sides="20" type="button">
+                    <svg class="die-shape" viewBox="0 0 48 48">
+                        <polygon points="24,3 45,15 45,33 24,45 3,33 3,15" fill="none" stroke="currentColor"
+                            stroke-width="2.5" />
+                    </svg>
+                    <span>d20</span>
+                </button>
+            </div>
+
+            <!-- Modifier row -->
+            <div class="dice-mod-row">
+                <span class="dice-mod-label">Modifier</span>
+                <button class="mod-btn" id="modMinus" type="button">−</button>
+                <span class="mod-value" id="modValue">+0</span>
+                <button class="mod-btn" id="modPlus" type="button">+</button>
+            </div>
+
+            <!-- Crit toggle -->
+            <div class="crit-row">
+                <button class="crit-btn" id="critBtn" type="button">⚔ Critical Hit</button>
+            </div>
+
+            <!-- Clear -->
+            <button class="dice-clear-btn" id="diceClearBtn" type="button">Clear All</button>
+
+        </section>
+
+        <!-- History -->
+        <section class="card" style="display:flex; flex-direction:column; gap:6px;">
+            <div class="dice-history" id="diceHistory"></div>
+        </section>
+    </div>
 
     <script>
         const hostEl = document.getElementById("host");
@@ -219,6 +1121,13 @@
         const dashBtn = document.getElementById("dashBtn");
         const interactBtn = document.getElementById("interactBtn");
 
+        // Dice elements
+        const diceTrayEl = document.getElementById("diceTray");
+        const diceTrayEmptyEl = document.getElementById("diceTrayEmpty");
+        const diceTrayTotalEl = document.getElementById("diceTrayTotal");
+        const modValueEl = document.getElementById("modValue");
+        const diceHistoryEl = document.getElementById("diceHistory");
+
         let ws = null;
         let sending = false;
         let reconnectTimer = null;
@@ -227,6 +1136,713 @@
         let vectorX = 0;
         let vectorY = 0;
         let isDashing = false;
+        let diceMod = 0;
+
+        // Dice tray state
+        const trayDice = []; // Array of {sides, value, el}
+        let rollingInterval = null;   // setInterval id while held
+        let rollAdv = false;
+        let rollDis = false;
+        let rollHeldBtn = null;       // which button is currently held
+        let critMode = false;
+        let critRule = "max_plus_roll"; // "max_plus_roll" | "double_dice" — set by campaign_config
+        const critRuleLabels = {
+            "max_plus_roll": "Max + Roll",
+            "double_dice": "Double Dice",
+        };
+        const rollResultEl = document.getElementById("rollResult");
+        const diceTrayPhantomEl = document.getElementById("diceTrayPhantom");
+        let phantomDice = [];         // Array of {sides, el} for adv/dis second set
+
+        // Two-state SVG per die: face-up (top-down) and corner-up (vertex-up)
+        // Rolling toggles between the two; landing shows face-up with value.
+        // Text is outside both groups so it stays visible during the toggle.
+        function makeDieSvg(sides, value) {
+            var t = value !== null ? String(value) : '';
+            var f, c, tx; // face-up, corner-up, text overlay
+            switch (sides) {
+                case 4:
+                    // Face-up: equilateral triangle (one face)
+                    f = '<g class="die-face">' +
+                        '<polygon class="fl" points="32,10 8,54 56,54"/>' +
+                        '<polygon class="fo" points="32,10 8,54 56,54"/></g>';
+                    // Corner-up: 3 faces meeting at inner point
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fd" points="32,10 8,54 32,40"/>' +
+                        '<polygon class="fm" points="32,10 56,54 32,40"/>' +
+                        '<polygon class="fl" points="8,54 56,54 32,40"/>' +
+                        '<polygon class="fo" points="32,10 8,54 56,54"/>' +
+                        '<line class="fe" x1="32" y1="10" x2="32" y2="40"/>' +
+                        '<line class="fe" x1="8" y1="54" x2="32" y2="40"/>' +
+                        '<line class="fe" x1="56" y1="54" x2="32" y2="40"/></g>';
+                    tx = '<text class="die-num num-sm" x="32" y="39">' + t + '</text>';
+                    break;
+                case 6:
+                    // Face-up: square (one face)
+                    f = '<g class="die-face">' +
+                        '<rect class="fl" x="10" y="10" width="44" height="44" rx="3"/>' +
+                        '<rect class="fo" x="10" y="10" width="44" height="44" rx="3"/></g>';
+                    // Corner-up: isometric hex, Y-junction (3 faces)
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fl" points="9,19 32,6 55,19 32,32"/>' +
+                        '<polygon class="fm" points="55,19 55,45 32,58 32,32"/>' +
+                        '<polygon class="fd" points="32,58 9,45 9,19 32,32"/>' +
+                        '<polygon class="fo" points="32,6 55,19 55,45 32,58 9,45 9,19"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="55" y2="19"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="32" y2="58"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="9" y2="19"/></g>';
+                    tx = '<text class="die-num" x="32" y="32">' + t + '</text>';
+                    break;
+                case 8:
+                    // Face-up: sides nearly vertical — outer sil barely wider than top face
+                    // Top face triangle: (32,8) (52,44) (12,44)
+                    // Outer silhouette hugs close: just 2-3px beyond
+                    f = '<g class="die-face">' +
+                        '<polygon class="fm" points="32,8 54,20 52,44"/>' +
+                        '<polygon class="fd" points="52,44 32,54 12,44"/>' +
+                        '<polygon class="fm" points="12,44 10,20 32,8"/>' +
+                        '<polygon class="fl" points="32,8 52,44 12,44"/>' +
+                        '<polygon class="fo" points="32,8 54,20 52,44 32,54 12,44 10,20"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="52" y2="44"/>' +
+                        '<line class="fe" x1="52" y1="44" x2="12" y2="44"/>' +
+                        '<line class="fe" x1="12" y1="44" x2="32" y2="8"/></g>';
+                    // Corner-up: diamond (rotated square), X-division (4 faces)
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fl" points="32,6 58,32 32,32"/>' +
+                        '<polygon class="fm" points="58,32 32,58 32,32"/>' +
+                        '<polygon class="fd" points="32,58 6,32 32,32"/>' +
+                        '<polygon class="fm" points="6,32 32,6 32,32"/>' +
+                        '<polygon class="fo" points="32,6 58,32 32,58 6,32"/>' +
+                        '<line class="fe" x1="32" y1="6" x2="32" y2="58"/>' +
+                        '<line class="fe" x1="6" y1="32" x2="58" y2="32"/></g>';
+                    tx = '<text class="die-num" x="32" y="32">' + t + '</text>';
+                    break;
+                case 10:
+                    // d10 = two offset pentagonal pyramids joined by circular rim
+                    // Top pyramid: pole(32,8), base at y=30: L(8,30) A(20,30) B(44,30) R(56,30)
+                    //   → 3 triangles (pole to each adjacent pair)
+                    // Band/rim: y=30→34, separate quads, no diagonals crossing
+                    // Bottom pyramid: pole(32,54), base at y=34 OFFSET: L2(8,34) C(14,34) D(32,34) E(50,34) R2(56,34)
+                    //   → 4 triangles (pole to each adjacent pair)
+                    f = '<g class="die-face">' +
+                        '<polygon class="fd" points="32,8 8,30 20,30"/>' +
+                        '<polygon class="fl" points="32,8 20,30 44,30"/>' +
+                        '<polygon class="fm" points="32,8 44,30 56,30"/>' +
+                        '<polygon class="fd" points="8,30 8,34 14,34 20,30"/>' +
+                        '<polygon class="fm" points="20,30 14,34 32,34 44,30"/>' +
+                        '<polygon class="fd" points="44,30 32,34 50,34 56,30"/>' +
+                        '<polygon class="fm" points="56,30 50,34 56,34"/>' +
+                        '<polygon class="fd" points="8,34 14,34 32,54"/>' +
+                        '<polygon class="fm" points="14,34 32,34 32,54"/>' +
+                        '<polygon class="fd" points="32,34 50,34 32,54"/>' +
+                        '<polygon class="fm" points="50,34 56,34 32,54"/>' +
+                        '<polygon class="fo" points="32,8 56,30 56,34 32,54 8,34 8,30"/>' +
+                        '<polygon class="fo" points="32,8 20,30 44,30"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="20" y2="30"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="44" y2="30"/>' +
+                        '<line class="fe" x1="8" y1="30" x2="56" y2="30"/>' +
+                        '<line class="fe" x1="8" y1="34" x2="56" y2="34"/>' +
+                        '<line class="fe" x1="32" y1="54" x2="14" y2="34"/>' +
+                        '<line class="fe" x1="32" y1="54" x2="32" y2="34"/>' +
+                        '<line class="fe" x1="32" y1="54" x2="50" y2="34"/></g>';
+                    // Corner-up: flipped face-up (horizontal mirror)
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fd" points="32,54 8,32 20,32"/>' +
+                        '<polygon class="fl" points="32,54 20,32 44,32"/>' +
+                        '<polygon class="fm" points="32,54 44,32 56,32"/>' +
+                        '<polygon class="fd" points="8,32 8,28 14,28 20,32"/>' +
+                        '<polygon class="fm" points="20,32 14,28 32,28 44,32"/>' +
+                        '<polygon class="fd" points="44,32 32,28 50,28 56,32"/>' +
+                        '<polygon class="fm" points="56,32 50,28 56,28"/>' +
+                        '<polygon class="fd" points="8,28 14,28 32,8"/>' +
+                        '<polygon class="fm" points="14,28 32,28 32,8"/>' +
+                        '<polygon class="fd" points="32,28 50,28 32,8"/>' +
+                        '<polygon class="fm" points="50,28 56,28 32,8"/>' +
+                        '<polygon class="fo" points="32,54 56,32 56,28 32,8 8,28 8,32"/>' +
+                        '<polygon class="fo" points="32,54 20,32 44,32"/>' +
+                        '<line class="fe" x1="32" y1="54" x2="20" y2="32"/>' +
+                        '<line class="fe" x1="32" y1="54" x2="44" y2="32"/>' +
+                        '<line class="fe" x1="8" y1="32" x2="56" y2="32"/>' +
+                        '<line class="fe" x1="8" y1="28" x2="56" y2="28"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="14" y2="28"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="32" y2="28"/>' +
+                        '<line class="fe" x1="32" y1="8" x2="50" y2="28"/></g>';
+                    tx = '<text class="die-num num-sm" x="32" y="24">' + t + '</text>';
+                    break;
+                case 12:
+                    // Face-up: decagonal outline with 5 individually-shaded surrounding pentagons
+                    // Inner pentagon vertices: (32,16) (47,27) (41,45) (23,45) (17,27)
+                    // Outer decagon vertices: (32,4) (48,9) (59,23) (59,41) (48,55) (32,60) (16,55) (5,41) (5,23) (16,9)
+                    f = '<g class="die-face">' +
+                        '<polygon class="fm" points="32,16 32,4 48,9 59,23 47,27"/>' +
+                        '<polygon class="fd" points="47,27 59,23 59,41 48,55 41,45"/>' +
+                        '<polygon class="fm" points="41,45 48,55 32,60 16,55 23,45"/>' +
+                        '<polygon class="fd" points="23,45 16,55 5,41 5,23 17,27"/>' +
+                        '<polygon class="fm" points="17,27 5,23 16,9 32,4 32,16"/>' +
+                        '<polygon class="fl" points="32,16 47,27 41,45 23,45 17,27"/>' +
+                        '<polygon class="fo" points="32,4 48,9 59,23 59,41 48,55 32,60 16,55 5,41 5,23 16,9"/>' +
+                        '<polygon class="fo" points="32,16 47,27 41,45 23,45 17,27"/>' +
+                        '<line class="fe" x1="32" y1="16" x2="32" y2="4"/>' +
+                        '<line class="fe" x1="47" y1="27" x2="59" y2="23"/>' +
+                        '<line class="fe" x1="41" y1="45" x2="48" y2="55"/>' +
+                        '<line class="fe" x1="23" y1="45" x2="16" y2="55"/>' +
+                        '<line class="fe" x1="17" y1="27" x2="5" y2="23"/></g>';
+                    // Corner-up: hexagonal outline, Y-division (3 pentagons meeting at vertex)
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fl" points="32,4 56,18 56,46 32,32"/>' +
+                        '<polygon class="fm" points="56,46 32,60 8,46 32,32"/>' +
+                        '<polygon class="fd" points="8,46 8,18 32,4 32,32"/>' +
+                        '<polygon class="fo" points="32,4 56,18 56,46 32,60 8,46 8,18"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="32" y2="4"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="56" y2="46"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="8" y2="46"/></g>';
+                    tx = '<text class="die-num num-sm" x="32" y="32">' + t + '</text>';
+                    break;
+                case 20:
+                    // Face-up: hexagonal outline, central triangle + 3 adjacent + 6 outer wedges
+                    // Light from top-left: outer wedges get progressively darker toward bottom-right
+                    f = '<g class="die-face">' +
+                        '<polygon class="fl" points="9,19 32,6 32,18"/>' +
+                        '<polygon class="fm" points="32,6 55,19 32,18"/>' +
+                        '<polygon class="fm" points="55,19 55,45 46,40"/>' +
+                        '<polygon class="fd" points="55,45 32,58 46,40"/>' +
+                        '<polygon class="fd" points="32,58 9,45 18,40"/>' +
+                        '<polygon class="fm" points="9,45 9,19 18,40"/>' +
+                        '<polygon class="fm" points="32,18 55,19 46,40"/>' +
+                        '<polygon class="fd" points="46,40 32,58 18,40"/>' +
+                        '<polygon class="fm" points="18,40 9,19 32,18"/>' +
+                        '<polygon class="fl" points="32,18 46,40 18,40"/>' +
+                        '<polygon class="fo" points="32,6 55,19 55,45 32,58 9,45 9,19"/>' +
+                        '<line class="fe" x1="32" y1="18" x2="46" y2="40"/>' +
+                        '<line class="fe" x1="46" y1="40" x2="18" y2="40"/>' +
+                        '<line class="fe" x1="18" y1="40" x2="32" y2="18"/>' +
+                        '<line class="fe" x1="32" y1="6" x2="32" y2="18"/>' +
+                        '<line class="fe" x1="55" y1="19" x2="46" y2="40"/>' +
+                        '<line class="fe" x1="55" y1="45" x2="46" y2="40"/>' +
+                        '<line class="fe" x1="32" y1="58" x2="18" y2="40"/>' +
+                        '<line class="fe" x1="9" y1="45" x2="18" y2="40"/>' +
+                        '<line class="fe" x1="9" y1="19" x2="32" y2="18"/>' +
+                        '<line class="fe" x1="55" y1="19" x2="32" y2="18"/></g>';
+                    // Corner-up: decagonal outline, 5 inner triangles from center + 5 outer wedges
+                    c = '<g class="die-corner">' +
+                        '<polygon class="fm" points="32,4 49,9 59,23"/>' +
+                        '<polygon class="fm" points="59,23 59,41 49,55"/>' +
+                        '<polygon class="fm" points="49,55 32,60 15,55"/>' +
+                        '<polygon class="fm" points="15,55 5,41 5,23"/>' +
+                        '<polygon class="fm" points="5,23 15,9 32,4"/>' +
+                        '<polygon class="fl" points="32,4 59,23 32,32"/>' +
+                        '<polygon class="fd" points="59,23 49,55 32,32"/>' +
+                        '<polygon class="fl" points="49,55 15,55 32,32"/>' +
+                        '<polygon class="fd" points="15,55 5,23 32,32"/>' +
+                        '<polygon class="fl" points="5,23 32,4 32,32"/>' +
+                        '<polygon class="fo" points="32,4 49,9 59,23 59,41 49,55 32,60 15,55 5,41 5,23 15,9"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="32" y2="4"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="59" y2="23"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="49" y2="55"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="15" y2="55"/>' +
+                        '<line class="fe" x1="32" y1="32" x2="5" y2="23"/></g>';
+                    tx = '<text class="die-num num-sm" x="32" y="33">' + t + '</text>';
+                    break;
+            }
+            return '<svg viewBox="0 0 64 64">' + (f || '') + (c || '') + (tx || '') + '</svg>';
+        }
+
+        // --- Tab switching ---
+        document.querySelectorAll(".tab-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+                document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+                btn.classList.add("active");
+                const target = document.getElementById("tab-" + btn.dataset.tab);
+                if (target) target.classList.add("active");
+            });
+        });
+
+        // --- Dice modifier ---
+        document.getElementById("modMinus").addEventListener("click", () => {
+            diceMod = Math.max(-20, diceMod - 1);
+            modValueEl.textContent = diceMod >= 0 ? "+" + diceMod : String(diceMod);
+            updateTrayTotal();
+        });
+        document.getElementById("modPlus").addEventListener("click", () => {
+            diceMod = Math.min(20, diceMod + 1);
+            modValueEl.textContent = diceMod >= 0 ? "+" + diceMod : String(diceMod);
+            updateTrayTotal();
+        });
+
+        // --- Die picker: add a die to the tray ---
+        document.querySelectorAll(".die-pick-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                addDieToTray(parseInt(btn.dataset.sides));
+            });
+        });
+
+        function addDieToTray(sides) {
+            const die = { sides, value: null };
+            const el = document.createElement("div");
+            el.className = "tray-die";
+            el.innerHTML =
+                makeDieSvg(sides, null) +
+                '<button class="die-remove" type="button">&times;</button>';
+            die.el = el;
+
+            // Tap to preview-roll this single die
+            el.addEventListener("click", (e) => {
+                if (e.target.classList.contains("die-remove")) return;
+                if (rollingInterval) return; // ignore taps while held-rolling
+                previewRollSingleDie(die);
+            });
+
+            el.querySelector(".die-remove").addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeDieFromTray(die);
+            });
+
+            trayDice.push(die);
+            diceTrayEl.appendChild(el);
+            diceTrayEmptyEl.style.display = "none";
+            updateTrayTotal();
+            // Auto-roll when added so it immediately shows a value
+            previewRollSingleDie(die);
+        }
+
+        function removeDieFromTray(die) {
+            const idx = trayDice.indexOf(die);
+            if (idx >= 0) trayDice.splice(idx, 1);
+            die.el.remove();
+            if (trayDice.length === 0) {
+                diceTrayEmptyEl.style.display = "";
+                diceTrayTotalEl.textContent = "";
+                diceTrayTotalEl.className = "dice-tray-total";
+            } else {
+                updateTrayTotal();
+            }
+        }
+
+        // Preview a single die with a short tumble (client-side only)
+        function previewRollSingleDie(die) {
+            rollResultEl.innerHTML = "";
+            rollResultEl.classList.remove("visible");
+            clearPhantomTray();
+            die.el.classList.remove("landed", "landing");
+            die.el.classList.add("rolling");
+            let ticks = 0;
+            const iv = setInterval(() => {
+                die.value = Math.floor(Math.random() * die.sides) + 1;
+                die.el.querySelector(".die-num").textContent = String(die.value);
+                ticks++;
+                if (ticks >= 8) {
+                    clearInterval(iv);
+                    die.el.classList.remove("rolling");
+                    die.el.classList.add("rolled", "landing", "landed");
+                    die.el.addEventListener("animationend", () => {
+                        die.el.classList.remove("landing");
+                    }, { once: true });
+                    updateTrayTotal();
+                }
+            }, 40);
+        }
+
+        // --- Continuous rolling (hold to roll) ---
+
+        // Crit math per ruleset. rawSum = sum of rolled dice (no modifier).
+        // "max_plus_roll": maxDice + mod + rolled + mod
+        // "double_dice": rolled * 2 + mod  (roll once, double it, add mod once)
+        function computeCritFromRaw(rawSum) {
+            if (critRule === "double_dice") {
+                return rawSum * 2 + diceMod;
+            }
+            // max_plus_roll (default)
+            const maxD = trayDice.reduce((a, d) => a + d.sides, 0);
+            return maxD + diceMod + rawSum + diceMod;
+        }
+
+        function startContinuousRoll(advantage, disadvantage, btnEl) {
+            if (trayDice.length === 0 || rollingInterval) return;
+            rollAdv = advantage;
+            rollDis = disadvantage;
+            rollHeldBtn = btnEl;
+            if (btnEl) btnEl.classList.add("held");
+
+            // Put all dice into rolling animation with staggered timing
+            trayDice.forEach((d, i) => {
+                d.el.classList.remove("rolled", "landed", "landing");
+                d.el.classList.add("rolling");
+                d.el.style.animationDelay = (i * 0.04 + Math.random() * 0.06).toFixed(3) + "s";
+                d.el.style.animationDuration = (0.25 + Math.random() * 0.12).toFixed(3) + "s";
+            });
+
+            // Spawn phantom dice for Adv/Dis
+            clearPhantomTray();
+            if (rollAdv || rollDis) {
+                const lbl = document.createElement("div");
+                lbl.className = "phantom-label";
+                lbl.textContent = "Set 2";
+                diceTrayPhantomEl.appendChild(lbl);
+                trayDice.forEach((d, i) => {
+                    const el = document.createElement("div");
+                    el.className = "phantom-die rolling";
+                    el.innerHTML = makeDieSvg(d.sides, null);
+                    el.style.animationDelay = (i * 0.04 + Math.random() * 0.06).toFixed(3) + "s";
+                    el.style.animationDuration = (0.25 + Math.random() * 0.12).toFixed(3) + "s";
+                    diceTrayPhantomEl.appendChild(el);
+                    phantomDice.push({ sides: d.sides, el });
+                });
+                diceTrayPhantomEl.classList.add("active");
+            }
+
+            diceTrayTotalEl.textContent = "";
+            diceTrayTotalEl.className = "dice-tray-total";
+            rollResultEl.innerHTML = "";
+            rollResultEl.classList.remove("visible");
+
+            // Rapidly cycle random numbers on both trays
+            rollingInterval = setInterval(() => {
+                trayDice.forEach(d => {
+                    d.value = Math.floor(Math.random() * d.sides) + 1;
+                    d.el.querySelector(".die-num").textContent = String(d.value);
+                });
+                phantomDice.forEach(p => {
+                    const v = Math.floor(Math.random() * p.sides) + 1;
+                    p.el.querySelector(".die-num").textContent = String(v);
+                });
+            }, 50);
+        }
+
+        function clearPhantomTray() {
+            phantomDice = [];
+            diceTrayPhantomEl.innerHTML = "";
+            diceTrayPhantomEl.classList.remove("active");
+        }
+
+        function stopContinuousRoll() {
+            if (!rollingInterval) return;
+            clearInterval(rollingInterval);
+            rollingInterval = null;
+
+            if (rollHeldBtn) {
+                rollHeldBtn.classList.remove("held");
+                rollHeldBtn = null;
+            }
+
+            rollResultEl.innerHTML = "";
+            rollResultEl.classList.remove("visible");
+
+            if (rollAdv || rollDis) {
+                // Advantage / Disadvantage: generate two independent rolls
+                const roll1 = trayDice.map(d => Math.floor(Math.random() * d.sides) + 1);
+                const roll2 = trayDice.map(d => Math.floor(Math.random() * d.sides) + 1);
+                const raw1 = roll1.reduce((a, v) => a + v, 0);
+                const raw2 = roll2.reduce((a, v) => a + v, 0);
+                let total1, total2;
+
+                if (critMode) {
+                    total1 = computeCritFromRaw(raw1);
+                    total2 = computeCritFromRaw(raw2);
+                } else {
+                    total1 = raw1 + diceMod;
+                    total2 = raw2 + diceMod;
+                }
+
+                const keep1 = rollAdv ? (total1 >= total2) : (total1 <= total2);
+                const keptRoll = keep1 ? roll1 : roll2;
+                const discardedRoll = keep1 ? roll2 : roll1;
+                const keptTotal = keep1 ? total1 : total2;
+
+                // Land main tray as the kept set
+                trayDice.forEach((d, i) => { d.value = keptRoll[i]; });
+                landAllDice();
+
+                // Land phantom tray as the discarded set, then shrink
+                phantomDice.forEach((p, i) => {
+                    const v = discardedRoll[i];
+                    p.el.querySelector(".die-num").textContent = String(v);
+                    p.el.classList.remove("rolling");
+                    p.el.style.animationDelay = "";
+                    p.el.style.animationDuration = "";
+                    p.el.classList.add("rolled", "landing");
+                    p.el.addEventListener("animationend", () => {
+                        p.el.classList.remove("landing");
+                    }, { once: true });
+                });
+
+                showAdvDisResult(roll1, roll2, total1, total2, keep1);
+
+                diceTrayTotalEl.textContent = String(keptTotal);
+                diceTrayTotalEl.className = "dice-tray-total" + (critMode ? " crit" : "");
+            } else {
+                clearPhantomTray();
+
+                // Normal or crit-only roll
+                trayDice.forEach(d => {
+                    d.value = Math.floor(Math.random() * d.sides) + 1;
+                });
+                landAllDice();
+
+                if (critMode) {
+                    const rolledSum = trayDice.reduce((a, d) => a + d.value, 0);
+                    const critTotal = computeCritFromRaw(rolledSum);
+                    diceTrayTotalEl.textContent = String(critTotal);
+                    diceTrayTotalEl.className = "dice-tray-total crit";
+                    showCritBreakdown(rolledSum, critTotal);
+                } else {
+                    updateTrayTotal();
+                }
+            }
+
+            addLocalHistory();
+
+            // Send to server
+            const expr = buildExpression();
+            if (!expr || !ws || ws.readyState !== WebSocket.OPEN) return;
+            const pid = playerIdEl.value.trim();
+            if (!pid) return;
+            ws.send(JSON.stringify({
+                type: "dice_roll_request",
+                player_id: pid,
+                expression: expr,
+                advantage: rollAdv,
+                disadvantage: rollDis,
+                critical: critMode,
+            }));
+        }
+
+        function landAllDice() {
+            trayDice.forEach(d => {
+                d.el.querySelector(".die-num").textContent = String(d.value);
+                d.el.classList.remove("rolling");
+                d.el.style.animationDelay = "";
+                d.el.style.animationDuration = "";
+                d.el.classList.add("rolled", "landing", "landed");
+                d.el.addEventListener("animationend", () => {
+                    d.el.classList.remove("landing");
+                }, { once: true });
+            });
+        }
+
+        function showAdvDisResult(roll1, roll2, total1, total2, keep1) {
+            const isAdv = rollAdv;
+            const label = isAdv ? "ADVANTAGE" : "DISADVANTAGE";
+            const color = isAdv ? "var(--ok)" : "var(--warn)";
+
+            function miniDice(vals) {
+                return '<div class="adv-dis-mini-tray">' +
+                    vals.map((v, i) => {
+                        var svg = makeDieSvg(trayDice[i].sides, v);
+                        return '<div class="mini-die">' + svg + '</div>';
+                    }).join('') + '</div>';
+            }
+
+            function fmtRoll(vals, tot, kept) {
+                let detail;
+                if (critMode) {
+                    detail = critDetailStr(vals);
+                } else {
+                    detail = "[" + vals.join(", ") + "]";
+                    if (diceMod !== 0) detail += (diceMod > 0 ? " +" + diceMod : " " + diceMod);
+                }
+                return '<div class="adv-dis-roll' + (kept ? ' kept' : '') + '">' +
+                    '<div class="adv-dis-tag">' + (kept ? "\u2713 Kept" : "Discarded") + '</div>' +
+                    miniDice(vals) +
+                    '<div class="adv-dis-dice">' + detail + '</div>' +
+                    '<div class="adv-dis-total">' + tot + '</div></div>';
+            }
+
+            // Hide phantom tray once result is shown
+            clearPhantomTray();
+
+            rollResultEl.innerHTML =
+                '<div class="roll-result-label" style="color:' + color + '">' + label + '</div>' +
+                '<div class="adv-dis-rolls">' + fmtRoll(roll1, total1, keep1) + fmtRoll(roll2, total2, !keep1) + '</div>';
+            rollResultEl.classList.add("visible");
+        }
+
+        // Crit detail string for display (shared by breakdown and adv/dis panels)
+        function critDetailStr(vals) {
+            const rawSum = vals.reduce((a, v) => a + v, 0);
+            if (critRule === "double_dice") {
+                let s = "[" + vals.join(", ") + "] \u00d72";
+                if (diceMod !== 0) s += (diceMod > 0 ? " +" + diceMod : " " + diceMod);
+                return s;
+            }
+            // max_plus_roll
+            const maxD = trayDice.reduce((a, d) => a + d.sides, 0);
+            let s = "Max " + maxD;
+            if (diceMod !== 0) s += (diceMod > 0 ? " +" + diceMod : " " + diceMod);
+            s += " + [" + vals.join(", ") + "]";
+            if (diceMod !== 0) s += (diceMod > 0 ? " +" + diceMod : " " + diceMod);
+            return s;
+        }
+
+        function showCritBreakdown(rolledSum, critTotal) {
+            const vals = trayDice.map(d => d.value);
+            const ruleName = critRuleLabels[critRule] || critRule;
+            let html = '<div class="roll-result-label" style="color:#FFD700">\u2694 CRITICAL HIT (' + escHtml(ruleName) + ') \u2694</div>';
+
+            if (critRule === "double_dice") {
+                html += '<div class="crit-breakdown">Rolled: <b>[' + vals.join(", ") + ']</b> \u00d7 2 = <b>' + (rolledSum * 2) + '</b>';
+                if (diceMod !== 0) html += (diceMod > 0 ? " + " + diceMod : " \u2212 " + Math.abs(diceMod));
+                html += '</div>';
+            } else {
+                // max_plus_roll
+                const maxD = trayDice.reduce((a, d) => a + d.sides, 0);
+                html += '<div class="crit-breakdown"><b>Max: ' + maxD + '</b>';
+                if (diceMod !== 0) html += (diceMod > 0 ? " + " + diceMod : " \u2212 " + Math.abs(diceMod));
+                html += " + Rolled: <b>[" + vals.join(", ") + "]</b>";
+                if (diceMod !== 0) html += (diceMod > 0 ? " + " + diceMod : " \u2212 " + Math.abs(diceMod));
+                html += '</div>';
+            }
+
+            rollResultEl.innerHTML = html;
+            rollResultEl.classList.add("visible");
+        }
+
+        function addLocalHistory() {
+            const expr = buildExpression();
+            if (!expr) return;
+            const total = diceTrayTotalEl.textContent;
+            const vals = trayDice.map(d => d.value);
+            let detail = "[" + vals.join(", ") + "]";
+            if (diceMod > 0) detail += " +" + diceMod;
+            else if (diceMod < 0) detail += " " + diceMod;
+            let tag = "";
+            if (rollAdv) tag = " (Adv)";
+            if (rollDis) tag = " (Dis)";
+            if (critMode) tag += " CRIT";
+            const entry = document.createElement("div");
+            entry.className = "dice-history-entry";
+            entry.innerHTML = '<span class="expr">' + escHtml(expr + tag) + '</span> \u2192 <span class="total">' + escHtml(total) + '</span> ' + escHtml(detail);
+            diceHistoryEl.prepend(entry);
+            while (diceHistoryEl.children.length > 30) {
+                diceHistoryEl.removeChild(diceHistoryEl.lastChild);
+            }
+        }
+
+        function updateTrayTotal() {
+            const rolled = trayDice.filter(d => d.value !== null);
+            if (rolled.length === 0) {
+                diceTrayTotalEl.textContent = "";
+                diceTrayTotalEl.className = "dice-tray-total";
+                return;
+            }
+            let sum = rolled.reduce((a, d) => a + d.value, 0) + diceMod;
+            diceTrayTotalEl.textContent = String(sum);
+            const isSingleD20 = trayDice.length === 1 && trayDice[0].sides === 20 && trayDice[0].value !== null;
+            diceTrayTotalEl.className = "dice-tray-total" +
+                (isSingleD20 && trayDice[0].value === 20 ? " crit" : "") +
+                (isSingleD20 && trayDice[0].value === 1 ? " fumble" : "");
+        }
+
+        function buildExpression() {
+            if (trayDice.length === 0) return "";
+            const counts = {};
+            for (const d of trayDice) {
+                counts[d.sides] = (counts[d.sides] || 0) + 1;
+            }
+            const parts = Object.keys(counts)
+                .sort((a, b) => parseInt(a) - parseInt(b))
+                .map(s => counts[s] + "d" + s);
+            let expr = parts.join("+");
+            if (diceMod > 0) expr += "+" + diceMod;
+            else if (diceMod < 0) expr += String(diceMod);
+            return expr;
+        }
+
+        function displayDiceResult(data) {
+            const total = data.total;
+            const expr = data.expression || "";
+            const rolls = data.individual_rolls || [];
+            const isCrit = data.is_critical;
+            const isFumble = data.is_fumble;
+
+            diceTrayTotalEl.textContent = String(total);
+            diceTrayTotalEl.className = "dice-tray-total" +
+                (isCrit ? " crit" : "") + (isFumble ? " fumble" : "");
+
+            // Apply server's authoritative values to each die
+            const flat = rolls.flat();
+            trayDice.forEach((die, i) => {
+                if (i < flat.length) {
+                    die.value = flat[i];
+                    die.el.querySelector(".die-num").textContent = String(die.value);
+                    die.el.classList.add("rolled");
+                }
+            });
+
+            const mods = data.modifiers || 0;
+            const parts = rolls.map(g => "[" + g.join(", ") + "]").join(" + ");
+            let detail = parts;
+            if (mods > 0) detail += " +" + mods;
+            else if (mods < 0) detail += " " + mods;
+
+            const entry = document.createElement("div");
+            entry.className = "dice-history-entry";
+            entry.innerHTML = '<span class="expr">' + escHtml(expr) + '</span> → ' +
+                '<span class="total">' + total + '</span> ' + escHtml(detail) +
+                (isCrit ? ' <b style="color:#FFD700">NAT 20!</b>' : '') +
+                (isFumble ? ' <b style="color:#FF4444">NAT 1!</b>' : '');
+            diceHistoryEl.prepend(entry);
+            while (diceHistoryEl.children.length > 30) {
+                diceHistoryEl.removeChild(diceHistoryEl.lastChild);
+            }
+        }
+
+        function escHtml(s) {
+            const d = document.createElement("div");
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // --- Roll button bindings: press-and-hold ---
+        function bindRollButton(id, advantage, disadvantage) {
+            const btn = document.getElementById(id);
+            btn.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                startContinuousRoll(advantage, disadvantage, btn);
+            });
+            btn.addEventListener("pointerup", (e) => {
+                e.preventDefault();
+                stopContinuousRoll();
+            });
+            btn.addEventListener("pointercancel", (e) => {
+                e.preventDefault();
+                stopContinuousRoll();
+            });
+            btn.addEventListener("pointerleave", (e) => {
+                e.preventDefault();
+                stopContinuousRoll();
+            });
+        }
+        bindRollButton("rollBtn", false, false);
+        bindRollButton("rollAdvBtn", true, false);
+        bindRollButton("rollDisBtn", false, true);
+
+        document.getElementById("critBtn").addEventListener("click", () => {
+            critMode = !critMode;
+            document.getElementById("critBtn").classList.toggle("active", critMode);
+        });
+
+        function updateCritBtnLabel() {
+            const label = critRuleLabels[critRule] || critRule;
+            document.getElementById("critBtn").textContent = "⚔ Crit: " + label;
+        }
+        updateCritBtnLabel();
+
+        document.getElementById("diceClearBtn").addEventListener("click", () => {
+            trayDice.length = 0;
+            diceTrayEl.querySelectorAll(".tray-die").forEach(el => el.remove());
+            diceTrayEmptyEl.style.display = "";
+            diceMod = 0;
+            modValueEl.textContent = "+0";
+            diceTrayTotalEl.textContent = "";
+            diceTrayTotalEl.className = "dice-tray-total";
+            rollResultEl.innerHTML = "";
+            rollResultEl.classList.remove("visible");
+            clearPhantomTray();
+            critMode = false;
+            document.getElementById("critBtn").classList.remove("active");
+            diceHistoryEl.innerHTML = "";
+        });
 
         function sendAction(action) {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -358,6 +1974,21 @@
                     }
                 } catch (e) { }
                 startSendLoop();
+            });
+
+            ws.addEventListener("message", (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "dice_roll_result") {
+                        displayDiceResult(msg);
+                    }
+                    if (msg.type === "campaign_config") {
+                        if (msg.critical_hit_rule) {
+                            critRule = msg.critical_hit_rule;
+                            updateCritBtnLabel();
+                        }
+                    }
+                } catch (e) { }
             });
 
             ws.addEventListener("close", () => {

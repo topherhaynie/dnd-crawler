@@ -153,6 +153,8 @@ func apply_button_style(btn: BaseButton, scale: float) -> void:
 	btn.add_theme_color_override("font_hover_color", font_col.lightened(0.15))
 	btn.add_theme_color_override("font_pressed_color", font_col.lightened(0.25))
 	btn.add_theme_color_override("font_disabled_color", font_col.darkened(0.4))
+	if not btn.has_theme_font_size_override("font_size"):
+		btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
 
 	if not btn.has_meta(_BTN_META):
 		btn.set_meta(_BTN_META, true)
@@ -202,10 +204,41 @@ func apply_check_style(btn: BaseButton, scale: float) -> void:
 	btn.add_theme_color_override("font_hover_color", font_col.lightened(0.15))
 	btn.add_theme_color_override("font_pressed_color", font_col.lightened(0.25))
 	btn.add_theme_color_override("font_disabled_color", font_col.darkened(0.4))
+	if not btn.has_theme_font_size_override("font_size"):
+		btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+
+	## Scale the check indicator icons for HiDPI
+	if btn is CheckBox:
+		var target_sz: int = roundi(20.0 * scale)
+		_apply_scaled_check_icons(btn as CheckBox, target_sz, font_col)
+	btn.add_theme_constant_override("h_separation", roundi(4.0 * scale))
+	var min_side: float = roundi(24.0 * scale)
+	if btn.custom_minimum_size.y < min_side:
+		btn.custom_minimum_size.y = min_side
+	if btn.custom_minimum_size.x < min_side:
+		btn.custom_minimum_size.x = min_side
 
 	if not btn.has_meta(_BTN_META):
 		btn.set_meta(_BTN_META, true)
 		_styled_buttons.append(weakref(btn))
+
+
+func _apply_scaled_check_icons(cb: CheckBox, sz: int, _tint: Color) -> void:
+	## Generate scaled checkbox indicator icons and apply as theme overrides.
+	## Uses the existing theme icons as source, rescaled to sz×sz.
+	var icon_names: Array = ["checked", "unchecked", "checked_disabled",
+		"unchecked_disabled"]
+	for icon_name: String in icon_names:
+		var src: Texture2D = cb.get_theme_icon(icon_name, &"CheckBox")
+		if src == null:
+			continue
+		var img: Image = src.get_image()
+		if img == null:
+			continue
+		img = img.duplicate() as Image
+		img.resize(sz, sz, Image.INTERPOLATE_LANCZOS)
+		var tex := ImageTexture.create_from_image(img)
+		cb.add_theme_icon_override(icon_name, tex)
 
 
 func create_pressed_style(scale: float) -> StyleBoxFlat:
@@ -261,6 +294,143 @@ func _apply_input_style(input: LineEdit, scale: float) -> void:
 	if not input.has_meta(_INPUT_META):
 		input.set_meta(_INPUT_META, true)
 		_styled_inputs.append(weakref(input))
+
+
+func _apply_text_edit_style(te: TextEdit, scale: float) -> void:
+	## Apply themed styles to a TextEdit, consistent with LineEdit styling.
+	if te == null:
+		return
+	var palette: Dictionary = get_accent_palette()
+	var bg: Color = (palette.get("panel_bg", Color(0.18, 0.18, 0.18)) as Color).darkened(0.15)
+	var border_col: Color = palette.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	var font_col: Color = palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
+	var corner: int = roundi(4.0 * scale)
+	var pad: int = roundi(4.0 * scale)
+
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = bg
+	normal.set_corner_radius_all(corner)
+	normal.set_content_margin_all(pad)
+	normal.set_border_width_all(1)
+	normal.border_color = border_col
+
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = bg.lightened(0.05)
+	focus.set_corner_radius_all(corner)
+	focus.set_content_margin_all(pad)
+	focus.set_border_width_all(1)
+	focus.border_color = palette.get("pressed_border", Color(0.4, 0.65, 1.0, 0.7)) as Color
+
+	te.add_theme_stylebox_override("normal", normal)
+	te.add_theme_stylebox_override("focus", focus)
+	te.add_theme_stylebox_override("read_only", normal)
+	te.add_theme_color_override("font_color", font_col)
+	te.add_theme_color_override("font_placeholder_color", font_col.darkened(0.35))
+	te.add_theme_color_override("caret_color", font_col)
+	te.add_theme_color_override("selection_color", palette.get("pressed_bg", Color(0.3, 0.55, 0.9, 0.35)) as Color)
+
+
+func _apply_item_list_style(il: ItemList, scale: float) -> void:
+	## Apply themed panel + selection colors to an ItemList.
+	if il == null:
+		return
+	var palette: Dictionary = get_accent_palette()
+	var bg: Color = (palette.get("panel_bg", Color(0.18, 0.18, 0.18)) as Color).darkened(0.10)
+	var border_col: Color = palette.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	var font_col: Color = palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
+	var sel_col: Color = palette.get("pressed_bg", Color(0.3, 0.55, 0.9, 0.35)) as Color
+	var corner: int = roundi(4.0 * scale)
+	var pad: int = roundi(4.0 * scale)
+
+	var panel := StyleBoxFlat.new()
+	panel.bg_color = bg
+	panel.set_corner_radius_all(corner)
+	panel.set_content_margin_all(pad)
+	panel.set_border_width_all(1)
+	panel.border_color = border_col
+
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color.TRANSPARENT
+	focus.set_corner_radius_all(corner)
+	focus.set_content_margin_all(pad)
+	focus.set_border_width_all(1)
+	focus.border_color = border_col
+
+	var selected := StyleBoxFlat.new()
+	selected.bg_color = sel_col
+	selected.set_corner_radius_all(corner)
+	selected.set_content_margin_all(pad)
+
+	il.add_theme_stylebox_override("panel", panel)
+	il.add_theme_stylebox_override("focus", focus)
+	il.add_theme_stylebox_override("selected", selected)
+	il.add_theme_stylebox_override("selected_focus", selected)
+	il.add_theme_color_override("font_color", font_col)
+	il.add_theme_color_override("font_selected_color", font_col.lightened(0.2))
+
+
+func _apply_tab_container_style(tc: TabContainer, scale: float) -> void:
+	## Apply themed tab bar styling to a TabContainer.
+	if tc == null:
+		return
+	var palette: Dictionary = get_accent_palette()
+	var bg: Color = palette.get("panel_bg", Color(0.18, 0.18, 0.18)) as Color
+	var border_col: Color = palette.get("panel_border", Color(0.3, 0.3, 0.3)) as Color
+	var font_col: Color = palette.get("label_tint", Color(0.7, 0.7, 0.7)) as Color
+	var sel_col: Color = palette.get("pressed_bg", Color(0.3, 0.55, 0.9, 0.35)) as Color
+	var corner: int = roundi(4.0 * scale)
+	var pad: int = roundi(6.0 * scale)
+	var fsz: int = roundi(14.0 * scale)
+
+	# Active tab style — use accent colour so it stands out
+	var accent: Color = palette.get("hover_bg", Color(0.28, 0.28, 0.28)) as Color
+	var tab_selected := StyleBoxFlat.new()
+	tab_selected.bg_color = accent
+	tab_selected.set_corner_radius_all(corner)
+	tab_selected.set_content_margin_all(pad)
+	tab_selected.set_border_width_all(1)
+	tab_selected.border_color = border_col.lightened(0.15)
+
+	# Unselected tab style
+	var tab_unselected := StyleBoxFlat.new()
+	tab_unselected.bg_color = bg.darkened(0.1)
+	tab_unselected.set_corner_radius_all(corner)
+	tab_unselected.set_content_margin_all(pad)
+	tab_unselected.set_border_width_all(1)
+	tab_unselected.border_color = border_col.darkened(0.2)
+
+	# Disabled tab style
+	var tab_disabled := StyleBoxFlat.new()
+	tab_disabled.bg_color = bg.darkened(0.3)
+	tab_disabled.set_corner_radius_all(corner)
+	tab_disabled.set_content_margin_all(pad)
+
+	# Hovered tab style
+	var tab_hovered := StyleBoxFlat.new()
+	tab_hovered.bg_color = sel_col.lightened(0.1)
+	tab_hovered.set_corner_radius_all(corner)
+	tab_hovered.set_content_margin_all(pad)
+	tab_hovered.set_border_width_all(1)
+	tab_hovered.border_color = border_col
+
+	# Panel behind the tab content
+	var panel := StyleBoxFlat.new()
+	panel.bg_color = bg
+	panel.set_corner_radius_all(corner)
+	panel.set_content_margin_all(roundi(4.0 * scale))
+	panel.set_border_width_all(1)
+	panel.border_color = border_col
+
+	tc.add_theme_stylebox_override("tab_selected", tab_selected)
+	tc.add_theme_stylebox_override("tab_unselected", tab_unselected)
+	tc.add_theme_stylebox_override("tab_disabled", tab_disabled)
+	tc.add_theme_stylebox_override("tab_hovered", tab_hovered)
+	tc.add_theme_stylebox_override("panel", panel)
+	tc.add_theme_font_size_override("font_size", fsz)
+	tc.add_theme_color_override("font_selected_color", font_col.lightened(0.2))
+	tc.add_theme_color_override("font_unselected_color", font_col.darkened(0.3))
+	tc.add_theme_color_override("font_disabled_color", font_col.darkened(0.5))
+	tc.add_theme_color_override("font_hovered_color", font_col.lightened(0.1))
 
 
 func get_label_tint() -> Color:
@@ -327,6 +497,26 @@ func _apply_bg_material(cr: ColorRect) -> void:
 # ---------------------------------------------------------------------------
 # Window theming
 # ---------------------------------------------------------------------------
+
+func prepare_window(win: Window, base_font_size: float = 14.0) -> void:
+	## One-stop shop: apply chrome + theme tree + font scaling to a Window.
+	## Call sites no longer need to manually orchestrate three separate calls.
+	if win == null:
+		return
+	var reg := Engine.get_main_loop().root.get_node_or_null("ServiceRegistry") as ServiceRegistry
+	var s: float = 1.0
+	if reg != null and reg.ui_scale != null:
+		s = reg.ui_scale.get_scale()
+	theme_control_tree(win, s)
+	if reg != null and reg.ui_scale != null:
+		var content: Control = null
+		for child: Node in win.get_children():
+			if child is Control and child.name != "_ThemeBG":
+				content = child as Control
+				break
+		if content != null:
+			reg.ui_scale.scale_control_fonts(content, base_font_size)
+
 
 func apply_window_chrome(win: Window) -> void:
 	## Apply theme-coloured embedded_border StyleBox to a Window.  Idempotent.
@@ -439,6 +629,37 @@ func apply_popup_style(popup: PopupMenu, scale: float) -> void:
 # Recursive tree theming — style every button/panel/window in a subtree
 # ---------------------------------------------------------------------------
 
+func _apply_split_style(sc: SplitContainer, scale: float) -> void:
+	## Give the split grabber a visible bar so the drag handle is obvious.
+	var palette: Dictionary = get_accent_palette()
+	var grab_col: Color = (palette.get("hover_bg", Color(0.22, 0.22, 0.24)) as Color).lightened(0.15)
+	var sep: int = roundi(8.0 * scale)
+	sc.add_theme_constant_override("separation", sep)
+	## Build a small coloured grabber texture (pill shape).
+	var w: int
+	var h: int
+	if sc is VSplitContainer:
+		w = roundi(48.0 * scale)
+		h = maxi(sep, 4)
+	else:
+		w = maxi(sep, 4)
+		h = roundi(48.0 * scale)
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(grab_col)
+	## Round the corners by clearing pixels outside an ellipse-like radius.
+	var rx: float = float(w) * 0.5
+	var ry: float = float(h) * 0.5
+	var clear := Color(0, 0, 0, 0)
+	for py: int in range(h):
+		for px: int in range(w):
+			var dx: float = (float(px) + 0.5 - rx) / rx
+			var dy: float = (float(py) + 0.5 - ry) / ry
+			if dx * dx + dy * dy > 1.0:
+				img.set_pixel(px, py, clear)
+	var tex := ImageTexture.create_from_image(img)
+	sc.add_theme_icon_override("grabber", tex)
+
+
 func theme_control_tree(root: Node, scale: float) -> void:
 	## Walk `root` and all descendants, applying themed styles to every
 	## BaseButton, PanelContainer, and Window found.  Idempotent per node
@@ -476,6 +697,15 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 				_apply_input_style(sb_edit, scale)
 		elif node is LineEdit:
 			_apply_input_style(node as LineEdit, scale)
+		# TextEdits — styled consistently with LineEdits
+		if node is TextEdit:
+			_apply_text_edit_style(node as TextEdit, scale)
+		# ItemList — themed panel background + font colors
+		if node is ItemList:
+			_apply_item_list_style(node as ItemList, scale)
+		# TabContainer — themed tab bar
+		if node is TabContainer:
+			_apply_tab_container_style(node as TabContainer, scale)
 		# Labels — ensure text is readable against dark themed backgrounds
 		if node is Label:
 			var label_palette: Dictionary = get_accent_palette()
@@ -485,6 +715,9 @@ func _theme_node_recursive(node: Node, scale: float) -> void:
 			# (e.g. title labels built with _sm.scaled(15.0) must not be overwritten).
 			if not (node as Label).has_theme_font_size_override("font_size"):
 				(node as Label).add_theme_font_size_override("font_size", roundi(14.0 * scale))
+		# SplitContainer — visible grabber bar
+		if node is SplitContainer:
+			_apply_split_style(node as SplitContainer, scale)
 		# Panels
 		if node is PanelContainer:
 			apply_chrome(node as PanelContainer)
@@ -584,6 +817,7 @@ func _refresh_styled_buttons() -> void:
 		btn.add_theme_color_override("font_hover_color", font_col.lightened(0.15))
 		btn.add_theme_color_override("font_pressed_color", font_col.lightened(0.25))
 		btn.add_theme_color_override("font_disabled_color", font_col.darkened(0.4))
+		btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
 	_styled_buttons = live
 
 

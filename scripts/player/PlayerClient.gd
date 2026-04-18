@@ -34,7 +34,7 @@ func _process(_delta: float) -> void:
 		WebSocketPeer.STATE_OPEN:
 			if not _connected:
 				_connected = true
-				print("PlayerClient: connected to DM server at %s" % SERVER_URL)
+				Log.info("PlayerClient", "connected to DM server at %s" % SERVER_URL)
 				_send_handshake()
 			_drain_packets()
 
@@ -42,7 +42,7 @@ func _process(_delta: float) -> void:
 			if _connected:
 				_connected = false
 				var code := _socket.get_close_code()
-				print("PlayerClient: disconnected (code=%d) — retrying in %.1fs" % [code, RECONNECT_DELAY])
+				Log.info("PlayerClient", "disconnected (code=%d) — retrying in %.1fs" % [code, RECONNECT_DELAY])
 			_schedule_reconnect()
 
 		WebSocketPeer.STATE_CONNECTING, WebSocketPeer.STATE_CLOSING:
@@ -152,7 +152,7 @@ func _handle_packet(raw: String) -> void:
 	match msg_type:
 		"ping":
 			# DM heartbeat — acknowledge liveness, no render update needed
-			print("PlayerClient: ping from DM")
+			pass
 		"map_loaded":
 			# Map broadcast from DM — forward to PlayerWindow
 			state_received.emit(data)

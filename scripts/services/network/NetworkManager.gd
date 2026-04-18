@@ -58,6 +58,18 @@ func get_peer_bound_player(peer_id: int) -> String:
 	return service.get_peer_bound_player(peer_id)
 
 
+func send_to_peer(peer_id: int, data: Dictionary) -> void:
+	if service == null:
+		return
+	service.send_to_peer(peer_id, data)
+
+
+func get_peer_for_player(player_id: String) -> int:
+	if service == null:
+		return -1
+	return service.get_peer_for_player(player_id)
+
+
 func clear_all_peer_bindings() -> void:
 	if service == null:
 		return

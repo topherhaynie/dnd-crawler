@@ -59,6 +59,27 @@ func _ready() -> void:
 	var movement_svc := MovementService.new()
 	movement_svc.name = "MovementService"
 
+	var srd_svc := SRDLibraryService.new()
+	srd_svc.name = "SRDLibraryService"
+
+	var campaign_svc := CampaignService.new()
+	campaign_svc.name = "CampaignService"
+
+	var character_svc := CharacterService.new()
+	character_svc.name = "CharacterService"
+
+	var statblock_svc := StatblockService.new()
+	statblock_svc.name = "StatblockService"
+
+	var dice_svc := DiceService.new()
+	dice_svc.name = "DiceService"
+
+	var combat_svc := CombatService.new()
+	combat_svc.name = "CombatService"
+
+	var item_svc := ItemService.new()
+	item_svc.name = "ItemService"
+
 	# --- Build registry and wire managers ---
 	registry = ServiceRegistry.new()
 	registry.name = "ServiceRegistry"
@@ -134,6 +155,34 @@ func _ready() -> void:
 	movement_mgr.service = movement_svc
 	registry.movement = movement_mgr
 
+	var srd_mgr := SRDLibraryManager.new()
+	srd_mgr.service = srd_svc
+	registry.srd = srd_mgr
+
+	var campaign_mgr := CampaignManager.new()
+	campaign_mgr.service = campaign_svc
+	registry.campaign = campaign_mgr
+
+	var character_mgr := CharacterManager.new()
+	character_mgr.service = character_svc
+	registry.character = character_mgr
+
+	var statblock_mgr := StatblockManager.new()
+	statblock_mgr.service = statblock_svc
+	registry.statblock = statblock_mgr
+
+	var dice_mgr := DiceManager.new()
+	dice_mgr.service = dice_svc
+	registry.dice = dice_mgr
+
+	var combat_mgr := CombatManager.new()
+	combat_mgr.service = combat_svc
+	registry.combat = combat_mgr
+
+	var item_mgr := ItemManager.new()
+	item_mgr.service = item_svc
+	registry.item = item_mgr
+
 	# --- Add to scene tree (deferred to avoid ready-order races) ---
 	# Views that need a scale factor early get it via UIScaleManager's DPI
 	# fallback (no tree lookup required).  ToolPalette stores its manager ref
@@ -155,5 +204,12 @@ func _ready() -> void:
 	root.call_deferred("add_child", ui_scale_svc)
 	root.call_deferred("add_child", ui_theme_svc)
 	root.call_deferred("add_child", movement_svc)
+	root.call_deferred("add_child", srd_svc)
+	root.call_deferred("add_child", campaign_svc)
+	root.call_deferred("add_child", character_svc)
+	root.call_deferred("add_child", statblock_svc)
+	root.call_deferred("add_child", dice_svc)
+	root.call_deferred("add_child", combat_svc)
+	root.call_deferred("add_child", item_svc)
 
-	print("ServiceBootstrap: all services registered")
+	Log.info("ServiceBootstrap", "all services registered")

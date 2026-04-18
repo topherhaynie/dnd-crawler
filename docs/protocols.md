@@ -361,6 +361,8 @@ tokens currently visible to players (`is_visible_to_players == true`).
 | `rotation_deg` | float | `0` | Visual rotation in degrees |
 | `token_shape` | int | `0` (ELLIPSE) | Shape used for drawing: `0`=Ellipse, `1`=Rectangle |
 | `blocks_los` | bool | `true` | When `false`, wall polygons overlapping this token's bounding rect are excluded from LOS/fog occluder construction. Only meaningful for DOOR (`0`) and SECRET_PASSAGE (`3`). |
+| `statblock_refs` | Array | `[]` | IDs of attached statblock definitions (e.g. SRD index or custom ID) |
+| `statblock_overrides` | Dictionary | `{}` | `{statblock_id: StatblockOverride}` — per-instance combat state and field overrides |
 
 ### `TokenShape` enum reference
 
@@ -463,6 +465,40 @@ fields via the token editor popup.
 
 ---
 
+### `token_statblock_override_updated` — statblock override change
+
+Sent when the DM modifies a token's statblock override (e.g. via Quick HP dialog
+or the override editor). Allows the player display to update HP bars in real time.
+
+```json
+{
+  "msg": "token_statblock_override_updated",
+  "token_id": "1714000000_4028",
+  "statblock_id": "aboleth",
+  "overrides": {
+    "base_statblock_id": "aboleth",
+    "overrides": {},
+    "current_hp": 100,
+    "max_hp": 135,
+    "temp_hp": 0,
+    "conditions": [],
+    "spell_slots_used": {},
+    "death_saves": { "successes": 0, "failures": 0 },
+    "concentration_spell": "",
+    "notes": ""
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `msg` | `"token_statblock_override_updated"` | Message type |
+| `token_id` | string | Token this override applies to |
+| `statblock_id` | string | ID of the base statblock being overridden |
+| `overrides` | object | Full `StatblockOverride.to_dict()` payload |
+
+---
+
 ## `audio_volume` — DM → Display
 
 Sent when the DM adjusts the background audio volume for a video map. The display
@@ -477,5 +513,89 @@ should apply the volume immediately to its `MapView.set_audio_volume_db()`.
 {
   "msg": "audio_volume",
   "volume_db": -6.0
+}
+```
+
+---
+
+## `dice_roll_request` — Mobile Client → DM Server
+
+Sent from a mobile client when a player rolls dice. The server evaluates the
+roll via `DiceService` and sends back a `dice_roll_result`.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"dice_roll_request"` | Message type |
+| `player_id` | string | Player profile ID (or input_id / name for resolution) |
+| `expression` | string | Dice expression, e.g. `"2d6+3"`, `"1d20+5"` |
+| `advantage` | bool | If true, roll twice and take higher |
+| `disadvantage` | bool | If true, roll twice and take lower |
+
+```json
+{
+  "type": "dice_roll_request",
+  "player_id": "player-abc-123",
+  "expression": "1d20+5",
+  "advantage": true,
+  "disadvantage": false
+}
+```
+
+---
+
+## `dice_roll_result` — DM Server → Mobile Client
+
+Sent back to the requesting peer after a `dice_roll_request` is evaluated.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"dice_roll_result"` | Message type |
+| `expression` | string | Evaluated expression |
+| `total` | int | Final roll total |
+| `individual_rolls` | Array[Array[int]] | Per-group die results, e.g. `[[5, 3], [4]]` |
+| `modifiers` | int | Sum of flat bonuses |
+| `is_critical` | bool | True if first d20 = 20 |
+| `is_fumble` | bool | True if first d20 = 1 |
+
+```json
+{
+  "type": "dice_roll_result",
+  "expression": "1d20+5",
+  "total": 25,
+  "individual_rolls": [[20]],
+  "modifiers": 5,
+  "is_critical": true,
+  "is_fumble": false
+}
+```
+
+---
+
+## `dice_roll_toast` — DM Server → Display
+
+Broadcast to player display peers when `dice_visibility` campaign setting
+is `"shared"`. Displays show a transient toast overlay.
+
+| Field | Type | Description |
+|---|---|---|
+| `msg` | `"dice_roll_toast"` | Message type |
+| `player_name` | string | Resolved player name |
+| `expression` | string | Dice expression rolled |
+| `total` | int | Final total |
+| `individual_rolls` | Array[Array[int]] | Per-group die results |
+| `modifiers` | int | Flat modifier sum |
+| `is_critical` | bool | Natural 20 |
+| `is_fumble` | bool | Natural 1 |
+
+```json
+{
+  "msg": "dice_roll_toast",
+  "player_name": "Alaric",
+  "expression": "1d20+5",
+  "total": 25,
+  "individual_rolls": [[20]],
+  "modifiers": 5,
+  "is_critical": true,
+  "is_fumble": false
 }
 ```

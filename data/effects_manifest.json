@@ -1,0 +1,156 @@
+[
+  {
+    "effect_id": "fire_burst",
+    "display_name": "Fire Burst",
+    "scene_path": "res://assets/effects/scenes/FireBurstEffect.tscn",
+    "default_size": 100.0,
+    "min_size": 20.0,
+    "max_size": 400.0,
+    "mode": 0,
+    "category": "Fire",
+    "icon": "🔥"
+  },
+  {
+    "effect_id": "ring_of_fire",
+    "display_name": "Ring of Fire",
+    "scene_path": "res://assets/effects/scenes/RingOfFireEffect.tscn",
+    "default_size": 120.0,
+    "min_size": 40.0,
+    "max_size": 500.0,
+    "mode": 1,
+    "category": "Fire",
+    "icon": "🔥○"
+  },
+  {
+    "effect_id": "fire_wall",
+    "display_name": "Fire Wall",
+    "scene_path": "res://assets/effects/scenes/FireWallEffect.tscn",
+    "default_size": 60.0,
+    "min_size": 20.0,
+    "max_size": 400.0,
+    "mode": 1,
+    "category": "Fire",
+    "icon": "🔥▬"
+  },
+  {
+    "effect_id": "pillar_of_fire",
+    "display_name": "Pillar of Fire",
+    "scene_path": "res://assets/effects/scenes/PillarOfFireEffect.tscn",
+    "default_size": 40.0,
+    "min_size": 10.0,
+    "max_size": 200.0,
+    "mode": 0,
+    "category": "Fire",
+    "icon": "🔥│"
+  },
+  {
+    "effect_id": "rain_of_fire",
+    "display_name": "Rain of Fire",
+    "scene_path": "res://assets/effects/scenes/RainOfFireEffect.tscn",
+    "default_size": 200.0,
+    "min_size": 80.0,
+    "max_size": 500.0,
+    "mode": 1,
+    "category": "Fire",
+    "icon": "🔥↓"
+  },
+  {
+    "effect_id": "lightning_strike",
+    "display_name": "Lightning Strike",
+    "scene_path": "res://assets/effects/scenes/LightningStrikeEffect.tscn",
+    "default_size": 40.0,
+    "min_size": 10.0,
+    "max_size": 200.0,
+    "mode": 0,
+    "category": "Lightning",
+    "icon": "⚡"
+  },
+  {
+    "effect_id": "lightning_bolt_wild",
+    "display_name": "Wild Lightning",
+    "scene_path": "res://assets/effects/scenes/LightningBoltWildEffect.tscn",
+    "default_size": 40.0,
+    "min_size": 10.0,
+    "max_size": 300.0,
+    "mode": 0,
+    "category": "Lightning",
+    "icon": "⚡⚡"
+  },
+  {
+    "effect_id": "lightning_ball",
+    "display_name": "Lightning Ball",
+    "scene_path": "res://assets/effects/scenes/LightningBallEffect.tscn",
+    "default_size": 80.0,
+    "min_size": 20.0,
+    "max_size": 300.0,
+    "mode": 1,
+    "category": "Lightning",
+    "icon": "⚡●"
+  },
+  {
+    "effect_id": "frost_nova",
+    "display_name": "Frost Nova",
+    "scene_path": "res://assets/effects/scenes/FrostNovaEffect.tscn",
+    "default_size": 120.0,
+    "min_size": 40.0,
+    "max_size": 400.0,
+    "mode": 0,
+    "category": "Cold",
+    "icon": "❄"
+  },
+  {
+    "effect_id": "blizzard",
+    "display_name": "Blizzard",
+    "scene_path": "res://assets/effects/scenes/BlizzardEffect.tscn",
+    "default_size": 200.0,
+    "min_size": 80.0,
+    "max_size": 500.0,
+    "mode": 1,
+    "category": "Cold",
+    "icon": "❄❄"
+  },
+  {
+    "effect_id": "poison_cloud",
+    "display_name": "Poison Cloud",
+    "scene_path": "res://assets/effects/scenes/PoisonCloudEffect.tscn",
+    "default_size": 120.0,
+    "min_size": 40.0,
+    "max_size": 400.0,
+    "mode": 1,
+    "category": "Poison",
+    "icon": "☁"
+  },
+  {
+    "effect_id": "holy_radiance",
+    "display_name": "Holy Radiance",
+    "scene_path": "res://assets/effects/scenes/HolyRadianceEffect.tscn",
+    "default_size": 120.0,
+    "min_size": 40.0,
+    "max_size": 400.0,
+    "mode": 1,
+    "category": "Divine",
+    "icon": "✦"
+  },
+  {
+    "effect_id": "magic_aura",
+    "display_name": "Magic Aura",
+    "scene_path": "res://assets/effects/scenes/MagicAuraEffect.tscn",
+    "default_size": 80.0,
+    "min_size": 20.0,
+    "max_size": 300.0,
+    "mode": 1,
+    "category": "Divine",
+    "icon": "✧"
+  },
+  {
+    "effect_id": "wind_gust",
+    "display_name": "Wind Gust",
+    "scene_path": "res://assets/effects/scenes/WindGustEffect.tscn",
+    "default_size": 160.0,
+    "min_size": 40.0,
+    "max_size": 500.0,
+    "mode": 1,
+    "category": "Nature",
+    "icon": "💨"
+  }
+]

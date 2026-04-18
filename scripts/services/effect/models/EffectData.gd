@@ -72,6 +72,11 @@ const AVAILABLE_SHAPES: Dictionary = {
 # --- Identity --------------------------------------------------------------
 var id: String = ""
 
+## Non-empty when this is a manifest-driven scene effect (Phase 11).
+## When set, scene_path holds the PackedScene to instantiate.
+var scene_effect_id: String = ""
+var scene_path: String = ""
+
 # --- Geometry --------------------------------------------------------------
 var effect_type: int = EffectType.FIRE
 var shape: int = EffectShape.CIRCLE
@@ -135,6 +140,8 @@ static func create(type: int, pos: Vector2, size: float = 96.0, duration: float 
 func to_dict() -> Dictionary:
 	return {
 		"id": id,
+		"scene_effect_id": scene_effect_id,
+		"scene_path": scene_path,
 		"effect_type": effect_type,
 		"shape": shape,
 		"world_pos": {"x": world_pos.x, "y": world_pos.y},
@@ -151,6 +158,8 @@ func to_dict() -> Dictionary:
 static func from_dict(d: Dictionary) -> EffectData:
 	var e := EffectData.new()
 	e.id = str(d.get("id", EffectData.generate_id()))
+	e.scene_effect_id = str(d.get("scene_effect_id", ""))
+	e.scene_path = str(d.get("scene_path", ""))
 	e.effect_type = int(d.get("effect_type", EffectType.FIRE))
 	e.shape = int(d.get("shape", EffectShape.CIRCLE))
 	var wp: Dictionary = d.get("world_pos", {"x": 0.0, "y": 0.0})

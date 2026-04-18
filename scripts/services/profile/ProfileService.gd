@@ -22,7 +22,7 @@ func _ready() -> void:
 func get_profiles() -> Array:
 	return profiles.duplicate(true)
 
-func get_profile_by_id(_id: String):
+func get_profile_by_id(_id: String) -> Variant:
 	for p in profiles:
 		if p is Dictionary and str(p.get("id", "")) == _id:
 			return p
@@ -36,7 +36,7 @@ func add_profile(_profile: PlayerProfile) -> void:
 
 func remove_profile(_id: String) -> void:
 	for i in range(profiles.size()):
-		var p = profiles[i]
+		var p: Variant = profiles[i]
 		if (p is Dictionary and str(p.get("id", "")) == _id) or (p is PlayerProfile and str(p.id) == _id):
 			profiles.remove_at(i)
 			emit_signal("profiles_changed")
@@ -52,8 +52,8 @@ func save_profiles() -> void:
 			data.append(profile)
 	# Prefer using the Persistence service when available
 	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if sreg != null and sreg.persistence != null and sreg.persistence.service != null:
-		sreg.persistence.service.save_game("profiles", {"profiles": data})
+	if sreg != null and sreg.persistence != null:
+		sreg.persistence.save_game("profiles", {"profiles": data})
 		emit_signal("profiles_changed")
 		return
 	# Fallback: write directly to profiles.json
@@ -64,8 +64,8 @@ func load_profiles() -> void:
 	# Prefer loading via Persistence service when available
 	var raw: Variant = null
 	var sreg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if sreg != null and sreg.persistence != null and sreg.persistence.service != null:
-		var loaded: Dictionary = sreg.persistence.service.load_game("profiles")
+	if sreg != null and sreg.persistence != null:
+		var loaded: Dictionary = sreg.persistence.load_game("profiles")
 		# If persistence returned nothing/empty (no saves yet), fall back to legacy path
 		if loaded.is_empty():
 			var legacy: Variant = _read_json("user://data/profiles.json")
@@ -103,7 +103,7 @@ func register_player(_player_id: String) -> void:
 
 # --- JSON helpers ---
 func _write_json(path: String, data: Variant) -> void:
-	var dir = path.get_base_dir()
+	var dir: String = path.get_base_dir()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:

@@ -35,6 +35,16 @@ var icon_crop_offset: Vector2 = Vector2.ZERO
 var icon_crop_zoom: float = 1.0
 # Forward-facing direction of the icon in degrees (0 = right, 90 = down, etc.).
 var icon_facing_deg: float = 0.0
+# Optional back-reference to a campaign image ID this icon was sourced from.
+# Metadata only — rendering uses icon_image_path directly.
+var icon_campaign_image_id: String = ""
+# Creature space in feet (D&D 5e: 5 = Medium, 10 = Large, etc.).
+# Controls the player token's rendered diameter on the map.
+var size_ft: float = 5.0
+# Optional ID of a StatblockData character linked to this profile.
+# When set, get_passive_perception() and get_speed() prefer the statblock's
+# computed values over the manually-typed profile fields.
+var statblock_id: String = ""
 # Future-proof payload for custom fields (status effects, inventory, etc.)
 var extras: Dictionary = {}
 
@@ -45,7 +55,73 @@ func ensure_id() -> void:
 
 
 func get_passive_perception() -> int:
+	var sb: StatblockData = _resolve_statblock()
+	if sb != null:
+		var pp: Variant = sb.senses.get("passive_perception", null)
+		if pp != null:
+			return int(pp)
 	return 10 + perception_mod
+
+
+func get_speed() -> float:
+	var sb: StatblockData = _resolve_statblock()
+	if sb != null:
+		var walk: Variant = sb.speed.get("walk", "")
+		var walk_str: String = str(walk).strip_edges()
+		if not walk_str.is_empty():
+			# Parse "30 ft." or plain "30"
+			var num: String = walk_str.split(" ")[0]
+			if num.is_valid_float():
+				return float(num)
+	return base_speed
+
+
+## Return the effective vision type from the linked statblock, or the profile field.
+func get_vision_type() -> int:
+	var sb: StatblockData = _resolve_statblock()
+	if sb != null:
+		var dv: Variant = sb.senses.get("darkvision", "")
+		if not str(dv).is_empty():
+			return VisionType.DARKVISION
+	return vision_type
+
+
+## Return the effective darkvision range from the linked statblock, or the profile field.
+func get_darkvision_range() -> float:
+	var sb: StatblockData = _resolve_statblock()
+	if sb != null:
+		var dv: String = str(sb.senses.get("darkvision", ""))
+		if not dv.is_empty():
+			var num: String = dv.split(" ")[0]
+			if num.is_valid_float():
+				return float(num)
+	return darkvision_range
+
+
+## Return the effective creature size from the linked statblock, or the profile field.
+func get_size_ft() -> float:
+	var sb: StatblockData = _resolve_statblock()
+	if sb != null and not sb.size.is_empty():
+		var ft: float = StatblockData.size_to_feet(sb.size)
+		if ft > 0.0:
+			return ft
+	return size_ft
+
+
+## Resolve the linked character statblock, if any.
+func _resolve_statblock() -> StatblockData:
+	if statblock_id.is_empty():
+		return null
+	var main_loop: Variant = Engine.get_main_loop()
+	if main_loop == null:
+		return null
+	var tree: SceneTree = main_loop as SceneTree
+	if tree == null:
+		return null
+	var reg: ServiceRegistry = tree.root.get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.character == null:
+		return null
+	return reg.character.get_character_by_id(statblock_id)
 
 
 func to_dict() -> Dictionary:
@@ -67,6 +143,9 @@ func to_dict() -> Dictionary:
 		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
 		"icon_crop_zoom": icon_crop_zoom,
 		"icon_facing_deg": icon_facing_deg,
+		"icon_campaign_image_id": icon_campaign_image_id,
+		"size_ft": size_ft,
+		"statblock_id": statblock_id,
 		"extras": extras.duplicate(true),
 	}
 
@@ -92,6 +171,9 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 		p.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
 	p.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
 	p.icon_facing_deg = float(d.get("icon_facing_deg", 0.0))
+	p.icon_campaign_image_id = str(d.get("icon_campaign_image_id", ""))
+	p.size_ft = float(d.get("size_ft", 5.0))
+	p.statblock_id = str(d.get("statblock_id", ""))
 
 	# Keep explicit extras, then absorb unknown top-level keys so future schema
 	# additions survive load/save even before code knows about them.
@@ -116,6 +198,9 @@ static func from_dict(d: Dictionary) -> PlayerProfile:
 			"icon_crop_offset",
 			"icon_crop_zoom",
 			"icon_facing_deg",
+			"icon_campaign_image_id",
+			"size_ft",
+			"statblock_id",
 			"extras",
 		]:
 			continue

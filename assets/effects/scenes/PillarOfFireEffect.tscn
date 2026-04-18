@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/effects/PillarOfFireEffect.gd" id="1_pillar_of_fire"]
+
+[node name="PillarOfFireEffect" type="Node2D"]
+script = ExtResource("1_pillar_of_fire")

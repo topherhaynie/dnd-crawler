@@ -71,7 +71,7 @@ func capture_fog_state(viewport: SubViewport) -> PackedByteArray:
     _fog_state_image = image
     _fog_state_png = image.save_png_to_buffer()
     _fog_state_size = Vector2i(image.get_width(), image.get_height())
-    viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
     return _fog_state_png.duplicate()
 
 

@@ -23,8 +23,8 @@ var _dm_tokens: Dictionary = {}
 var _spawn_initialized: bool = false
 var _force_los_reveal: bool = true
 var _cached_wall_edges: Array = []
-var _cached_wall_signature: String = ""
 var _cached_passthrough_version: int = -1
+var _walls_dirty: bool = true
 var _los_prev_origin_by_token: Dictionary = {}
 var _dragging_token_ids: Dictionary = {}
 
@@ -99,16 +99,20 @@ func sync_profiles() -> void:
 		_dm_tokens.erase(id)
 
 
+func mark_walls_dirty() -> void:
+	_walls_dirty = true
+
+
 func step(delta: float) -> bool:
 	if _map_view == null:
 		return false
 	var map: MapData = _map()
 	if map == null:
 		return false
-	var wall_sig := _wall_signature(map)
 	var pt_ver: int = _map_view.get_passthrough_version() if _map_view != null else 0
-	if wall_sig != _cached_wall_signature or pt_ver != _cached_passthrough_version:
+	if _walls_dirty or pt_ver != _cached_passthrough_version:
 		_rebuild_cached_wall_edges(map)
+		_walls_dirty = false
 	_ensure_spawn_positions()
 
 	var moved := false
@@ -128,8 +132,8 @@ func step(delta: float) -> bool:
 		# Skip tokens being dragged by the DM
 		if _dragging_token_ids.has(p.id):
 			continue
-		token.set_token_diameter_px(_token_diameter_px_for_map(map))
-		var token_radius_px := _token_diameter_px_for_map(map) * 0.5
+		token.set_token_diameter_px(_token_diameter_px_for_profile(p, map))
+		var token_radius_px := _token_diameter_px_for_profile(p, map) * 0.5
 		token.set_vision_radius_px(_profile_vision_radius_px(p, map))
 		var vec: Vector2 = Vector2.ZERO
 		var imgr := _input_manager()
@@ -148,27 +152,8 @@ func step(delta: float) -> bool:
 	return moved
 
 
-func _wall_signature(map: MapData) -> String:
-	if map == null:
-		return ""
-	var poly_count := map.wall_polygons.size()
-	var point_count := 0
-	var checksum := 17
-	for poly in map.wall_polygons:
-		if poly is Array:
-			for point in (poly as Array):
-				if not point is Vector2:
-					continue
-				point_count += 1
-				var p := point as Vector2
-				checksum = int(((checksum * 31) + int(roundf(p.x * 10.0))) & 0x7fffffff)
-				checksum = int(((checksum * 31) + int(roundf(p.y * 10.0))) & 0x7fffffff)
-	return "%d:%d:%d" % [poly_count, point_count, checksum]
-
-
 func _rebuild_cached_wall_edges(map: MapData) -> void:
 	_cached_wall_edges.clear()
-	_cached_wall_signature = _wall_signature(map)
 	_cached_passthrough_version = _map_view.get_passthrough_version() if _map_view != null else 0
 	var pass_rects: Dictionary = _map_view.get_passthrough_rects() if _map_view != null else {}
 	var pass_polys: Dictionary = _map_view.get_passthrough_polys() if _map_view != null else {}
@@ -206,7 +191,6 @@ func build_player_state_payload() -> Array:
 	if _map_view == null:
 		return players
 	var map: MapData = _map()
-	var token_diameter_px := _token_diameter_px_for_map(map) if map else 48.0
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	var im: InputManager = registry.input if registry != null and registry.input != null else null
 	var gs_mgr: GameStateManager = _game_state()
@@ -214,6 +198,7 @@ func build_player_state_payload() -> Array:
 		if not profile is PlayerProfile:
 			continue
 		var p := profile as PlayerProfile
+		var token_diameter_px: float = _token_diameter_px_for_profile(p, map) if map else 48.0
 		var token: Node2D = _dm_tokens.get(p.id, null) as Node2D
 		if token and is_instance_valid(token):
 			gs_mgr.player_positions[p.id] = token.global_position
@@ -224,11 +209,11 @@ func build_player_state_payload() -> Array:
 		players.append({
 			"id": p.id,
 			"name": p.player_name,
-			"base_speed": p.base_speed,
-			"vision_type": p.vision_type,
-			"darkvision_range": p.darkvision_range,
+			"base_speed": p.get_speed(),
+			"vision_type": p.get_vision_type(),
+			"darkvision_range": p.get_darkvision_range(),
 			"vision_radius_px": _profile_vision_radius_px(p, map),
-			"perception_mod": p.perception_mod,
+			"perception_mod": p.get_passive_perception() - 10,
 			"is_dashing": dashing,
 			"is_locked": locked,
 			"light_off": light_off,
@@ -328,9 +313,10 @@ func _ensure_spawn_positions() -> void:
 	var map_size: Vector2 = _map_view.map_image.texture.get_size() if _map_view.map_image and _map_view.map_image.texture else Vector2(1920, 1080)
 	var origin: Vector2 = map_size * 0.5
 
-	# If a save is active, positions were already restored — just ensure tokens.
+	# If a persisted save is active, positions were already restored — just ensure tokens.
+	# Ephemeral sessions (no save_name) have no restored positions.
 	var gs := _game_state()
-	var has_active_save: bool = gs != null and gs.active_save != null
+	var has_restored_save: bool = gs != null and gs.active_save != null and not (gs.active_save as GameSaveData).save_name.is_empty()
 
 	# Build spawn point list from MapData (if any).
 	var spawn_pts: Array = map.spawn_points if map.spawn_points.size() > 0 else []
@@ -357,7 +343,7 @@ func _ensure_spawn_positions() -> void:
 			continue
 		var p := profile as PlayerProfile
 		var current: Vector2 = gs.player_positions.get(p.id, Vector2.ZERO)
-		if current == Vector2.ZERO and not has_active_save:
+		if current == Vector2.ZERO and not has_restored_save:
 			# Check for explicit profile_id binding first.
 			if bound_profiles.has(p.id):
 				var sp: Dictionary = bound_profiles[p.id] as Dictionary
@@ -390,11 +376,11 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 			existing.apply_from_state({
 				"id": profile.id,
 				"name": profile.player_name,
-				"base_speed": profile.base_speed,
-				"vision_type": profile.vision_type,
-				"darkvision_range": profile.darkvision_range,
+				"base_speed": profile.get_speed(),
+				"vision_type": profile.get_vision_type(),
+				"darkvision_range": profile.get_darkvision_range(),
 				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
-				"perception_mod": profile.perception_mod,
+				"perception_mod": profile.get_passive_perception() - 10,
 				"is_dashing": dashing,
 				"icon_facing_deg": profile.icon_facing_deg,
 				"vision_scale": _vision_scale_for_profile(profile), "indicator_color": profile.indicator_color.to_html(false), "position": {
@@ -417,11 +403,11 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 	token.apply_from_state({
 		"id": profile.id,
 		"name": profile.player_name,
-		"base_speed": profile.base_speed,
-		"vision_type": profile.vision_type,
-		"darkvision_range": profile.darkvision_range,
+		"base_speed": profile.get_speed(),
+		"vision_type": profile.get_vision_type(),
+		"darkvision_range": profile.get_darkvision_range(),
 		"vision_radius_px": _profile_vision_radius_px(profile, _map()),
-		"perception_mod": profile.perception_mod,
+		"perception_mod": profile.get_passive_perception() - 10,
 		"is_dashing": dashing,
 		"icon_facing_deg": profile.icon_facing_deg,
 		"vision_scale": _vision_scale_for_profile(profile),
@@ -450,16 +436,18 @@ func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float
 		return registry.movement.get_player_speed_px_per_sec(profile, map)
 	# Fallback (pre-bootstrap or missing service)
 	var px_per_5ft := _pixels_per_5ft(map)
-	var speed := (maxf(profile.base_speed, 5.0) / 5.0) * px_per_5ft / IMovementService.ROUND_DURATION_SEC
+	var speed := (maxf(profile.get_speed(), 5.0) / 5.0) * px_per_5ft / IMovementService.ROUND_DURATION_SEC
 	if registry != null and registry.input != null and registry.input.is_dashing(profile.id):
 		speed *= 2.0
 	return speed
 
 
 func _profile_vision_radius_px(profile: PlayerProfile, map: MapData) -> float:
+	var eff_vision: int = profile.get_vision_type()
+	var eff_dv: float = profile.get_darkvision_range()
 	if map == null:
-		return profile.darkvision_range if profile.vision_type == PlayerProfile.VisionType.DARKVISION else 60.0
-	var radius_feet := profile.darkvision_range if profile.vision_type == PlayerProfile.VisionType.DARKVISION else NORMAL_VISION_RANGE_FEET
+		return eff_dv if eff_vision == PlayerProfile.VisionType.DARKVISION else 60.0
+	var radius_feet := eff_dv if eff_vision == PlayerProfile.VisionType.DARKVISION else NORMAL_VISION_RANGE_FEET
 	return (maxf(radius_feet, 5.0) / 5.0) * _pixels_per_5ft(map)
 
 
@@ -478,6 +466,25 @@ func _vision_scale_for_profile(_profile: PlayerProfile) -> float:
 
 func _token_diameter_px_for_map(map: MapData) -> float:
 	return map.cell_px if map.grid_type == MapData.GridType.SQUARE else map.hex_size * 2.0
+
+
+func _token_diameter_px_for_profile(profile: PlayerProfile, map: MapData) -> float:
+	var px_per_5ft: float = _token_diameter_px_for_map(map)
+	return profile.get_size_ft() / 5.0 * px_per_5ft
+
+
+func resize_player_tokens_for_calibration() -> void:
+	var map: MapData = _map()
+	if map == null:
+		return
+	for profile in _active_profiles():
+		if not profile is PlayerProfile:
+			continue
+		var p := profile as PlayerProfile
+		var token: PlayerSprite = _dm_tokens.get(p.id, null) as PlayerSprite
+		if token == null or not is_instance_valid(token):
+			continue
+		token.set_token_diameter_px(_token_diameter_px_for_profile(p, map))
 
 
 func _resolve_wall_collision(prev_pos: Vector2, next_pos: Vector2, map: MapData, token_radius_px: float) -> Vector2:

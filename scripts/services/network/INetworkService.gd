@@ -22,6 +22,8 @@ signal display_viewport_resized(peer_id: int, viewport_size: Vector2)
 signal display_fullscreen_changed(peer_id: int, is_fullscreen: bool)
 @warning_ignore("unused_signal")
 signal display_sync_applied(peer_id: int, payload: Dictionary)
+@warning_ignore("unused_signal")
+signal dice_roll_received(player_id: String, result: DiceResult, context: Dictionary)
 
 func start_server() -> void:
 	push_error("INetworkService.start_server: not implemented")
@@ -69,3 +71,12 @@ func get_display_peer_ids() -> Array:
 func get_peer_role(_peer_id: int) -> String:
 	push_error("INetworkService.get_peer_role: not implemented")
 	return ""
+
+
+func send_to_peer(_peer_id: int, _data: Dictionary) -> void:
+	push_error("INetworkService.send_to_peer: not implemented")
+
+
+func get_peer_for_player(_player_id: String) -> int:
+	push_error("INetworkService.get_peer_for_player: not implemented")
+	return -1

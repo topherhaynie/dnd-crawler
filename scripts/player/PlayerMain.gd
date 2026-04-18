@@ -28,7 +28,7 @@ func _ready() -> void:
 	_client.state_received.connect(_on_state_received)
 	add_child(_client)
 
-	print("PlayerMain: ready — connecting to DM server")
+	Log.info("PlayerMain", "ready — connecting to DM server")
 
 
 # ---------------------------------------------------------------------------
@@ -42,5 +42,5 @@ func _on_state_received(data: Dictionary) -> void:
 
 func _on_fog_snapshot_applied(payload: Dictionary) -> void:
 	if _client != null:
-		print("PlayerMain: sending display_sync_applied (stamp_bytes=%d stamp_hash=%d)" % [int(payload.get("snapshot_bytes", -1)), int(payload.get("snapshot_hash", -1))])
+		Log.debug("PlayerMain", "sending display_sync_applied (stamp_bytes=%d stamp_hash=%d)" % [int(payload.get("snapshot_bytes", -1)), int(payload.get("snapshot_hash", -1))])
 		_client.send_display_sync_applied(payload)

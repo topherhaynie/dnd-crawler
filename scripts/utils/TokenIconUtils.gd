@@ -51,6 +51,9 @@ static func load_image_from_path(path: String) -> Image:
 	if ext not in SUPPORTED_EXTENSIONS:
 		push_error("TokenIconUtils: unsupported image format '%s'" % ext)
 		return null
+	if not FileAccess.file_exists(path):
+		push_warning("TokenIconUtils: file not found '%s'" % path)
+		return null
 	var img := Image.new()
 	var err: Error = img.load(path)
 	if err != OK:
@@ -233,15 +236,17 @@ static func decode_b64_to_texture(b64: String) -> ImageTexture:
 
 ## Get a circular texture for a local file path, loading lazily on first access.
 ## Multiple callers sharing the same path get the same ImageTexture instance.
+## Missing files are negatively cached so the error is only logged once.
 static func get_or_load_circular_texture(abs_path: String) -> ImageTexture:
 	if abs_path.is_empty():
 		return null
-	var cached: Variant = _texture_cache.get(abs_path, null)
-	if cached is ImageTexture:
-		return cached as ImageTexture
+	if _texture_cache.has(abs_path):
+		var cached: Variant = _texture_cache.get(abs_path, null)
+		if cached is ImageTexture:
+			return cached as ImageTexture
+		return null # negative cache hit — file was already reported missing
 	var tex: ImageTexture = create_circular_texture_from_path(abs_path)
-	if tex != null:
-		_texture_cache[abs_path] = tex
+	_texture_cache[abs_path] = tex # cache both success (ImageTexture) and failure (null)
 	return tex
 
 

@@ -26,7 +26,7 @@ func speed_fpr_to_px_per_sec(speed_fpr: float, cell_px: float) -> float:
 
 func get_player_speed_px_per_sec(profile: PlayerProfile, map: MapData) -> float:
 	var cell_px: float = pixels_per_5ft(map)
-	var speed: float = speed_fpr_to_px_per_sec(maxf(profile.base_speed, 5.0), cell_px)
+	var speed: float = speed_fpr_to_px_per_sec(maxf(profile.get_speed(), 5.0), cell_px)
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry != null and registry.input != null and registry.input.is_dashing(profile.id):
 		speed *= 2.0

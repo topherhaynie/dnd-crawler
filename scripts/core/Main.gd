@@ -82,7 +82,7 @@ func _start_dm_mode() -> void:
 	# NetworkService may be added deferred by ServiceBootstrap; retry until available.
 	call_deferred("_ensure_network_started")
 	add_child(DMWindowScene.instantiate())
-	print("Main: running as DM host")
+	Log.info("Main", "running as DM host")
 
 
 func _ensure_network_started() -> void:
@@ -109,7 +109,7 @@ func _deferred_register_window() -> void:
 func _start_player_mode() -> void:
 	get_tree().root.title = "The Vault — Players"
 	add_child(PlayerMainScene.instantiate())
-	print("Main: running as Player display client")
+	Log.info("Main", "running as Player display client")
 
 
 # ---------------------------------------------------------------------------

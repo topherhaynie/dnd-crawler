@@ -77,6 +77,11 @@ var measurements: Array = []
 # Persisted in map.json so placed magic effects survive map bundle reloads.
 var effects: Array = []
 
+# --- Statblocks -----------------------------------------------------------
+# Array of serialised StatblockData dictionaries for map-scoped statblocks.
+# Token statblock_refs resolve against this array plus SRD and campaign.
+var statblocks: Array = []
+
 # --- Audio (video map backgrounds) -----------------------------------------
 var audio_volume_db: float = 0.0 ## Background video volume in dB (0 = full)
 
@@ -106,6 +111,7 @@ func to_dict() -> Dictionary:
 		"tokens": tokens.duplicate(true),
 		"measurements": measurements.duplicate(true),
 		"effects": effects.duplicate(true),
+		"statblocks": statblocks.duplicate(true),
 		"audio_volume_db": audio_volume_db,
 		"camera_position": {"x": camera_position.x, "y": camera_position.y},
 		"camera_zoom": camera_zoom,
@@ -130,6 +136,7 @@ static func from_dict(d: Dictionary) -> MapData:
 	m.tokens = d.get("tokens", []).duplicate(true)
 	m.measurements = d.get("measurements", []).duplicate(true)
 	m.effects = d.get("effects", []).duplicate(true)
+	m.statblocks = d.get("statblocks", []).duplicate(true)
 	m.audio_volume_db = float(d.get("audio_volume_db", 0.0))
 	var cp: Dictionary = d.get("camera_position", {"x": 0.0, "y": 0.0})
 	m.camera_position = Vector2(float(cp.get("x", 0.0)), float(cp.get("y", 0.0)))

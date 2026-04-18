@@ -48,7 +48,7 @@ func start_server() -> void:
 		return
 	_server.peer_connected.connect(Callable(self , "_on_peer_connected"))
 	_server.peer_disconnected.connect(Callable(self , "_on_peer_disconnected"))
-	print("NetworkService: WebSocket server listening on port %d" % WS_PORT)
+	Log.info("NetworkService", "WebSocket server listening on port %d" % WS_PORT)
 
 func stop_server() -> void:
 	if _server:
@@ -94,7 +94,7 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			ws_peer_roles[peer_id] = role
 		else:
 			ws_peer_roles.erase(peer_id)
-		print("NetworkService: handshake role=%s from peer %d" % [role, peer_id])
+		Log.info("NetworkService", "handshake role=%s from peer %d" % [role, peer_id])
 		var vp := Vector2(
 			float(data.get("viewport_width", 1920)),
 			float(data.get("viewport_height", 1080)))
@@ -107,6 +107,7 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			var pid = str(data.get("player_id", "")).strip_edges()
 			if pid != "":
 				bind_peer(peer_id, pid)
+				_send_campaign_config(peer_id)
 		return
 
 	if data.get("type", "") == "player_action":
@@ -116,6 +117,10 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 			var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 			if reg != null and reg.input != null and reg.input.service != null:
 				reg.input.service.dispatch_action(pid, act)
+		return
+
+	if data.get("type", "") == "dice_roll_request":
+		_handle_dice_roll_request(peer_id, data)
 		return
 
 	if data.get("type", "") == "viewport_resize" and peer_id in _display_peers:
@@ -136,12 +141,12 @@ func _handle_packet(raw: String, _peer_id: int) -> void:
 	# log a debug warning when malformed instead of silently crashing.
 	if data.get("type", "") == "input":
 		if not data.has("x") or not data.has("y"):
-			print_debug("NetworkService: ignoring malformed input packet from %d — missing x/y: %s" % [peer_id, str(data)])
+			Log.debug("NetworkService", "ignoring malformed input packet from %d — missing x/y: %s" % [peer_id, str(data)])
 			return
 		var x_raw_check: Variant = data.get("x")
 		var y_raw_check: Variant = data.get("y")
 		if not _is_valid_axis_value(x_raw_check) or not _is_valid_axis_value(y_raw_check):
-			print_debug("NetworkService: ignoring malformed input packet from %d — non-numeric x/y: %s" % [peer_id, str(data)])
+			Log.debug("NetworkService", "ignoring malformed input packet from %d — non-numeric x/y: %s" % [peer_id, str(data)])
 			return
 
 	if peer_id in _display_peers:
@@ -360,6 +365,26 @@ func get_peer_for_token(token: String) -> int:
 			return int(key)
 	return -1
 
+
+## Send a JSON payload to any connected peer (not restricted to display peers).
+func send_to_peer(peer_id: int, data: Dictionary) -> void:
+	if _server == null:
+		return
+	var ws_peer := _server.get_peer(peer_id)
+	if ws_peer == null:
+		return
+	if ws_peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	var payload := JSON.stringify(data).to_utf8_buffer()
+	var err := ws_peer.send(payload)
+	if err != OK:
+		push_warning("NetworkService: send_to_peer failed peer=%d err=%d" % [peer_id, err])
+
+
+## Reverse lookup: find the peer_id bound to a given player_id.
+func get_peer_for_player(player_id: String) -> int:
+	return get_peer_for_token(player_id)
+
 func send_map_to_display(peer_id: int, map: Object, is_update: bool = false, fog_snapshot: Dictionary = {}) -> void:
 	if map == null:
 		return
@@ -427,10 +452,100 @@ func _track_fog_packet_metrics(msg_type: String, payload_bytes: int) -> void:
 		return
 	if now - _last_fog_metrics_log_msec < 2000:
 		return
-	print("NetworkService: fog metrics updated bytes=%d count=%d delta bytes=%d count=%d" % [
+	Log.debug("NetworkService", "fog metrics bytes=%d count=%d delta bytes=%d count=%d" % [
 		int(_fog_packet_bytes_by_type.get("fog_updated", 0)),
 		int(_fog_packet_count_by_type.get("fog_updated", 0)),
 		int(_fog_packet_bytes_by_type.get("fog_delta", 0)),
 		int(_fog_packet_count_by_type.get("fog_delta", 0)),
 	])
 	_last_fog_metrics_log_msec = now
+
+
+# ── Mobile campaign config push ────────────────────────────────────────────
+
+func _send_campaign_config(peer_id: int) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.campaign == null:
+		return
+	var campaign_data: Variant = reg.campaign.get_active_campaign()
+	var crit_rule: String = "max_plus_roll"
+	if campaign_data != null and campaign_data is CampaignData:
+		crit_rule = str((campaign_data as CampaignData).settings.get("critical_hit_rule", "max_plus_roll"))
+	send_to_peer(peer_id, {
+		"type": "campaign_config",
+		"critical_hit_rule": crit_rule,
+	})
+
+
+# ── Mobile dice roll handling ──────────────────────────────────────────────
+
+func _handle_dice_roll_request(peer_id: int, data: Dictionary) -> void:
+	var player_id: String = _resolve_packet_player_id(peer_id, data)
+	if player_id.is_empty():
+		return
+	var expression: String = str(data.get("expression", "")).strip_edges()
+	if expression.is_empty():
+		return
+	var advantage: bool = bool(data.get("advantage", false))
+	var disadvantage: bool = bool(data.get("disadvantage", false))
+
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.dice == null:
+		return
+
+	var context: Dictionary = {
+		"source": "mobile",
+		"player_id": player_id,
+	}
+	var result: DiceResult = null
+	if advantage:
+		result = reg.dice.roll_with_advantage(expression, context)
+		context["roll_type"] = "advantage"
+	elif disadvantage:
+		result = reg.dice.roll_with_disadvantage(expression, context)
+		context["roll_type"] = "disadvantage"
+	else:
+		result = reg.dice.roll_fast(expression, context)
+
+	if result == null:
+		return
+
+	# Send result back to the requesting peer.
+	send_to_peer(peer_id, {
+		"type": "dice_roll_result",
+		"expression": result.expression,
+		"total": result.total,
+		"individual_rolls": result.individual_rolls,
+		"modifiers": result.modifiers,
+		"is_critical": result.is_critical,
+		"is_fumble": result.is_fumble,
+	})
+
+	# Resolve player name for display.
+	var player_name: String = player_id
+	var gs := _game_state()
+	if gs != null:
+		var profile: Variant = gs.get_profile_by_id(player_id)
+		if profile is PlayerProfile:
+			player_name = (profile as PlayerProfile).player_name
+
+	# Broadcast to player displays if campaign dice visibility allows it.
+	var visibility: String = "shared"
+	if reg.campaign != null:
+		var campaign_data: Variant = reg.campaign.get_active_campaign()
+		if campaign_data != null and campaign_data is CampaignData:
+			visibility = str((campaign_data as CampaignData).settings.get("dice_visibility", "shared"))
+	if visibility == "shared":
+		broadcast_to_displays({
+			"msg": "dice_roll_toast",
+			"player_name": player_name,
+			"expression": result.expression,
+			"total": result.total,
+			"individual_rolls": result.individual_rolls,
+			"modifiers": result.modifiers,
+			"is_critical": result.is_critical,
+			"is_fumble": result.is_fumble,
+		})
+
+	# Notify DM UI via signal so the dice tray can display it.
+	emit_signal("dice_roll_received", player_id, result, context)

@@ -14,7 +14,6 @@ class_name PlayerWindow
 # ---------------------------------------------------------------------------
 
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
-const DEBUG_FOG_SNAPSHOT: bool = true
 
 signal fog_snapshot_applied(payload: Dictionary)
 
@@ -35,6 +34,18 @@ var _notes_resizing: bool = false
 var _notes_resize_origin: Vector2 = Vector2.ZERO
 var _notes_resize_start_size: Vector2 = Vector2.ZERO
 
+# Combat initiative strip (player display)
+var _combat_strip_layer: CanvasLayer = null
+var _combat_strip_panel: PanelContainer = null
+var _combat_current_label: Label = null
+var _combat_next_label: Label = null
+var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
+
+# Dice roll toast overlay
+var _dice_toast_layer: CanvasLayer = null
+var _dice_toast_label: RichTextLabel = null
+var _dice_toast_timer: Timer = null
+
 
 func _ready() -> void:
 	_map_view = MapViewScene.instantiate() as MapView
@@ -43,7 +54,8 @@ func _ready() -> void:
 	_map_view.allow_keyboard_pan = false
 	_map_view.set_dm_view(false)
 	_build_puzzle_notes_panel()
-	print("PlayerWindow: ready — awaiting map from DM")
+	_build_combat_strip()
+	Log.info("PlayerWindow", "ready — awaiting map from DM")
 
 
 func _map() -> MapData:
@@ -116,7 +128,7 @@ func on_state(data: Dictionary) -> void:
 				_map_view.set_token_detected(str(data.get("token_id", "")), false)
 		"player_bind":
 			_bound_player_id = str(data.get("player_id", ""))
-			print("PlayerWindow: bound to player_id=%s" % _bound_player_id)
+			Log.info("PlayerWindow", "bound to player_id=%s" % _bound_player_id)
 		"measurement_state":
 			_handle_measurement_state(data.get("measurements", []) as Array)
 		"measurement_added":
@@ -139,6 +151,14 @@ func on_state(data: Dictionary) -> void:
 		"audio_volume":
 			if _map_view != null:
 				_map_view.set_audio_volume_db(float(data.get("volume_db", 0.0)))
+		"combat_turn_update":
+			_handle_combat_turn_update(data)
+		"combat_hp_update":
+			_handle_combat_hp_update(data)
+		"save_called":
+			_handle_save_called(data)
+		"dice_roll_toast":
+			_handle_dice_roll_toast(data)
 		_:
 			pass
 	# Puzzle notes piggyback on token messages (and standalone puzzle_notes_state).
@@ -187,7 +207,7 @@ func _handle_map_loaded(map_dict: Dictionary) -> void:
 				else map.hex_size * 2.0
 		_map_view.measurement_overlay.set_scale_px(px_per_5ft)
 		_map_view.measurement_overlay.load_measurements(map.measurements)
-	print("PlayerWindow: map loaded — '%s'" % map.map_name)
+	Log.info("PlayerWindow", "map loaded — '%s'" % map.map_name)
 
 
 func _handle_map_updated(map_dict: Dictionary) -> void:
@@ -213,7 +233,7 @@ func _handle_map_updated(map_dict: Dictionary) -> void:
 		float(cam_state["zoom"]),
 		int(cam_state.get("rotation", 0)))
 	_apply_token_size_from_map(map)
-	print("PlayerWindow: map updated (grid/scale) — '%s'" % map.map_name)
+	Log.info("PlayerWindow", "map updated (grid/scale) — '%s'" % map.map_name)
 
 
 func _handle_camera_update(data: Dictionary) -> void:
@@ -244,12 +264,11 @@ func _handle_fog_state_snapshot(data: Dictionary) -> void:
 		return
 
 	var snapshot_hash := hash(fog_state_png)
-	if DEBUG_FOG_SNAPSHOT:
-		print("PlayerWindow: fog snapshot recv (stamp_bytes=%d stamp_hash=%d)" % [fog_state_png.size(), snapshot_hash])
+	Log.debug("PlayerWindow", "fog snapshot recv (stamp_bytes=%d stamp_hash=%d)" % [fog_state_png.size(), snapshot_hash])
 
 	_map_view.apply_fog_snapshot(fog_state_png)
 
-	print("PlayerWindow: fog_state_snapshot applied (stamp_bytes=%d)" % fog_state_png.size())
+	Log.info("PlayerWindow", "fog_state_snapshot applied (stamp_bytes=%d)" % fog_state_png.size())
 	fog_snapshot_applied.emit({
 		"snapshot_bytes": fog_state_png.size(),
 		"snapshot_hash": snapshot_hash,
@@ -797,3 +816,238 @@ func _handle_effect_remove(id: String) -> void:
 	if _map_view == null or id.is_empty():
 		return
 	_map_view.remove_effect_node(id)
+
+
+# ---------------------------------------------------------------------------
+# Combat initiative strip (player display)
+# ---------------------------------------------------------------------------
+
+func _build_combat_strip() -> void:
+	_combat_strip_layer = CanvasLayer.new()
+	_combat_strip_layer.layer = 100
+	add_child(_combat_strip_layer)
+
+	_combat_strip_panel = PanelContainer.new()
+	_combat_strip_panel.anchor_left = 0.5
+	_combat_strip_panel.anchor_right = 0.5
+	_combat_strip_panel.anchor_top = 0.0
+	_combat_strip_panel.anchor_bottom = 0.0
+	_combat_strip_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_combat_strip_panel.offset_top = 8.0
+	_combat_strip_panel.custom_minimum_size = Vector2(300, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.1, 0.12, 0.85)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	style.content_margin_left = 16.0
+	style.content_margin_right = 16.0
+	style.content_margin_top = 8.0
+	style.content_margin_bottom = 8.0
+	_combat_strip_panel.add_theme_stylebox_override("panel", style)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 24)
+	_combat_strip_panel.add_child(hbox)
+
+	# Current turn label
+	_combat_current_label = Label.new()
+	_combat_current_label.add_theme_font_size_override("font_size", 22)
+	_combat_current_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	hbox.add_child(_combat_current_label)
+
+	# Next up label
+	_combat_next_label = Label.new()
+	_combat_next_label.add_theme_font_size_override("font_size", 18)
+	_combat_next_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	hbox.add_child(_combat_next_label)
+
+	_combat_strip_layer.add_child(_combat_strip_panel)
+	_combat_strip_panel.visible = false
+
+
+func _handle_combat_turn_update(data: Dictionary) -> void:
+	var current_tid: String = str(data.get("current_token_id", ""))
+	var round_num: int = int(data.get("round_number", 0))
+	# Clear previous active-turn ring.
+	if not _combat_turn_token_id.is_empty():
+		var prev: Node2D = _get_token_node(_combat_turn_token_id)
+		if prev != null:
+			prev.set_active_turn(false)
+	_combat_turn_token_id = ""
+	if current_tid.is_empty() or round_num <= 0:
+		# Combat ended — hide strip.
+		if _combat_strip_panel != null:
+			_combat_strip_panel.visible = false
+		return
+	# Apply active-turn ring to new token.
+	var curr: Node2D = _get_token_node(current_tid)
+	if curr != null:
+		curr.set_active_turn(true)
+	_combat_turn_token_id = current_tid
+	# Use pre-resolved name from DM message if available, fall back to map lookup.
+	var token_name_from_msg: String = str(data.get("token_name", ""))
+	var current_name: String = token_name_from_msg if not token_name_from_msg.is_empty() else _resolve_token_name(current_tid)
+	if _combat_current_label != null:
+		_combat_current_label.text = "\u2694 %s  (Round %d)" % [current_name, round_num]
+	if _combat_strip_panel != null:
+		_combat_strip_panel.visible = true
+
+
+func _handle_combat_hp_update(data: Dictionary) -> void:
+	var token_id: String = str(data.get("token_id", ""))
+	if token_id.is_empty() or _map_view == null:
+		return
+	var current_hp: int = int(data.get("current_hp", 0))
+	var max_hp: int = int(data.get("max_hp", 0))
+	var sprite: Node2D = _map_view.get_token_sprite(token_id)
+	if sprite != null and sprite.has_method("set_hp_bar"):
+		sprite.set_hp_bar(current_hp, max_hp, 0)
+
+
+func _handle_save_called(data: Dictionary) -> void:
+	var ability: String = str(data.get("ability", ""))
+	var dc: int = int(data.get("dc", 0))
+	var count: int = int(data.get("token_count", 0))
+	if ability.is_empty():
+		return
+	_show_save_notification(ability, dc, count)
+
+
+## Shows a brief floating notification on the player display.
+func _show_save_notification(ability: String, dc: int, count: int) -> void:
+	var lbl := Label.new()
+	lbl.text = "\u2694 Saving Throw: %s DC %d (%d creature%s)" % [
+		ability, dc, count, "" if count == 1 else "s"]
+	lbl.add_theme_font_size_override("font_size", 24)
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	lbl.offset_top = 60.0
+	lbl.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	add_child(lbl)
+	# Fade out and remove after 3 seconds.
+	var tw := create_tween()
+	tw.tween_interval(2.0)
+	tw.tween_property(lbl, "modulate:a", 0.0, 1.0)
+	tw.tween_callback(lbl.queue_free)
+
+
+## Returns the Node2D for the given token ID, checking both map TokenSprite
+## nodes and PlayerSprite nodes tracked by this window.
+func _get_token_node(token_id: String) -> Node2D:
+	if _map_view != null:
+		var ts: Node2D = _map_view.get_token_sprite(token_id)
+		if ts != null:
+			return ts
+	var ps: Variant = _tokens_by_id.get(token_id, null)
+	if ps is Node2D and is_instance_valid(ps as Node):
+		return ps as Node2D
+	return null
+
+
+func _resolve_token_name(token_id: String) -> String:
+	if _map_view == null:
+		return token_id
+	var token_layer: Node2D = _map_view.get_token_layer()
+	if token_layer == null:
+		return token_id
+	for child in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null and ts.token_id == token_id and ts._label_node != null and not ts._label_node.text.is_empty():
+			return ts._label_node.text
+	return token_id
+
+
+# ---------------------------------------------------------------------------
+# Dice roll toast
+# ---------------------------------------------------------------------------
+
+func _handle_dice_roll_toast(data: Dictionary) -> void:
+	var player_name: String = str(data.get("player_name", ""))
+	var expression: String = str(data.get("expression", ""))
+	var total: int = int(data.get("total", 0))
+	var is_critical: bool = bool(data.get("is_critical", false))
+	var is_fumble: bool = bool(data.get("is_fumble", false))
+	var rolls: Array = data.get("individual_rolls", []) as Array
+	var mods: int = int(data.get("modifiers", 0))
+
+	_ensure_dice_toast_layer()
+
+	var color: String = "#FFD700" if is_critical else ("#FF4444" if is_fumble else "#FFFFFF")
+	var rolls_str: String = ""
+	for gi: int in range(rolls.size()):
+		var group: Variant = rolls[gi]
+		if gi > 0:
+			rolls_str += " + "
+		if group is Array:
+			rolls_str += "[%s]" % ", ".join((group as Array).map(func(v: Variant) -> String: return str(v)))
+	if mods > 0:
+		rolls_str += " +%d" % mods
+	elif mods < 0:
+		rolls_str += " %d" % mods
+
+	var crit_tag: String = ""
+	if is_critical:
+		crit_tag = " [b]NAT 20![/b]"
+	elif is_fumble:
+		crit_tag = " [b]NAT 1![/b]"
+
+	var text: String = "[center][color=#88BBFF]%s[/color] rolled [b]%s[/b]\n[color=%s][font_size=64]%d[/font_size][/color]\n%s%s[/center]" % [
+		player_name, expression, color, total, rolls_str, crit_tag]
+
+	_dice_toast_label.text = ""
+	_dice_toast_label.append_text(text)
+	_dice_toast_layer.visible = true
+
+	if _dice_toast_timer != null:
+		_dice_toast_timer.start(4.0)
+
+
+func _ensure_dice_toast_layer() -> void:
+	if _dice_toast_layer != null:
+		return
+	_dice_toast_layer = CanvasLayer.new()
+	_dice_toast_layer.layer = 110
+	add_child(_dice_toast_layer)
+
+	var panel := PanelContainer.new()
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.0
+	panel.anchor_bottom = 0.0
+	panel.offset_left = -200
+	panel.offset_right = 200
+	panel.offset_top = 40
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_END
+
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.1, 0.14, 0.92)
+	bg.border_color = Color(0.94, 0.63, 0.01, 0.6)
+	bg.set_border_width_all(2)
+	bg.set_corner_radius_all(14)
+	bg.set_content_margin_all(16)
+	panel.add_theme_stylebox_override("panel", bg)
+	_dice_toast_layer.add_child(panel)
+
+	_dice_toast_label = RichTextLabel.new()
+	_dice_toast_label.bbcode_enabled = true
+	_dice_toast_label.fit_content = true
+	_dice_toast_label.scroll_active = false
+	_dice_toast_label.add_theme_font_size_override("normal_font_size", 24)
+	_dice_toast_label.add_theme_font_size_override("bold_font_size", 24)
+	panel.add_child(_dice_toast_label)
+
+	_dice_toast_timer = Timer.new()
+	_dice_toast_timer.one_shot = true
+	_dice_toast_timer.timeout.connect(_on_dice_toast_timeout)
+	add_child(_dice_toast_timer)
+
+	_dice_toast_layer.visible = false
+
+
+func _on_dice_toast_timeout() -> void:
+	if _dice_toast_layer != null:
+		_dice_toast_layer.visible = false

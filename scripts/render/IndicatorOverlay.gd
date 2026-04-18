@@ -22,6 +22,8 @@ const _HANDLE_COLOR := Color(1.0, 1.0, 1.0, 0.9)
 
 var show_handles: bool = false
 
+var _last_cam_zoom: float = -1.0
+
 
 func set_rect(r: Rect2, rotation_deg: float = 0.0) -> void:
 	_rect = r
@@ -56,8 +58,12 @@ func _compute_corners() -> PackedVector2Array:
 
 
 func _process(_delta: float) -> void:
-	# Redraw every frame while visible so border width stays crisp during zoom.
-	if _rect != Rect2():
+	# Redraw only when zoom changes so border width stays crisp, not every frame.
+	if _rect == Rect2():
+		return
+	var cam_z := camera.zoom.x if camera else 1.0
+	if not is_equal_approx(cam_z, _last_cam_zoom):
+		_last_cam_zoom = cam_z
 		queue_redraw()
 
 

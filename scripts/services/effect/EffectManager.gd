@@ -45,3 +45,31 @@ func get_by_id(id: String) -> EffectData:
 	if service == null:
 		return null
 	return service.get_effect_by_id(id)
+
+
+# ---------------------------------------------------------------------------
+# Manifest (EffectDefinition library)
+# ---------------------------------------------------------------------------
+
+func load_manifest(path: String) -> void:
+	if service == null:
+		return
+	service.load_manifest(path)
+
+
+func get_definitions() -> Array:
+	if service == null:
+		return []
+	return service.get_definitions()
+
+
+func get_definition(effect_id: String) -> EffectDefinition:
+	if service == null:
+		return null
+	return service.get_definition(effect_id)
+
+
+func is_manifest_loaded() -> bool:
+	if service == null:
+		return false
+	return service.is_manifest_loaded()

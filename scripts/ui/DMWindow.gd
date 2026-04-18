@@ -25,9 +25,16 @@ const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
 const GameSaveDataScript = preload("res://scripts/services/game_state/models/GameSaveData.gd")
 const ToolPaletteScript = preload("res://scripts/ui/ToolPalette.gd")
 const BundleBrowserScript = preload("res://scripts/ui/BundleBrowser.gd")
+const CampaignBrowserScript = preload("res://scripts/ui/CampaignBrowser.gd")
 const NetworkUtilsScript = preload("res://scripts/utils/NetworkUtils.gd")
 const QRCodeScript = preload("res://scripts/utils/QRCode.gd")
 const EffectPanelScript = preload("res://scripts/ui/EffectPanel.gd")
+const OverrideEditorScript = preload("res://scripts/ui/StatblockOverrideEditor.gd")
+const DiceTrayScript = preload("res://scripts/ui/DiceTray.gd")
+const CombatLogPanelScript = preload("res://scripts/ui/CombatLogPanel.gd")
+const CharacterWizardScript = preload("res://scripts/ui/character_wizard/CharacterWizard.gd")
+const CharacterSheetScript = preload("res://scripts/ui/CharacterSheet.gd")
+const LevelUpWizardScript = preload("res://scripts/ui/character_wizard/LevelUpWizard.gd")
 
 const MAP_DIR := "user://data/maps/"
 const SAVE_DIR := "user://data/saves/"
@@ -111,6 +118,10 @@ var _view_menu: PopupMenu = null ## kept for checkmark management
 var _edit_menu: PopupMenu = null ## kept for undo/redo label updates
 var _grid_submenu: PopupMenu = null ## Grid Type submenu in View menu
 var _theme_submenu: PopupMenu = null ## UI Theme submenu in View menu
+var _statblock_library: StatblockLibrary = null ## Statblock Library window
+var _item_library: ItemLibrary = null ## Item Library window
+var _campaign_panel: CampaignPanel = null ## Campaign management hub
+var _campaign_browser: Node = null ## Campaign selection browser (startup + post-close)
 var _grid_type_selected: int = MapData.GridType.SQUARE ## tracks current grid type
 var _palette_window: Window = null ## non-null when palette is undocked
 var _palette_floating: bool = false
@@ -178,10 +189,26 @@ var _token_icon_crop_btn: Button = null
 var _token_icon_crop_offset: Vector2 = Vector2.ZERO
 var _token_icon_crop_zoom: float = 1.0
 var _token_icon_facing_deg: float = 0.0
+var _token_icon_campaign_image_id: String = ""
 ## Puzzle notes sub-section
 var _puzzle_notes_container: VBoxContainer = null
 var _puzzle_notes_scroll: ScrollContainer = null
 var _puzzle_notes_add_btn: Button = null
+## Statblocks sub-section (MONSTER / NPC tokens)
+var _token_statblocks_section: VBoxContainer = null
+var _token_statblocks_list: ItemList = null
+var _token_statblock_attach_btn: Button = null
+var _token_statblock_detach_btn: Button = null
+var _token_statblock_view_btn: Button = null
+var _token_statblock_rollhp_btn: Button = null
+var _token_statblock_edit_overrides_btn: Button = null
+var _token_statblock_hp_spin: SpinBox = null
+var _token_statblock_temphp_spin: SpinBox = null
+var _token_statblock_hp_label: Label = null
+var _token_statblock_visibility_option: OptionButton = null
+## Pending statblock data edited in the token editor.
+var _token_pending_statblock_refs: Array = []
+var _token_pending_statblock_overrides: Dictionary = {}
 ## Right-click context menu for tokens
 var _token_context_menu: PopupMenu = null
 var _token_context_id: String = ""
@@ -192,6 +219,9 @@ var _background_right_click_pos: Vector2 = Vector2.ZERO
 ## Background context menu (right-click on empty map space).
 var _background_context_menu: PopupMenu = null
 var _background_right_click_effect_id: String = ""
+## Measurement right-click context menu.
+var _measurement_context_menu: PopupMenu = null
+var _measurement_context_id: String = ""
 
 # ── Passage paint panel ────────────────────────────────────────────────────
 var _passage_panel: PanelContainer = null
@@ -255,6 +285,10 @@ var _profile_selected_index: int = -1
 var _profile_is_new_draft: bool = false
 var _profiles_import_dialog: FileDialog = null
 var _profiles_export_dialog: FileDialog = null
+var _statblocks_import_dialog: FileDialog = null
+var _statblocks_export_dialog: FileDialog = null
+var _campaign_import_dialog: FileDialog = null
+var _campaign_export_dialog: FileDialog = null
 var _profiles_root: Control = null
 var _profile_color_btn: ColorPickerButton = null
 var _profile_active_check: CheckBox = null
@@ -272,6 +306,10 @@ var _profile_icon_crop_btn: Button = null
 var _profile_icon_crop_offset: Vector2 = Vector2.ZERO
 var _profile_icon_crop_zoom: float = 1.0
 var _profile_icon_facing_deg: float = 0.0
+var _profile_icon_campaign_image_id: String = ""
+var _profile_size_option: OptionButton = null
+## Shared campaign image picker dialog (used by token and profile editors).
+var _campaign_image_picker: CampaignImagePicker = null
 ## Shared crop editor dialog (used by both token and profile editors).
 var _crop_editor_dialog: Window = null
 var _crop_editor_canvas: Control = null
@@ -293,9 +331,24 @@ var _crop_editor_cancel_btn: Button = null
 var _crop_editor_ok_btn: Button = null
 ## Legacy autoload reference removed — use registry-first `_network()` helper
 
+# ── Phase 23: character management ------------------------------------------
+var _char_wizard: CharacterWizardScript = null
+var _char_sheet: CharacterSheetScript = null
+var _level_up_wizard: LevelUpWizardScript = null
+var _char_mgr_dialog: AcceptDialog = null
+var _char_mgr_list: ItemList = null
+var _chars_assign_btn: Button = null
+var _chars_remove_btn: Button = null
+var _profile_char_option: OptionButton = null
+
 # ── Measurement panel ────────────────────────────────────────────────────────
-## Standalone floating window for measurement tools.
-var _measure_panel: Window = null
+## Dockable panel for measurement tools (right-side, left of effect panel).
+var _measure_panel: PanelContainer = null
+var _measure_panel_window: Window = null
+var _measure_panel_floating: bool = false
+var _measure_undock_btn: Button = null
+var _measure_panel_title: Label = null
+var _measure_vbox: VBoxContainer = null
 ## ButtonGroup shared by all 5 measure-tool buttons.
 var _measure_tool_group: ButtonGroup = null
 ## ItemList showing all active measurement shapes (label + × delete button).
@@ -323,11 +376,41 @@ var _effect_panel: PanelContainer = null
 var _effect_panel_window: Window = null
 var _effect_panel_floating: bool = false
 
+# ── Dice tray panel ──────────────────────────────────────────────────────────
+var _dice_tray: PanelContainer = null
+var _dice_tray_window: Window = null
+var _dice_tray_floating: bool = false
+var _dice_renderer: DiceRenderer3D = null
+
+# ── Initiative panel ─────────────────────────────────────────────────────────
+var _initiative_panel: InitiativePanel = null
+var _initiative_panel_window: Window = null
+var _initiative_panel_floating: bool = false
+var _quick_damage_dialog: QuickDamageDialog = null
+var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
+
+# ── Save / AoE panel ────────────────────────────────────────────────────────
+var _save_results_panel: SaveResultsPanel = null
+var _save_config_dialog: Window = null
+## Temporarily stores measurement ID while save config dialog is open.
+var _pending_save_measurement_id: String = ""
+
+# ── Condition dialog ─────────────────────────────────────────────────────────
+var _condition_dialog: ConditionDialog = null
+var _combat_log_panel: PanelContainer = null
+var _combat_log_panel_window: Window = null
+var _combat_log_panel_floating: bool = false
+
 # ── Share player link dialog ────────────────────────────────────────────────
 var _share_dialog: AcceptDialog = null
 var _share_dialog_root: VBoxContainer = null
 var _share_qr_rect: TextureRect = null
 var _share_url_label: Label = null
+
+# ── Multi-selection action bar ──────────────────────────────────────────────
+var _multi_select_bar: PanelContainer = null
+var _multi_select_combat_btn: Button = null
+var _multi_select_label: Label = null
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -345,8 +428,6 @@ const _FOG_BROADCAST_DEBOUNCE: float = 1.5
 const _FOG_AUTO_SYNC_DEBOUNCE: float = 0.0
 const _FOG_DELTA_MAX_CELLS: int = 1200
 const _ENABLE_CONTINUOUS_FOG_SYNC: bool = false
-const DEBUG_FOG_SNAPSHOT: bool = false
-const DEBUG_FOG_TELEMETRY: bool = false
 const _PERCEPTION_CHECK_INTERVAL: float = 0.25
 var _perception_timer: float = 0.0
 var _broadcast_dirty: bool = false
@@ -387,10 +468,29 @@ func _ready() -> void:
 		if _r != null and _r.history != null:
 			_r.history.clear())
 	_apply_ui_scale()
-	# Auto-open the save browser so the DM can quickly resume a session.
+	# On startup: try to resume the most-recently-used campaign, then show the
+	# save browser so the DM can quickly pick up a session.
 	# Wait one frame so the node tree finishes setting up children first.
-	get_tree().process_frame.connect(func() -> void: _open_bundle_browser("save"), CONNECT_ONE_SHOT)
-	print("DMWindow: ready")
+	get_tree().process_frame.connect(_on_first_frame, CONNECT_ONE_SHOT)
+
+
+func _on_first_frame() -> void:
+	## On startup, resume the most recently used campaign and open its hub,
+	## or show the campaign browser if no prior campaign exists.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var resumed: bool = false
+	if registry != null and registry.campaign != null:
+		var last_path: String = registry.campaign.get_last_campaign_path()
+		if not last_path.is_empty():
+			var json_check: String = last_path.rstrip("/") + "/campaign.json"
+			if FileAccess.file_exists(json_check):
+				var campaign: CampaignData = registry.campaign.open_campaign(last_path)
+				if campaign != null:
+					_set_status("Resumed campaign: %s" % campaign.name)
+					resumed = true
+					_open_campaign_hub()
+	if not resumed:
+		_open_campaign_browser()
 
 
 func _ensure_profile_bindings() -> void:
@@ -405,7 +505,7 @@ func _ensure_profile_bindings() -> void:
 
 func _ensure_game_state_bindings() -> void:
 	var gs := _game_state()
-	if gs == null:
+	if gs == null or gs.service == null:
 		call_deferred("_ensure_game_state_bindings")
 		return
 	if not gs.is_connected("player_lock_changed", Callable(self , "_on_player_lock_changed_external")):
@@ -413,13 +513,12 @@ func _ensure_game_state_bindings() -> void:
 	# Signal subscription: IGameStateService extends Node; signals live on the
 	# Node instance. Approved narrow exception to the view-must-call-manager rule.
 	var svc: IGameStateService = gs.service
-	if svc != null:
-		if not svc.is_connected("session_loaded", Callable(self , "_on_session_changed")):
-			svc.session_loaded.connect(_on_session_changed)
-		if not svc.is_connected("session_saved", Callable(self , "_on_session_changed")):
-			svc.session_saved.connect(_on_session_changed)
-		if not svc.is_connected("active_profiles_changed", Callable(self , "_on_profiles_changed")):
-			svc.active_profiles_changed.connect(_on_profiles_changed)
+	if not svc.is_connected("session_loaded", Callable(self , "_on_session_changed")):
+		svc.session_loaded.connect(_on_session_changed)
+	if not svc.is_connected("session_saved", Callable(self , "_on_session_changed")):
+		svc.session_saved.connect(_on_session_changed)
+	if not svc.is_connected("active_profiles_changed", Callable(self , "_on_profiles_changed")):
+		svc.active_profiles_changed.connect(_on_profiles_changed)
 	_refresh_freeze_panel()
 
 
@@ -628,6 +727,9 @@ func _init_network_binding() -> void:
 	if not svc.is_connected("display_sync_applied", Callable(self , "_on_display_sync_applied")):
 		svc.display_sync_applied.connect(_on_display_sync_applied)
 		connected_any = true
+	if not svc.is_connected("dice_roll_received", Callable(self , "_on_dice_roll_received")):
+		svc.dice_roll_received.connect(_on_dice_roll_received)
+		connected_any = true
 	# If the service exists but hasn't yet exposed the expected signals, retry shortly.
 	if not connected_any:
 		call_deferred("_init_network_binding")
@@ -681,6 +783,9 @@ func _shortcut_input(event: InputEvent) -> void:
 			var world_pos: Vector2 = _map_view.get_global_mouse_position()
 			_paste_token(world_pos)
 			get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_L:
+		_open_statblock_library()
+		get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -702,8 +807,10 @@ func _process(delta: float) -> void:
 		_broadcast_fog_state()
 		_fog_countdown = _FOG_BROADCAST_DEBOUNCE
 
-	_update_dm_override_input()
-	if _simulate_player_movement(delta):
+	if Log.debug_mode:
+		_update_dm_override_input()
+	var _player_moved: bool = _simulate_player_movement(delta)
+	if _player_moved:
 		_player_state_dirty = true
 		if _player_state_countdown <= 0.0:
 			_broadcast_player_state()
@@ -728,8 +835,9 @@ func _process(delta: float) -> void:
 
 	# Periodic perception-proximity check — auto-reveal tokens whose DC is
 	# met by a nearby player's passive perception.
-	# Autopause collision runs every frame for reliable swept-path detection.
-	_run_autopause_check()
+	# Autopause collision only needs to run when players or roaming tokens moved.
+	if _player_moved or not _roaming_tokens.is_empty():
+		_run_autopause_check()
 
 	_perception_timer -= delta
 	if _perception_timer <= 0.0:
@@ -775,8 +883,17 @@ func _build_ui() -> void:
 	_map_view.token_trigger_radius_changed.connect(_on_token_trigger_radius_changed)
 	_map_view.token_place_requested.connect(_on_token_place_requested)
 	_map_view.token_right_clicked.connect(_on_token_right_clicked)
+	_map_view.measurement_right_clicked.connect(_on_measurement_right_clicked)
 	_map_view.background_right_clicked.connect(_on_background_right_clicked)
 	_map_view.token_selected.connect(_on_token_selected)
+	# Connect selection_changed from the selection service for status updates.
+	var sel_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sel_reg == null:
+		var _sel_boot := get_node_or_null("/root/ServiceBootstrap")
+		if _sel_boot != null and _sel_boot.get("registry") != null:
+			sel_reg = _sel_boot.registry as ServiceRegistry
+	if sel_reg != null and sel_reg.selection != null and sel_reg.selection.service != null:
+		sel_reg.selection.service.selection_changed.connect(_on_selection_changed)
 	_map_view.passage_paths_committed.connect(_on_passage_paths_committed)
 	_map_view.roam_path_committed.connect(_on_roam_path_committed)
 	_map_view.effect_place_requested.connect(_on_effect_place_requested)
@@ -818,11 +935,13 @@ func _build_ui() -> void:
 	_menu_bar.resized.connect(_apply_palette_size)
 	_menu_bar.resized.connect(_apply_freeze_panel_size)
 	_menu_bar.resized.connect(_apply_effect_panel_size)
+	_menu_bar.resized.connect(_apply_dice_tray_size)
+	_menu_bar.resized.connect(_apply_initiative_panel_size)
 	_ui_root.add_child(_menu_bar)
 
 	var menu_bar: MenuBar = _menu_bar ## local alias for readability below
 
-	# File menu
+	# File menu  (IDs 0-9 = map/save/quit, 40-44 = campaign)
 	var file_menu := PopupMenu.new()
 	file_menu.name = "File"
 	file_menu.add_item("New Map from Image…", 0)
@@ -836,6 +955,22 @@ func _build_ui() -> void:
 	file_menu.add_item("Save Game As…", 5)
 	file_menu.add_item("Load Game…", 6)
 	file_menu.add_item("Browse Saves…", 8)
+	file_menu.add_separator()
+	file_menu.add_item("New Campaign…", 40)
+	file_menu.add_item("Open Campaign…", 41)
+	file_menu.add_item("Save Campaign", 42)
+	file_menu.add_item("Campaign Settings…", 43)
+	file_menu.add_item("Close Campaign", 44)
+	file_menu.add_separator()
+	file_menu.add_item("Export Statblocks as JSON\u2026", 47)
+	file_menu.add_item("Import Statblocks from JSON\u2026", 48)
+	file_menu.add_item("Export Campaign as JSON\u2026", 49)
+	file_menu.add_item("Import Campaign from JSON\u2026", 50)
+	file_menu.add_separator()
+	file_menu.add_item("Check for SRD Updates\u2026", 51)
+	file_menu.add_separator()
+	file_menu.add_item("Close Map", 45)
+	file_menu.add_item("Close Save", 46)
 	file_menu.add_separator()
 	file_menu.add_item("Quit", 9)
 	file_menu.id_pressed.connect(_on_file_menu_id)
@@ -857,6 +992,7 @@ func _build_ui() -> void:
 	edit_menu.add_item("Snap All Tokens to Grid", 19)
 	edit_menu.add_separator()
 	edit_menu.add_item("Player Profiles…", 13)
+	edit_menu.add_item("Characters…", 100)
 	edit_menu.id_pressed.connect(_on_edit_menu_id)
 	_edit_menu = edit_menu
 	# Undo/Redo start disabled; enabled once commands are pushed.
@@ -909,8 +1045,16 @@ func _build_ui() -> void:
 	_view_menu.add_check_item("Fog Overlay Effect", 28)
 	_view_menu.set_item_checked(_view_menu.get_item_index(28), false)
 	_view_menu.add_separator()
-	_view_menu.add_item("Measurement Tools…", 26)
+	_view_menu.add_check_item("Measurement Tools", 26)
+	_view_menu.set_item_checked(_view_menu.get_item_index(26), false)
 	_view_menu.add_item("Background Audio…", 31)
+	_view_menu.add_item("Statblock Library…", 32)
+	_view_menu.add_item("Item Library…", 36)
+	_view_menu.add_item("Dice Tray", 33)
+	_view_menu.add_check_item("Initiative Panel", 34)
+	_view_menu.set_item_checked(_view_menu.get_item_index(34), false)
+	_view_menu.add_check_item("Combat Log", 35)
+	_view_menu.set_item_checked(_view_menu.get_item_index(35), false)
 	_view_menu.add_separator()
 
 	# Grid Type submenu
@@ -949,6 +1093,8 @@ func _build_ui() -> void:
 	_view_menu.id_pressed.connect(_on_view_menu_id)
 	menu_bar.add_child(_view_menu)
 
+	# Campaign menu items are now under File (IDs 40-44); no separate menu.
+
 	# Session menu
 	var session_menu := PopupMenu.new()
 	session_menu.name = "Session"
@@ -958,7 +1104,7 @@ func _build_ui() -> void:
 
 	# ── Native Win32 menu bar (Windows only) ────────────────────────────────
 	if OS.get_name() == "Windows":
-		var nm_script = load("res://scripts/ui/NativeWin32MenuBar.cs")
+		var nm_script: Variant = load("res://scripts/ui/NativeWin32MenuBar.cs")
 		if nm_script:
 			_native_menu = nm_script.new()
 			add_child(_native_menu)
@@ -969,6 +1115,7 @@ func _build_ui() -> void:
 	var content_row := HBoxContainer.new()
 	content_row.name = "ContentRow"
 	content_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_root.add_child(content_row)
 
 	# ── Tool palette (on _ui_layer for crisp HiDPI rendering) ───────────────
@@ -1018,8 +1165,13 @@ func _build_ui() -> void:
 	# push it off-screen on HiDPI / Retina displays.
 	_build_freeze_panel()
 	_build_effect_panel()
+	_build_measure_panel()
+	_build_dice_tray()
+	_build_initiative_panel()
+	_build_combat_log_panel()
 	_build_passage_panel()
 	_build_roam_panel()
+	_build_multi_select_bar()
 
 	# ── Apply chrome theme backgrounds to all panels ────────────────────────
 	var _theme_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -1039,6 +1191,8 @@ func _build_ui() -> void:
 			tm.apply_chrome(_passage_panel as PanelContainer)
 		if _roam_panel is PanelContainer:
 			tm.apply_chrome(_roam_panel as PanelContainer)
+		if _measure_panel is PanelContainer:
+			tm.apply_chrome(_measure_panel as PanelContainer)
 		# Signal subscription: IUIThemeService extends Node; signals live on the
 		# Node instance.  RefCounted manager cannot re-emit — approved exception.
 		if tm.service != null:
@@ -1060,6 +1214,12 @@ func _build_ui() -> void:
 			tm.theme_control_tree(_passage_panel, _ui_scale())
 		if _roam_panel != null:
 			tm.theme_control_tree(_roam_panel, _ui_scale())
+		if _initiative_panel != null:
+			tm.theme_control_tree(_initiative_panel, _ui_scale())
+		if _measure_panel != null:
+			tm.theme_control_tree(_measure_panel, _ui_scale())
+		if _multi_select_bar != null:
+			tm.theme_control_tree(_multi_select_bar, _ui_scale())
 
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
@@ -1381,7 +1541,7 @@ func _send_initial_display_sync(peer_id: int) -> void:
 	var fog_snapshot := await _build_fog_state_snapshot(map)
 	var attempt := int(_initial_sync_attempt_by_peer.get(peer_id, 0)) + 1
 	_initial_sync_attempt_by_peer[peer_id] = attempt
-	print("DMWindow: initial sync send attempt %d to peer %d" % [attempt, peer_id])
+	Log.info("DMWindow", "initial sync send attempt %d to peer %d" % [attempt, peer_id])
 	_nm_send_map_to_display(peer_id, map, false, fog_snapshot)
 	_broadcast_player_viewport()
 	_broadcast_player_state()
@@ -1418,7 +1578,7 @@ func _on_display_sync_applied(peer_id: int, payload: Dictionary) -> void:
 	if not bool(_initial_sync_ack_pending.get(peer_id, false)):
 		return
 	_initial_sync_ack_pending.erase(peer_id)
-	print("DMWindow: initial sync ack from peer %d (stamp_bytes=%d stamp_hash=%d)" % [
+	Log.info("DMWindow", "initial sync ack from peer %d (stamp_bytes=%d stamp_hash=%d)" % [
 		peer_id,
 		int(payload.get("snapshot_bytes", -1)),
 		int(payload.get("snapshot_hash", -1)),
@@ -1426,6 +1586,18 @@ func _on_display_sync_applied(peer_id: int, payload: Dictionary) -> void:
 	# Send icon data now that the main sync payload has been delivered and the
 	# outbound buffer has drained.
 	_send_display_icon_sync()
+
+
+func _on_dice_roll_received(player_id: String, result: DiceResult, _context: Dictionary) -> void:
+	if _dice_tray == null:
+		return
+	var player_name: String = player_id
+	var gs := _game_state()
+	if gs != null:
+		var profile: Variant = gs.get_profile_by_id(player_id)
+		if profile is PlayerProfile:
+			player_name = (profile as PlayerProfile).player_name
+	(_dice_tray as DiceTray).append_remote_roll(player_name, result)
 
 
 ## Send each player/token icon as a separate small message so the WebSocket
@@ -1481,11 +1653,10 @@ func _build_fog_state_snapshot(_map_data: MapData) -> Dictionary:
 	if not fog_state_png.is_empty() and registry != null and registry.fog != null:
 		registry.fog.sync_model_from_gpu(fog_state_png)
 	var snapshot_hash := hash(fog_state_png)
-	if DEBUG_FOG_SNAPSHOT:
-		print("DMWindow: fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [
-			fog_state_png.size(),
-			snapshot_hash,
-		])
+	Log.debug("DMWindow", "fog snapshot built (stamp_bytes=%d stamp_hash=%d)" % [
+		fog_state_png.size(),
+		snapshot_hash,
+	])
 
 	var snapshot := {
 		"msg": "fog_state_snapshot",
@@ -1734,9 +1905,14 @@ func _on_palette_tool_activated(tool_key: String) -> void:
 				_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
 				_map_view.effect_place_shape = _effect_panel.get_selected_shape()
 				_map_view.effect_place_palette = _effect_panel.get_selected_palette()
-			var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
-			var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
-			_set_status("Effect tool — %s — click to place" % eff_label)
+				_map_view.effect_place_definition_id = _effect_panel.get_selected_effect_definition_id()
+			var eff_def_id: String = _effect_panel.get_selected_effect_definition_id() if _effect_panel != null else ""
+			if not eff_def_id.is_empty():
+				_set_status("Effect tool — %s — click to place" % eff_def_id)
+			else:
+				var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
+				var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
+				_set_status("Effect tool — %s — click to place" % eff_label)
 
 
 func _on_palette_effect_tool_activated(_effect_type: int) -> void:
@@ -1755,6 +1931,7 @@ func _on_palette_effect_tool_activated(_effect_type: int) -> void:
 		_map_view.effect_burst_mode = _effect_panel.is_burst_mode()
 		_map_view.effect_place_shape = _effect_panel.get_selected_shape()
 		_map_view.effect_place_palette = _effect_panel.get_selected_palette()
+		_map_view.effect_place_definition_id = _effect_panel.get_selected_effect_definition_id()
 
 	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else _effect_type
 	var eff_label: String = EffectData.EFFECT_LABELS[eff_type] if eff_type < EffectData.EFFECT_LABELS.size() else "FX"
@@ -2321,19 +2498,29 @@ func _build_effect_panel() -> void:
 	_effect_panel.shape_changed.connect(_on_effect_panel_shape_changed)
 	_effect_panel.burst_mode_changed.connect(_on_effect_panel_burst_changed)
 	_effect_panel.size_changed.connect(_on_effect_panel_size_changed)
+	_effect_panel.effect_definition_id_selected.connect(_on_effect_panel_definition_id_selected)
+	# Reposition measure panel whenever the effect panel resizes (e.g. palette row toggles).
+	_effect_panel.resized.connect(_apply_measure_panel_size)
 	_effect_panel._undock_btn.pressed.connect(_on_effect_undock_btn_pressed)
+	# Load the effects manifest and switch the palette to manifest mode if found.
+	_load_effect_manifest()
 
 
 func _apply_effect_panel_size() -> void:
 	if _effect_panel == null:
 		return
 	var scale := _ui_scale()
-	var panel_w := roundi(170.0 * scale)
+	# Use the panel's actual minimum content width so panels that show wider
+	# controls (e.g. fire-effect palette row) don't overflow the hardcoded value.
+	var natural_w: float = _effect_panel.get_combined_minimum_size().x
+	var panel_w := roundi(maxf(170.0 * scale, natural_w))
 	var freeze_w := roundi(200.0 * scale) if (_freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating) else 0
 	_effect_panel.offset_left = float(- (panel_w + freeze_w))
 	_effect_panel.offset_right = float(-freeze_w)
 	_effect_panel.offset_top = _menu_bar_screen_height()
 	_effect_panel.offset_bottom = 0.0
+	# Measurement panel stacks left of effect — recalculate when effect moves.
+	_apply_measure_panel_size()
 
 
 func _on_effect_panel_type_selected(effect_type: int) -> void:
@@ -2368,11 +2555,47 @@ func _on_effect_panel_palette_changed(palette_idx: int) -> void:
 		_map_view.effect_place_palette = palette_idx
 
 
+## Load the effects manifest from disk and switch the panel to manifest mode.
+## The manifest lives at res://data/effects_manifest.json (bundled with the app).
+func _load_effect_manifest() -> void:
+	if _effect_panel == null:
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var manifest_path: String = "res://data/effects_manifest.json"
+	registry.effect.load_manifest(manifest_path)
+	if registry.effect.is_manifest_loaded():
+		var defs: Array = registry.effect.get_definitions()
+		(_effect_panel as EffectPanel).setup_manifest(defs)
+		# Reconnect the undock button (rebuild cleared children).
+		if _effect_panel._undock_btn != null:
+			if not _effect_panel._undock_btn.pressed.is_connected(_on_effect_undock_btn_pressed):
+				_effect_panel._undock_btn.pressed.connect(_on_effect_undock_btn_pressed)
+
+
+func _on_effect_panel_definition_id_selected(effect_id: String) -> void:
+	if _map_view != null:
+		_map_view.effect_place_definition_id = effect_id
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.effect == null:
+		return
+	var def: EffectDefinition = registry.effect.get_definition(effect_id)
+	var label: String = def.display_name if def != null else effect_id
+	_set_status("Effect tool — %s — click to place" % label)
+
+
 func _update_effect_panel_calibration() -> void:
 	if _effect_panel == null:
 		return
 	var px_per_5ft: float = _pixels_per_5ft_current()
 	_effect_panel.set_px_per_foot(px_per_5ft / 5.0)
+
+
+func _update_measurement_overlay_scale() -> void:
+	if _map_view == null or _map_view.measurement_overlay == null:
+		return
+	_map_view.measurement_overlay.set_scale_px(_pixels_per_5ft_current())
 
 
 func _on_effect_undock_btn_pressed() -> void:
@@ -2472,6 +2695,18 @@ func _on_file_menu_id(id: int) -> void:
 		7: _open_bundle_browser("map")
 		8: _open_bundle_browser("save")
 		9: get_tree().quit()
+		40: _on_new_campaign()
+		41: _on_open_campaign()
+		42: _on_save_campaign()
+		43: _on_campaign_settings()
+		44: _on_close_campaign()
+		45: _on_close_map()
+		46: _on_close_save()
+		47: _on_export_statblocks()
+		48: _on_import_statblocks()
+		49: _on_export_campaign()
+		50: _on_import_campaign()
+		51: _on_check_srd_updates()
 
 
 func _on_edit_menu_id(id: int) -> void:
@@ -2505,6 +2740,410 @@ func _on_edit_menu_id(id: int) -> void:
 		12: _on_set_offset_pressed()
 		13: _open_profiles_editor()
 		19: _snap_all_tokens_to_grid()
+		100: _open_campaign_panel_to_characters()
+
+
+# ── Campaign menu items now dispatched from _on_file_menu_id ─────────────────
+
+
+func _on_new_campaign() -> void:
+	## Show a name-input dialog before creating the campaign, similar to how
+	## map/save bundles prompt for a filename before writing to disk.
+	var mgr := _get_ui_scale_mgr()
+	var dlg := AcceptDialog.new()
+	dlg.title = "New Campaign"
+	dlg.ok_button_text = "Create"
+
+	var vbox := VBoxContainer.new()
+	if mgr != null:
+		vbox.add_theme_constant_override("separation", mgr.scaled(6.0))
+	else:
+		vbox.add_theme_constant_override("separation", 6)
+
+	var lbl := Label.new()
+	lbl.text = "Campaign name:"
+	vbox.add_child(lbl)
+
+	var name_edit := LineEdit.new()
+	name_edit.placeholder_text = "My Campaign"
+	name_edit.text = "My Campaign"
+	name_edit.select_all_on_focus = true
+	vbox.add_child(name_edit)
+
+	dlg.add_child(vbox)
+	add_child(dlg)
+	var _nc_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _nc_reg != null and _nc_reg.ui_theme != null:
+		_nc_reg.ui_theme.theme_control_tree(dlg, _ui_scale())
+	if mgr != null:
+		mgr.scale_control_fonts(vbox)
+		mgr.scale_button(dlg.get_ok_button())
+
+	dlg.confirmed.connect(func() -> void:
+		var registry2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry2 == null or registry2.campaign == null:
+			dlg.queue_free()
+			return
+		if registry2.campaign.get_active_campaign() != null:
+			registry2.campaign.save_campaign()
+		var camp_name: String = name_edit.text.strip_edges()
+		if camp_name.is_empty():
+			camp_name = "Untitled Campaign"
+		var campaign: CampaignData = registry2.campaign.new_campaign(camp_name, "2014")
+		if campaign != null:
+			_set_status("New campaign created: %s" % campaign.name)
+			_open_campaign_panel(CampaignPanel.TAB_OVERVIEW)
+		dlg.queue_free()
+	)
+	dlg.canceled.connect(func() -> void: dlg.queue_free())
+	if mgr != null:
+		mgr.popup_fitted(dlg, 360.0, 130.0)
+	else:
+		dlg.popup_centered()
+
+
+func _on_open_campaign() -> void:
+	## Use a native folder-picker to browse to a .campaign directory.
+	## Campaigns are directory bundles (like .map/.sav), so FILE_MODE_OPEN_DIR
+	## with use_native_dialog=true gives a native OS folder picker on all platforms.
+	var fd := FileDialog.new()
+	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	fd.title = "Open Campaign"
+	fd.use_native_dialog = true
+	fd.access = FileDialog.ACCESS_FILESYSTEM
+	var campaigns_abs: String = ProjectSettings.globalize_path("user://data/campaigns/")
+	DirAccess.make_dir_recursive_absolute(campaigns_abs)
+	fd.current_dir = campaigns_abs
+	add_child(fd)
+	fd.dir_selected.connect(func(path: String) -> void:
+		var registry2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry2 == null or registry2.campaign == null:
+			fd.queue_free()
+			return
+		var campaign: CampaignData = registry2.campaign.open_campaign(path)
+		if campaign != null:
+			_set_status("Opened campaign: %s" % campaign.name)
+			_open_campaign_panel(CampaignPanel.TAB_OVERVIEW)
+		else:
+			_set_status("Failed to open campaign — select the .campaign folder")
+		fd.queue_free()
+	)
+	fd.canceled.connect(func() -> void: fd.queue_free())
+	fd.popup_centered(Vector2i(720, 500))
+
+
+func _on_save_campaign() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		return
+	if registry.campaign.get_active_campaign() == null:
+		_set_status("No campaign to save")
+		return
+	if registry.campaign.save_campaign():
+		_set_status("Campaign saved")
+	else:
+		_set_status("Failed to save campaign")
+
+
+func _on_close_campaign() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		return
+	if registry.campaign.get_active_campaign() != null:
+		registry.campaign.save_campaign()
+		registry.campaign.close_campaign()
+		_set_status("Campaign closed")
+	if _campaign_panel != null and is_instance_valid(_campaign_panel):
+		_campaign_panel.hide()
+	_open_campaign_browser()
+
+
+func _on_close_map() -> void:
+	## Unload the current map and return to the campaign hub (if a campaign is
+	## active) or do nothing if no map is loaded.
+	if _active_map_bundle_path.is_empty() and _map_view.map_image.texture == null:
+		_set_status("No map is currently open")
+		return
+	# Save the map before closing.
+	var map: MapData = _map()
+	if map != null:
+		_map_view.save_camera_to_map()
+		_save_map_data(map)
+	_active_map_bundle_path = ""
+	_active_save_bundle_path = ""
+	# Reset map state in services.
+	var ms := _map_service()
+	if ms != null:
+		ms.load(MapData.new())
+	_map_view.clear_map()
+	_nm_broadcast_map(MapData.new())
+	_set_status("Map closed")
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.campaign != null and registry.campaign.get_active_campaign() != null:
+		_open_campaign_hub()
+
+
+func _on_close_save() -> void:
+	## Prompt to save, then unload map + save and return to the campaign hub.
+	if _active_save_bundle_path.is_empty():
+		_set_status("No save is currently loaded")
+		return
+	var s: float = _ui_scale()
+	var dlg := ConfirmationDialog.new()
+	dlg.title = "Close Save"
+	dlg.dialog_text = "Save game before closing?\n\nUnsaved progress will be lost."
+	dlg.ok_button_text = "Save & Close"
+	dlg.cancel_button_text = "Cancel"
+	dlg.add_button("Close Without Saving", false, "nosave")
+	add_child(dlg)
+	var _cs_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _cs_reg != null and _cs_reg.ui_theme != null:
+		_cs_reg.ui_theme.theme_control_tree(dlg, s)
+	dlg.confirmed.connect(func() -> void:
+		await _on_save_game_pressed()
+		_do_close_save()
+		dlg.queue_free()
+	)
+	dlg.custom_action.connect(func(action: StringName) -> void:
+		if action == "nosave":
+			_do_close_save()
+		dlg.queue_free()
+	)
+	dlg.canceled.connect(func() -> void: dlg.queue_free())
+	dlg.popup_centered()
+
+
+func _do_close_save() -> void:
+	## Unload both the current save session and map, then return to the campaign hub.
+	_active_save_bundle_path = ""
+	var gs := _game_state()
+	if gs != null:
+		gs.reset_session()
+	_active_map_bundle_path = ""
+	var ms := _map_service()
+	if ms != null:
+		ms.load(MapData.new())
+	if _map_view != null:
+		_map_view.clear_map()
+	_nm_broadcast_map(MapData.new())
+	_set_status("Save closed")
+	var reg2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg2 != null and reg2.campaign != null and reg2.campaign.get_active_campaign() != null:
+		_open_campaign_hub()
+
+
+func _on_campaign_settings() -> void:
+	_open_campaign_hub()
+
+
+func _open_campaign_hub(tab_index: int = CampaignPanel.TAB_OVERVIEW) -> void:
+	## Show the CampaignPanel hub. This is the central screen when a campaign is
+	## active but no map/save is loaded. The panel is non-dismissable by X — the
+	## campaign_close_requested signal routes to _on_close_campaign().
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		return
+	if registry.campaign.get_active_campaign() == null:
+		_set_status("No active campaign — create or open one first")
+		return
+	# Hide the campaign browser (startup/post-close selection window) so it
+	# doesn't linger behind the hub or reappear when the hub is later hidden.
+	if _campaign_browser != null and _campaign_browser is Window and (_campaign_browser as Window).visible:
+		(_campaign_browser as Window).hide()
+	if _campaign_panel == null:
+		_campaign_panel = CampaignPanel.new()
+		add_child(_campaign_panel)
+		_campaign_panel.new_character_requested.connect(_on_chars_new_pressed)
+		_campaign_panel.edit_character_requested.connect(_on_campaign_panel_edit_character)
+		_campaign_panel.map_open_requested.connect(_on_campaign_map_open_requested)
+		_campaign_panel.save_load_requested.connect(_on_campaign_save_load_requested)
+		_campaign_panel.new_map_requested.connect(_on_new_map_pressed)
+		_campaign_panel.new_save_requested.connect(_on_save_game_pressed)
+		_campaign_panel.add_map_browse_requested.connect(_on_campaign_panel_add_map_browse)
+		_campaign_panel.add_save_browse_requested.connect(_on_campaign_panel_add_save_browse)
+		_campaign_panel.open_map_file_requested.connect(_on_open_map_pressed)
+		_campaign_panel.open_save_file_requested.connect(_on_load_game_pressed)
+		_campaign_panel.campaign_close_requested.connect(_on_close_campaign)
+		_apply_dialog_themes()
+	_campaign_panel.open_to_tab(tab_index)
+	_apply_ui_scale()
+	_campaign_panel.reset_size()
+	_show_window_centered(_campaign_panel, 0.85)
+
+
+func _open_campaign_panel(tab_index: int = CampaignPanel.TAB_OVERVIEW) -> void:
+	## Legacy alias — routes to _open_campaign_hub().
+	_open_campaign_hub(tab_index)
+
+
+func _open_campaign_browser() -> void:
+	## Show the campaign selection browser (startup screen / post-close).
+	if _campaign_browser == null:
+		_campaign_browser = CampaignBrowserScript.new()
+		add_child(_campaign_browser)
+		_campaign_browser.campaign_selected.connect(_on_campaign_browser_selected)
+		_campaign_browser.create_new_requested.connect(_on_new_campaign)
+		_campaign_browser.open_folder_requested.connect(_on_open_campaign)
+	var _cb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _cb_reg != null and _cb_reg.ui_theme != null:
+		_cb_reg.ui_theme.theme_control_tree(_campaign_browser, _ui_scale())
+	_campaign_browser.populate()
+	_campaign_browser.reset_size()
+	_show_window_centered(_campaign_browser, 0.85)
+
+
+func _on_campaign_browser_selected(path: String) -> void:
+	## Called when the DM selects a campaign card in the browser.
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		return
+	var campaign: CampaignData = registry.campaign.open_campaign(path)
+	if campaign != null:
+		_set_status("Opened campaign: %s" % campaign.name)
+		_open_campaign_hub()
+	else:
+		_set_status("Failed to open campaign — select the .campaign folder")
+		_open_campaign_browser()
+
+
+func _on_campaign_map_open_requested(path: String) -> void:
+	## Map open requested from campaign hub — hide hub then load map.
+	if _campaign_panel != null and is_instance_valid(_campaign_panel):
+		_campaign_panel.hide()
+	_on_map_bundle_selected(path)
+
+
+func _on_campaign_save_load_requested(path: String) -> void:
+	## Save load requested from campaign hub — hide hub then load save.
+	if _campaign_panel != null and is_instance_valid(_campaign_panel):
+		_campaign_panel.hide()
+	_on_load_game_path_selected(path)
+
+
+func _on_campaign_panel_add_map_browse() -> void:
+	## Open BundleBrowser in pick mode (maps tab only) so the DM can link
+	## an existing .map bundle to the current campaign.
+	_ensure_maps_dir()
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.get_active_campaign() == null:
+		return
+	if _bundle_browser == null:
+		_bundle_browser = BundleBrowserScript.new()
+		add_child(_bundle_browser)
+		_bundle_browser.map_selected.connect(_on_map_bundle_selected)
+		_bundle_browser.save_selected.connect(_on_load_game_path_selected)
+		_bundle_browser.new_map_requested.connect(_on_new_map_pressed)
+		_bundle_browser.open_map_file_requested.connect(_on_open_map_pressed)
+		_bundle_browser.open_save_file_requested.connect(_on_load_game_pressed)
+		var _bb_reg2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _bb_reg2 != null and _bb_reg2.ui_theme != null:
+			_bb_reg2.ui_theme.theme_control_tree(_bundle_browser, _ui_scale())
+	## One-shot: disconnect any stale pick callback then attach the unified handler.
+	if _bundle_browser.bundle_picked.is_connected(_on_campaign_bundle_picked):
+		_bundle_browser.bundle_picked.disconnect(_on_campaign_bundle_picked)
+	_bundle_browser.bundle_picked.connect(_on_campaign_bundle_picked, CONNECT_ONE_SHOT)
+	_bundle_browser.open_as_picker("map")
+	_bundle_browser.populate()
+	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
+
+
+func _on_campaign_bundle_picked(path: String, bundle_type: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.get_active_campaign() == null:
+		return
+	if bundle_type == "map":
+		registry.campaign.add_map_path(path)
+		registry.campaign.save_campaign()
+		_set_status("Map linked to campaign: %s" % path.get_file())
+		if _campaign_panel != null and is_instance_valid(_campaign_panel):
+			_campaign_panel.refresh_maps()
+	else:
+		registry.campaign.add_save_path(path)
+		registry.campaign.save_campaign()
+		_set_status("Save linked to campaign: %s" % path.get_file())
+		if _campaign_panel != null and is_instance_valid(_campaign_panel):
+			_campaign_panel.refresh_saves()
+
+
+func _on_campaign_panel_add_save_browse() -> void:
+	## Open BundleBrowser in pick mode (saves tab only) so the DM can link
+	## an existing .sav bundle to the current campaign.
+	var dir := _saves_dir_abs()
+	DirAccess.make_dir_recursive_absolute(dir)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.get_active_campaign() == null:
+		return
+	if _bundle_browser == null:
+		_bundle_browser = BundleBrowserScript.new()
+		add_child(_bundle_browser)
+		_bundle_browser.map_selected.connect(_on_map_bundle_selected)
+		_bundle_browser.save_selected.connect(_on_load_game_path_selected)
+		_bundle_browser.new_map_requested.connect(_on_new_map_pressed)
+		_bundle_browser.open_map_file_requested.connect(_on_open_map_pressed)
+		_bundle_browser.open_save_file_requested.connect(_on_load_game_pressed)
+		var _bb_reg3 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _bb_reg3 != null and _bb_reg3.ui_theme != null:
+			_bb_reg3.ui_theme.theme_control_tree(_bundle_browser, _ui_scale())
+	## One-shot: disconnect any stale pick callback then attach the unified handler.
+	if _bundle_browser.bundle_picked.is_connected(_on_campaign_bundle_picked):
+		_bundle_browser.bundle_picked.disconnect(_on_campaign_bundle_picked)
+	_bundle_browser.bundle_picked.connect(_on_campaign_bundle_picked, CONNECT_ONE_SHOT)
+	_bundle_browser.open_as_picker("save")
+	_bundle_browser.populate()
+	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
+
+
+func _on_campaign_save_bundle_picked(path: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.campaign != null and registry.campaign.get_active_campaign() != null:
+		registry.campaign.add_save_path(path)
+		registry.campaign.save_campaign()
+		_set_status("Save linked to campaign: %s" % path.get_file())
+	if _campaign_panel != null and is_instance_valid(_campaign_panel):
+		_campaign_panel.refresh_saves()
+
+
+func _open_campaign_panel_to_characters() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var campaign_active: bool = registry != null and registry.campaign != null and registry.campaign.get_active_campaign() != null
+	if campaign_active:
+		_open_campaign_panel(CampaignPanel.TAB_CHARACTERS)
+	else:
+		_open_characters_manager()
+
+
+func _on_campaign_panel_edit_character(statblock_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_set_status("Character service unavailable.")
+		return
+	var sb: StatblockData = registry.character.get_character_by_id(statblock_id)
+	if sb != null:
+		_open_char_sheet_for(sb)
+	else:
+		_set_status("Character not found — it may have been deleted.")
+
+
+func _on_prefetch_monster_art() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.srd == null:
+		return
+
+	_set_status("Downloading monster art…")
+
+	# Signal subscription: ISRDLibraryService extends Node; signals live on the
+	# Node instance. Approved narrow exception per architecture instructions.
+	var svc: ISRDLibraryService = registry.srd.service
+	if svc == null:
+		return
+
+	svc.image_prefetch_progress.connect(func(current: int, total: int) -> void:
+		_set_status("Downloading monster art: %d / %d" % [current, total])
+	)
+	svc.image_prefetch_completed.connect(func() -> void:
+		_set_status("Monster art download complete")
+	)
+	registry.srd.prefetch_all_monster_images()
 
 
 func _on_session_menu_id(id: int) -> void:
@@ -2558,10 +3197,26 @@ func _on_view_menu_id(id: int) -> void:
 			if _map_view:
 				_map_view.set_fog_overlay_enabled(on)
 			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
-		26: # Open measurement tools panel
-			_open_measure_panel()
+		26: # Toggle measurement tools panel
+			if _measure_panel != null:
+				_measure_panel.visible = !_measure_panel.visible
+				_set_view_checked(26, _measure_panel.visible)
+				if _measure_panel.visible:
+					_apply_measure_panel_size()
+				if not _measure_panel.visible and _map_view != null:
+					_map_view._set_active_tool(_map_view.Tool.SELECT)
 		31: # Open background audio volume window
 			_open_volume_window()
+		32: # Open statblock library
+			_open_statblock_library()
+		36: # Open item library
+			_open_item_library()
+		33: # Toggle dice tray
+			_toggle_dice_tray()
+		34: # Toggle initiative panel
+			_toggle_initiative_panel()
+		35: # Toggle combat log panel
+			_toggle_combat_log_panel()
 		23: # Launch player display process
 			_launch_player_process()
 
@@ -2600,8 +3255,15 @@ func _apply_dialog_themes() -> void:
 		dialogs.append(_profile_delete_confirm_dialog)
 	if _bundle_browser != null and _bundle_browser is Window:
 		dialogs.append(_bundle_browser as Window)
+	if _campaign_browser != null and _campaign_browser is Window:
+		dialogs.append(_campaign_browser as Window)
 	if _volume_window != null:
 		dialogs.append(_volume_window)
+	if _statblock_library != null:
+		dialogs.append(_statblock_library)
+		# StatblockEditor is child of StatblockLibrary — theme propagates
+	if _item_library != null:
+		dialogs.append(_item_library)
 	if _progress_dialog != null:
 		dialogs.append(_progress_dialog)
 	if _convert_settings_dialog != null:
@@ -2609,6 +3271,49 @@ func _apply_dialog_themes() -> void:
 	for dlg: Window in dialogs:
 		# Theme the window chrome + recursively style every child control
 		tm.theme_control_tree(dlg, s)
+	# Dice tray is a PanelContainer (not a Window) — theme it + its floating window
+	if _dice_tray != null:
+		var dt: DiceTray = _dice_tray as DiceTray
+		if dt != null:
+			dt.refresh_theme()
+	if _dice_tray_window != null:
+		tm.theme_control_tree(_dice_tray_window, s)
+	# Initiative panel + floating window
+	if _initiative_panel != null:
+		tm.theme_control_tree(_initiative_panel, s)
+	if _initiative_panel_window != null:
+		tm.theme_control_tree(_initiative_panel_window, s)
+	# Combat log panel + floating window
+	if _combat_log_panel != null:
+		tm.theme_control_tree(_combat_log_panel, s)
+	if _combat_log_panel_window != null:
+		tm.theme_control_tree(_combat_log_panel_window, s)
+	if _quick_damage_dialog != null:
+		tm.theme_control_tree(_quick_damage_dialog, s)
+	if _save_results_panel != null:
+		tm.theme_control_tree(_save_results_panel, s)
+	if _save_config_dialog != null:
+		tm.theme_control_tree(_save_config_dialog, s)
+	if _crop_editor_dialog != null:
+		tm.theme_control_tree(_crop_editor_dialog, s)
+	if _char_mgr_dialog != null:
+		tm.theme_control_tree(_char_mgr_dialog, s)
+	if _char_wizard != null:
+		tm.theme_control_tree(_char_wizard, s)
+	if _char_sheet != null:
+		_char_sheet.reapply_theme()
+	if _level_up_wizard != null:
+		_level_up_wizard.reapply_theme()
+	if _campaign_panel != null:
+		tm.theme_control_tree(_campaign_panel, s)
+	if _statblocks_import_dialog != null:
+		dialogs.append(_statblocks_import_dialog)
+	if _statblocks_export_dialog != null:
+		dialogs.append(_statblocks_export_dialog)
+	if _campaign_import_dialog != null:
+		dialogs.append(_campaign_import_dialog)
+	if _campaign_export_dialog != null:
+		dialogs.append(_campaign_export_dialog)
 
 
 func _on_theme_submenu_id(id: int) -> void:
@@ -2660,16 +3365,6 @@ func _on_tool_changed(tool: int) -> void:
 				_set_status("Tool: Pan  (left-drag to pan)")
 
 
-func _on_fog_tool_selected(_index: int) -> void:
-	# Legacy handler — fog mode changes are now routed via _on_palette_fog_mode_changed.
-	pass
-
-
-func _on_fog_brush_size_changed(_value: float) -> void:
-	# Legacy handler — fog brush changes are now routed via _on_palette_fog_mode_changed.
-	pass
-
-
 func _on_dm_fog_visible_toggled(enabled: bool) -> void:
 	if _map_view == null:
 		return
@@ -2706,11 +3401,6 @@ func _on_delete_wall_pressed() -> void:
 # Grid type handler
 # ---------------------------------------------------------------------------
 
-func _on_grid_type_selected(_index: int) -> void:
-	# Legacy handler kept for compatibility — forwards to ID-based handler.
-	pass
-
-
 func _on_grid_type_selected_by_id(grid_id: int) -> void:
 	var map: MapData = _map()
 	if map == null:
@@ -2726,6 +3416,7 @@ func _on_grid_type_selected_by_id(grid_id: int) -> void:
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_update_effect_panel_calibration()
+	_update_measurement_overlay_scale()
 	var label := "Square"
 	match grid_id:
 		MapData.GridType.HEX_FLAT:
@@ -2771,6 +3462,7 @@ func _on_calibration_done(map: MapData) -> void:
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_update_effect_panel_calibration()
+	_update_measurement_overlay_scale()
 	var detail := ("cell_px=%.1f" % map.cell_px) if map.grid_type == MapData.GridType.SQUARE else ("hex_size=%.1f" % map.hex_size)
 	_set_status("Calibrated: %s  offset=(%.0f, %.0f)" % [detail, map.grid_offset.x, map.grid_offset.y])
 
@@ -2810,6 +3502,7 @@ func _on_manual_scale_confirmed() -> void:
 	_nm_broadcast_map_update(map)
 	_broadcast_player_state()
 	_update_effect_panel_calibration()
+	_update_measurement_overlay_scale()
 	_set_status("Scale set: %.1f px = %.0f ft" % [px_per_cell, ft_per_cell])
 
 
@@ -2933,6 +3626,13 @@ func _build_profiles_dialog() -> void:
 	_profile_speed_spin.value = 30
 	form.add_child(_profile_speed_spin)
 
+	var size_lbl := Label.new(); size_lbl.text = "Token Size:"; form.add_child(size_lbl)
+	_profile_size_option = OptionButton.new()
+	for size_label: String in StatblockData.SIZE_LABELS:
+		_profile_size_option.add_item(size_label)
+	_profile_size_option.select(2) # default: Medium
+	form.add_child(_profile_size_option)
+
 	var vision_lbl := Label.new(); vision_lbl.text = "Vision Type:"; form.add_child(vision_lbl)
 	_profile_vision_option = OptionButton.new()
 	_profile_vision_option.add_item("Normal", PlayerProfile.VisionType.NORMAL)
@@ -3027,6 +3727,11 @@ func _build_profiles_dialog() -> void:
 	_profile_icon_crop_btn.disabled = true
 	_profile_icon_crop_btn.pressed.connect(_on_profile_icon_crop_pressed)
 	pi_row.add_child(_profile_icon_crop_btn)
+	var profile_campaign_btn := Button.new()
+	profile_campaign_btn.text = "Campaign..."
+	profile_campaign_btn.tooltip_text = "Pick from campaign image library"
+	profile_campaign_btn.pressed.connect(_on_profile_icon_campaign_pressed)
+	pi_row.add_child(profile_campaign_btn)
 	form.add_child(pi_row)
 	var pi_path_row := HBoxContainer.new()
 	pi_path_row.add_theme_constant_override("separation", 4)
@@ -3039,6 +3744,23 @@ func _build_profiles_dialog() -> void:
 	_profile_icon_load_btn.pressed.connect(_on_profile_icon_load_pressed)
 	pi_path_row.add_child(_profile_icon_load_btn)
 	form.add_child(pi_path_row)
+
+	var char_link_lbl := Label.new()
+	char_link_lbl.text = "Linked Character:"
+	form.add_child(char_link_lbl)
+	var char_link_row := HBoxContainer.new()
+	char_link_row.add_theme_constant_override("separation", 6)
+	_profile_char_option = OptionButton.new()
+	_profile_char_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_profile_char_option.add_item("— None —")
+	_profile_char_option.set_item_metadata(0, "")
+	_profile_char_option.item_selected.connect(_on_profile_char_link_changed)
+	char_link_row.add_child(_profile_char_option)
+	var char_open_btn := Button.new()
+	char_open_btn.text = "Open Sheet"
+	char_open_btn.pressed.connect(_on_profile_open_sheet_pressed)
+	char_link_row.add_child(char_open_btn)
+	form.add_child(char_link_row)
 
 	var bind_sep := HSeparator.new()
 	right_panel.add_child(bind_sep)
@@ -3164,6 +3886,44 @@ func _build_profiles_dialog() -> void:
 	_profiles_export_dialog.file_selected.connect(_on_profiles_export_path_selected)
 	add_child(_profiles_export_dialog)
 
+	# ── Statblock import / export dialogs ─────────────────────────────────
+	_statblocks_export_dialog = FileDialog.new()
+	_statblocks_export_dialog.use_native_dialog = true
+	_statblocks_export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	_statblocks_export_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_statblocks_export_dialog.title = "Export Statblocks as JSON"
+	_statblocks_export_dialog.add_filter("*.json ; JSON")
+	_statblocks_export_dialog.file_selected.connect(_on_statblocks_export_path_selected)
+	add_child(_statblocks_export_dialog)
+
+	_statblocks_import_dialog = FileDialog.new()
+	_statblocks_import_dialog.use_native_dialog = true
+	_statblocks_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_statblocks_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_statblocks_import_dialog.title = "Import Statblocks from JSON"
+	_statblocks_import_dialog.add_filter("*.json ; JSON")
+	_statblocks_import_dialog.file_selected.connect(_on_statblocks_import_path_selected)
+	add_child(_statblocks_import_dialog)
+
+	# ── Campaign import / export dialogs ──────────────────────────────────
+	_campaign_export_dialog = FileDialog.new()
+	_campaign_export_dialog.use_native_dialog = true
+	_campaign_export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	_campaign_export_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_campaign_export_dialog.title = "Export Campaign as JSON"
+	_campaign_export_dialog.add_filter("*.campaign.json ; Campaign JSON")
+	_campaign_export_dialog.file_selected.connect(_on_campaign_export_path_selected)
+	add_child(_campaign_export_dialog)
+
+	_campaign_import_dialog = FileDialog.new()
+	_campaign_import_dialog.use_native_dialog = true
+	_campaign_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_campaign_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_campaign_import_dialog.title = "Import Campaign from JSON"
+	_campaign_import_dialog.add_filter("*.json ; JSON")
+	_campaign_import_dialog.file_selected.connect(_on_campaign_import_path_selected)
+	add_child(_campaign_import_dialog)
+
 
 func _open_profiles_editor() -> void:
 	_refresh_available_inputs()
@@ -3234,6 +3994,8 @@ func _clear_profile_form() -> void:
 	_profile_id_label.text = "ID: (new profile)" if _profile_is_new_draft else "ID: —"
 	_profile_name_edit.text = ""
 	_profile_speed_spin.value = 30
+	if _profile_size_option != null:
+		_profile_size_option.select(2) # Medium
 	_profile_vision_option.select(0)
 	_profile_darkvision_spin.value = 60
 	_profile_perception_spin.value = 0
@@ -3251,8 +4013,18 @@ func _clear_profile_form() -> void:
 		_profile_active_check.set_pressed_no_signal(false)
 		_profile_active_check.disabled = true
 	_on_profile_vision_selected(0)
+	if _profile_char_option != null:
+		_profile_char_option.clear()
+		_profile_char_option.add_item("— None —")
+		_profile_char_option.set_item_metadata(0, "")
+		_profile_char_option.select(0)
+	# Restore editability (no linked character on a cleared form).
+	_profile_speed_spin.editable = true
+	if _profile_size_option != null:
+		_profile_size_option.disabled = false
+	_profile_vision_option.disabled = false
+	_profile_perception_spin.editable = true
 	_update_profile_action_state()
-
 
 func _on_profile_selected(list_idx: int) -> void:
 	_profile_is_new_draft = false
@@ -3281,6 +4053,10 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_id_label.text = "ID: %s" % p.id
 	_profile_name_edit.text = p.player_name
 	_profile_speed_spin.value = p.base_speed
+	if _profile_size_option != null:
+		var size_label: String = StatblockData.feet_to_size_label(p.size_ft)
+		var idx: int = StatblockData.SIZE_LABELS.find(size_label)
+		_profile_size_option.select(idx if idx >= 0 else 2)
 	_profile_vision_option.select(_profile_vision_option.get_item_index(p.vision_type))
 	_profile_darkvision_spin.value = p.darkvision_range
 	_profile_perception_spin.value = p.perception_mod
@@ -3303,6 +4079,7 @@ func _load_selected_profile_into_form(index: int) -> void:
 	_profile_icon_crop_offset = p.icon_crop_offset
 	_profile_icon_crop_zoom = p.icon_crop_zoom
 	_profile_icon_facing_deg = p.icon_facing_deg
+	_profile_icon_campaign_image_id = p.icon_campaign_image_id
 	if _profile_icon_preview != null:
 		if not p.icon_image_path.is_empty():
 			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(p.icon_image_path)
@@ -3326,6 +4103,8 @@ func _load_selected_profile_into_form(index: int) -> void:
 		else:
 			_profile_active_check.set_pressed_no_signal(false)
 	_on_profile_vision_selected(_profile_vision_option.selected)
+	_refresh_profile_char_link_option(p.statblock_id)
+	_update_profile_form_linked_state()
 	_update_profile_action_state()
 
 
@@ -3513,10 +4292,20 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 	p.player_name = _profile_name_edit.text.strip_edges()
 	if p.player_name.is_empty():
 		p.player_name = "Unnamed Player"
-	p.base_speed = _profile_speed_spin.value
-	p.vision_type = _profile_vision_option.get_item_id(_profile_vision_option.selected)
-	p.darkvision_range = _profile_darkvision_spin.value
-	p.perception_mod = int(_profile_perception_spin.value)
+	# Only write manual stat fields when no character sheet is linked — the
+	# form shows derived read-only values when linked and we must not overwrite
+	# the stored fallbacks with statblock-derived numbers.
+	var linked: bool = false
+	if _profile_char_option != null and _profile_char_option.selected >= 0:
+		linked = str(_profile_char_option.get_item_metadata(_profile_char_option.selected)) != ""
+	if not linked:
+		p.base_speed = _profile_speed_spin.value
+		if _profile_size_option != null and _profile_size_option.selected >= 0:
+			var size_label: String = _profile_size_option.get_item_text(_profile_size_option.selected)
+			p.size_ft = StatblockData.size_to_feet(size_label)
+		p.vision_type = _profile_vision_option.get_item_id(_profile_vision_option.selected)
+		p.darkvision_range = _profile_darkvision_spin.value
+		p.perception_mod = int(_profile_perception_spin.value)
 	p.input_type = _profile_input_type_option.get_item_id(_profile_input_type_option.selected)
 	# Prefer saving a stable player token rather than a numeric ephemeral peer id.
 	var raw_input_id := _profile_input_id_edit.text.strip_edges()
@@ -3560,6 +4349,7 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 			p.icon_crop_zoom = _profile_icon_crop_zoom
 			p.icon_facing_deg = _profile_icon_facing_deg
 			p.icon_source_path = _profile_icon_pending_source
+			p.icon_campaign_image_id = _profile_icon_campaign_image_id
 		else:
 			_set_status("Failed to save profile icon (error %d)" % err)
 	elif _profile_icon_preview != null and _profile_icon_preview.texture == null:
@@ -3572,6 +4362,7 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 		p.icon_crop_offset = Vector2.ZERO
 		p.icon_crop_zoom = 1.0
 		p.icon_facing_deg = 0.0
+		p.icon_campaign_image_id = ""
 
 	# Always persist icon facing direction (can change via crop editor without new source).
 	p.icon_facing_deg = _profile_icon_facing_deg
@@ -3591,6 +4382,8 @@ func _apply_form_to_profile(p: PlayerProfile) -> bool:
 		registry.input.set_dash_state(p.id, dash_val)
 
 	p.ensure_id()
+	if _profile_char_option != null and _profile_char_option.selected >= 0:
+		p.statblock_id = str(_profile_char_option.get_item_metadata(_profile_char_option.selected))
 	return true
 
 
@@ -3627,6 +4420,82 @@ func _on_profile_vision_selected(index: int) -> void:
 		return
 	var vision_id := _profile_vision_option.get_item_id(index)
 	_profile_darkvision_spin.editable = (vision_id == PlayerProfile.VisionType.DARKVISION)
+
+
+func _on_profile_char_link_changed(_index: int) -> void:
+	_update_profile_form_linked_state()
+
+
+## When a statblock is linked, update stat fields to show derived values and
+## make them read-only so the DM edits the character sheet instead.
+func _update_profile_form_linked_state() -> void:
+	if _profile_char_option == null:
+		return
+	var sb_id: String = ""
+	if _profile_char_option.selected >= 0:
+		sb_id = str(_profile_char_option.get_item_metadata(_profile_char_option.selected))
+	var linked: bool = not sb_id.is_empty()
+	var sb: StatblockData = null
+	if linked:
+		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if registry != null and registry.character != null:
+			sb = registry.character.get_character_by_id(sb_id)
+		linked = sb != null
+	# Speed — parse from speed dict the same way as PlayerProfile.get_speed()
+	if _profile_speed_spin != null:
+		_profile_speed_spin.editable = not linked
+		if linked and sb != null:
+			var walk: Variant = sb.speed.get("walk", "")
+			var walk_str: String = str(walk).strip_edges()
+			if not walk_str.is_empty():
+				var num: String = walk_str.split(" ")[0]
+				if num.is_valid_float():
+					_profile_speed_spin.value = float(num)
+	# Token size
+	if _profile_size_option != null:
+		_profile_size_option.disabled = linked
+		if linked and sb != null and not sb.size.is_empty():
+			var ft: float = StatblockData.size_to_feet(sb.size)
+			var label: String = StatblockData.feet_to_size_label(ft)
+			var idx: int = StatblockData.SIZE_LABELS.find(label)
+			if idx >= 0:
+				_profile_size_option.select(idx)
+	# Vision type + darkvision range
+	if _profile_vision_option != null:
+		_profile_vision_option.disabled = linked
+		if linked and sb != null:
+			var dv_val: String = str(sb.senses.get("darkvision", ""))
+			if not dv_val.is_empty():
+				_profile_vision_option.select(_profile_vision_option.get_item_index(PlayerProfile.VisionType.DARKVISION))
+			else:
+				_profile_vision_option.select(_profile_vision_option.get_item_index(PlayerProfile.VisionType.NORMAL))
+	if _profile_darkvision_spin != null:
+		if linked and sb != null:
+			var dv_str: String = str(sb.senses.get("darkvision", ""))
+			if not dv_str.is_empty():
+				var num: String = dv_str.split(" ")[0]
+				if num.is_valid_float():
+					_profile_darkvision_spin.value = float(num)
+			_profile_darkvision_spin.editable = false
+		elif not linked:
+			_on_profile_vision_selected(_profile_vision_option.selected if _profile_vision_option else 0)
+	# Perception mod — compute from wisdom + proficiency
+	if _profile_perception_spin != null:
+		_profile_perception_spin.editable = not linked
+		if linked and sb != null:
+			var wis_mod: int = floori((sb.wisdom - 10) / 2.0)
+			var has_perc: bool = false
+			for prof_entry: Variant in sb.proficiencies:
+				if prof_entry is Dictionary:
+					var p_info: Variant = (prof_entry as Dictionary).get("proficiency", {})
+					if p_info is Dictionary:
+						if str((p_info as Dictionary).get("index", "")) == "skill-perception":
+							has_perc = true
+							break
+			var perc_mod: int = wis_mod + (sb.proficiency_bonus if has_perc else 0)
+			_profile_perception_spin.value = perc_mod
+	if _profile_passive_label != null:
+		_profile_passive_label.text = str(10 + int(_profile_perception_spin.value)) if _profile_perception_spin else "10"
 
 
 # ── Profile icon image helpers ──────────────────────────────────────────────
@@ -3681,12 +4550,29 @@ func _on_profile_icon_clear_pressed() -> void:
 	_profile_icon_crop_offset = Vector2.ZERO
 	_profile_icon_crop_zoom = 1.0
 	_profile_icon_facing_deg = 0.0
+	_profile_icon_campaign_image_id = ""
 	if _profile_icon_preview != null:
 		_profile_icon_preview.texture = null
 	if _profile_icon_path_edit != null:
 		_profile_icon_path_edit.text = ""
 	if _profile_icon_crop_btn != null:
 		_profile_icon_crop_btn.disabled = true
+
+
+func _on_profile_icon_campaign_pressed() -> void:
+	_ensure_campaign_image_picker()
+	if _campaign_image_picker == null:
+		return
+	if _campaign_image_picker.image_selected.is_connected(_on_profile_campaign_image_picked):
+		_campaign_image_picker.image_selected.disconnect(_on_profile_campaign_image_picked)
+	_campaign_image_picker.image_selected.connect(_on_profile_campaign_image_picked)
+	_campaign_image_picker.show_picker()
+
+
+func _on_profile_campaign_image_picked(path: String, campaign_image_id: String) -> void:
+	_campaign_image_picker.image_selected.disconnect(_on_profile_campaign_image_picked)
+	_profile_icon_campaign_image_id = campaign_image_id
+	_load_profile_icon_from_path(path)
 
 
 func _on_profile_perception_changed(value: float) -> void:
@@ -3848,6 +4734,8 @@ func _on_token_drag_started(token_id: Variant) -> void:
 func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
 	var id: String = str(token_id)
 	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	# Capture pre-drag position for opportunity attack checking.
+	var oa_old_pos: Vector2 = _drag_start_positions.get(id, new_world_pos) as Vector2
 	# Capture old player-character position before end_token_drag updates it.
 	var old_char_pos: Vector2 = Vector2.ZERO
 	var is_player_char: bool = false
@@ -3928,6 +4816,11 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 	if data != null and (data.category == TokenData.TokenCategory.DOOR
 			or data.category == TokenData.TokenCategory.SECRET_PASSAGE):
 		_broadcast_token_change(data, false)
+	# Opportunity attack check — only during active combat.
+	if data != null and registry_drag != null and registry_drag.combat != null \
+			and registry_drag.combat.is_in_combat():
+		if oa_old_pos.distance_to(new_world_pos) > 1.0:
+			_check_opportunity_attacks(id, oa_old_pos, new_world_pos, registry_drag)
 
 
 func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:
@@ -4021,6 +4914,732 @@ func _on_token_trigger_radius_changed(token_id: String, new_radius_px: float) ->
 				registry.token.update_token(td)
 				_broadcast_token_change(td, false)))
 	_broadcast_token_change(data, false)
+
+
+# ---------------------------------------------------------------------------
+# Dice Tray — build, toggle, sizing
+# ---------------------------------------------------------------------------
+
+func _build_dice_tray() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		var _bootstrap := get_node_or_null("/root/ServiceBootstrap")
+		if _bootstrap != null and _bootstrap.get("registry") != null:
+			reg = _bootstrap.registry as ServiceRegistry
+	var tm: UIThemeManager = reg.ui_theme if reg != null else null
+	var dm: DiceManager = reg.dice if reg != null else null
+	_dice_tray = DiceTrayScript.new() as PanelContainer
+	(_dice_tray as DiceTray).setup(_get_ui_scale_mgr(), tm, dm)
+	_dice_tray.visible = false
+
+	# Anchor to bottom-left
+	_dice_tray.anchor_left = 0.0
+	_dice_tray.anchor_right = 0.0
+	_dice_tray.anchor_top = 1.0
+	_dice_tray.anchor_bottom = 1.0
+	_dice_tray.grow_horizontal = Control.GROW_DIRECTION_END
+	_dice_tray.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_ui_layer.add_child(_dice_tray)
+	_apply_dice_tray_size()
+
+	# Undock wire
+	var dt: DiceTray = _dice_tray as DiceTray
+	if dt != null and dt._undock_btn != null:
+		dt._undock_btn.pressed.connect(_on_dice_tray_undock)
+
+	# 3D Dice Renderer — overlay centered in viewport
+	_dice_renderer = DiceRenderer3D.new()
+	_dice_renderer.anchor_left = 0.5
+	_dice_renderer.anchor_right = 0.5
+	_dice_renderer.anchor_top = 0.5
+	_dice_renderer.anchor_bottom = 0.5
+	_dice_renderer.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_dice_renderer.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_dice_renderer.visible = false
+	_dice_renderer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_layer.add_child(_dice_renderer)
+	_apply_dice_renderer_size()
+	# Wire renderer to dice service
+	if dm != null:
+		dm.set_renderer(_dice_renderer)
+
+
+func _apply_dice_tray_size() -> void:
+	if _dice_tray == null or _dice_tray_floating:
+		return
+	var s: float = _ui_scale()
+	var panel_w: int = roundi(220.0 * s)
+	var panel_h: int = roundi(380.0 * s)
+	var palette_w: int = roundi(52.0 * s) if (_palette != null and _palette.visible and not _palette_floating) else 0
+	_dice_tray.offset_left = float(palette_w)
+	_dice_tray.offset_right = float(palette_w + panel_w)
+	_dice_tray.offset_bottom = 0.0
+	_dice_tray.offset_top = float(-panel_h)
+
+
+func _apply_dice_renderer_size() -> void:
+	if _dice_renderer == null:
+		return
+	var s: float = _ui_scale()
+	var rw: int = roundi(480.0 * s)
+	var rh: int = roundi(360.0 * s)
+	var half_w: float = float(rw) * 0.5
+	var half_h: float = float(rh) * 0.5
+	_dice_renderer.offset_left = - half_w
+	_dice_renderer.offset_right = half_w
+	_dice_renderer.offset_top = - half_h
+	_dice_renderer.offset_bottom = half_h
+	_dice_renderer.set_render_size(Vector2i(rw, rh))
+
+
+func _toggle_dice_tray() -> void:
+	if _dice_tray == null:
+		return
+	if _dice_tray_floating and _dice_tray_window != null:
+		_dice_tray_window.visible = not _dice_tray_window.visible
+	else:
+		_dice_tray.visible = not _dice_tray.visible
+
+
+func _on_dice_tray_undock() -> void:
+	if _dice_tray == null:
+		return
+	if _dice_tray_floating:
+		# Re-dock
+		if _dice_tray_window != null:
+			_dice_tray_window.remove_child(_dice_tray)
+			_dice_tray_window.queue_free()
+			_dice_tray_window = null
+		_dice_tray_floating = false
+		# Restore docked anchors (bottom-left, grow right + upward)
+		_dice_tray.anchor_left = 0.0
+		_dice_tray.anchor_right = 0.0
+		_dice_tray.anchor_top = 1.0
+		_dice_tray.anchor_bottom = 1.0
+		_dice_tray.grow_horizontal = Control.GROW_DIRECTION_END
+		_dice_tray.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		_ui_layer.add_child(_dice_tray)
+		_dice_tray.visible = true
+		_apply_dice_tray_size()
+	else:
+		# Undock into floating window
+		_ui_layer.remove_child(_dice_tray)
+		_dice_tray_floating = true
+		var s: float = _ui_scale()
+		_dice_tray_window = Window.new()
+		_dice_tray_window.title = "Dice Tray"
+		_dice_tray_window.size = Vector2i(roundi(240.0 * s), roundi(420.0 * s))
+		_dice_tray_window.min_size = Vector2i(roundi(200.0 * s), roundi(300.0 * s))
+		_dice_tray_window.transient = true
+		_dice_tray_window.wrap_controls = false
+		_dice_tray_window.close_requested.connect(func() -> void:
+			_dice_tray_window.visible = false
+		)
+		_dice_tray.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_dice_tray.offset_left = 0.0
+		_dice_tray.offset_right = 0.0
+		_dice_tray.offset_top = 0.0
+		_dice_tray.offset_bottom = 0.0
+		_dice_tray_window.add_child(_dice_tray)
+		add_child(_dice_tray_window)
+		_dice_tray.visible = true
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(_dice_tray_window, _ui_scale())
+		_dice_tray_window.popup_centered()
+
+
+# ---------------------------------------------------------------------------
+# Initiative panel — build, toggle, combat signal handlers
+# ---------------------------------------------------------------------------
+
+func _build_initiative_panel() -> void:
+	_initiative_panel = InitiativePanel.new()
+	_initiative_panel.anchor_left = 1.0
+	_initiative_panel.anchor_right = 1.0
+	_initiative_panel.anchor_top = 0.0
+	_initiative_panel.anchor_bottom = 1.0
+	_initiative_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_initiative_panel.grow_vertical = Control.GROW_DIRECTION_END
+	_initiative_panel.visible = false
+	_ui_layer.add_child(_initiative_panel)
+	_apply_initiative_panel_size()
+	_initiative_panel.apply_scale(_ui_scale())
+	_initiative_panel.damage_requested.connect(_on_initiative_damage_requested)
+	_initiative_panel.heal_requested.connect(_on_initiative_heal_requested)
+	_initiative_panel.combat_start_requested.connect(_ensure_initiative_panel_visible)
+	if _initiative_panel._undock_btn != null:
+		_initiative_panel._undock_btn.pressed.connect(_on_initiative_panel_undock)
+	# Connect combat service signals for live refresh.
+	# ServiceRegistry is added deferred, so fall back to the bootstrap instance
+	# when the direct path isn't in the tree yet (same pattern as theming block).
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		var bootstrap := get_node_or_null("/root/ServiceBootstrap")
+		if bootstrap != null and bootstrap.get("registry") != null:
+			reg = bootstrap.registry as ServiceRegistry
+	if reg != null and reg.combat != null:
+		# Signal subscription: ICombatService extends Node; signals live on the
+		# Node instance. RefCounted manager cannot re-emit — approved exception.
+		var csvc: ICombatService = reg.combat.service
+		if csvc != null:
+			csvc.initiative_changed.connect(_on_combat_initiative_changed)
+			csvc.turn_changed.connect(_on_combat_turn_changed)
+			csvc.hp_changed.connect(_on_combat_hp_changed)
+			csvc.combat_started.connect(_on_combat_started)
+			csvc.combat_ended.connect(_on_combat_ended)
+			csvc.token_killed.connect(_on_combat_token_killed)
+			csvc.condition_applied.connect(_on_condition_applied)
+			csvc.condition_removed.connect(_on_condition_removed)
+			csvc.log_entry_added.connect(_on_combat_log_entry_added)
+			csvc.combatant_added.connect(func(_tid: String) -> void: _refresh_initiative_panel())
+			csvc.combatant_removed.connect(func(_tid: String) -> void: _refresh_initiative_panel())
+
+
+func _apply_initiative_panel_size() -> void:
+	if _initiative_panel == null or _initiative_panel_floating:
+		return
+	var s: float = _ui_scale()
+	var panel_w: int = roundi(320.0 * s)
+	var menu_h: float = _menu_bar.size.y if _menu_bar != null else 0.0
+	# Offset from right edge — stack left of freeze panel if visible.
+	var right_offset: int = 0
+	if _freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating:
+		right_offset = roundi((_freeze_panel.offset_right - _freeze_panel.offset_left))
+	_initiative_panel.offset_left = float(-panel_w - right_offset)
+	_initiative_panel.offset_right = float(-right_offset)
+	_initiative_panel.offset_top = menu_h
+	_initiative_panel.offset_bottom = 0.0
+
+
+func _toggle_initiative_panel() -> void:
+	if _initiative_panel == null:
+		return
+	if _initiative_panel_floating and _initiative_panel_window != null:
+		_initiative_panel_window.visible = not _initiative_panel_window.visible
+	else:
+		_initiative_panel.visible = not _initiative_panel.visible
+		_set_view_checked(34, _initiative_panel.visible)
+	if _initiative_panel.visible or (_initiative_panel_floating and _initiative_panel_window != null and _initiative_panel_window.visible):
+		_refresh_initiative_panel()
+
+
+func _on_initiative_panel_undock() -> void:
+	if _initiative_panel == null:
+		return
+	if _initiative_panel_floating:
+		# Re-dock.
+		if _initiative_panel_window != null:
+			_initiative_panel_window.remove_child(_initiative_panel)
+			_initiative_panel_window.queue_free()
+			_initiative_panel_window = null
+		_initiative_panel_floating = false
+		_initiative_panel.anchor_left = 1.0
+		_initiative_panel.anchor_right = 1.0
+		_initiative_panel.anchor_top = 0.0
+		_initiative_panel.anchor_bottom = 1.0
+		_initiative_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		_initiative_panel.grow_vertical = Control.GROW_DIRECTION_END
+		_ui_layer.add_child(_initiative_panel)
+		_initiative_panel.visible = true
+		_apply_initiative_panel_size()
+		if _initiative_panel._undock_btn != null:
+			_initiative_panel._undock_btn.text = "\u21f2"
+	else:
+		# Undock into floating window.
+		_ui_layer.remove_child(_initiative_panel)
+		_initiative_panel_floating = true
+		var s: float = _ui_scale()
+		_initiative_panel_window = Window.new()
+		_initiative_panel_window.title = "Initiative Tracker"
+		_initiative_panel_window.size = Vector2i(roundi(340.0 * s), roundi(500.0 * s))
+		_initiative_panel_window.min_size = Vector2i(roundi(280.0 * s), roundi(300.0 * s))
+		_initiative_panel_window.transient = true
+		_initiative_panel_window.wrap_controls = false
+		_initiative_panel_window.close_requested.connect(func() -> void:
+			_initiative_panel_window.visible = false
+		)
+		_initiative_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_initiative_panel.offset_left = 0.0
+		_initiative_panel.offset_right = 0.0
+		_initiative_panel.offset_top = 0.0
+		_initiative_panel.offset_bottom = 0.0
+		_initiative_panel_window.add_child(_initiative_panel)
+		add_child(_initiative_panel_window)
+		_initiative_panel.visible = true
+		if _initiative_panel._undock_btn != null:
+			_initiative_panel._undock_btn.text = "\u21f1"
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(_initiative_panel_window, _ui_scale())
+		_initiative_panel_window.popup_centered()
+
+
+# ---------------------------------------------------------------------------
+# Combat log panel — build, toggle, undock
+# ---------------------------------------------------------------------------
+
+func _build_combat_log_panel() -> void:
+	_combat_log_panel = CombatLogPanelScript.new() as PanelContainer
+	_combat_log_panel.visible = false
+	# Anchor to left edge, full height.
+	_combat_log_panel.anchor_left = 0.0
+	_combat_log_panel.anchor_right = 0.0
+	_combat_log_panel.anchor_top = 0.0
+	_combat_log_panel.anchor_bottom = 1.0
+	_combat_log_panel.grow_horizontal = Control.GROW_DIRECTION_END
+	_combat_log_panel.grow_vertical = Control.GROW_DIRECTION_END
+	_ui_layer.add_child(_combat_log_panel)
+	_apply_combat_log_panel_size()
+	_combat_log_panel.apply_scale(_ui_scale())
+	_combat_log_panel.undock_requested.connect(_on_combat_log_panel_undock)
+
+
+func _apply_combat_log_panel_size() -> void:
+	if _combat_log_panel == null or _combat_log_panel_floating:
+		return
+	var s: float = _ui_scale()
+	var panel_w: int = roundi(340.0 * s)
+	var palette_w: int = roundi(52.0 * s) if (_palette != null and _palette.visible and not _palette_floating) else 0
+	var menu_h: float = _menu_bar.size.y if _menu_bar != null else 0.0
+	_combat_log_panel.offset_left = float(palette_w)
+	_combat_log_panel.offset_right = float(palette_w + panel_w)
+	_combat_log_panel.offset_top = menu_h
+	_combat_log_panel.offset_bottom = 0.0
+
+
+func _toggle_combat_log_panel() -> void:
+	if _combat_log_panel == null:
+		return
+	if _combat_log_panel_floating and _combat_log_panel_window != null:
+		_combat_log_panel_window.visible = not _combat_log_panel_window.visible
+	else:
+		_combat_log_panel.visible = not _combat_log_panel.visible
+		_set_view_checked(35, _combat_log_panel.visible)
+	if _combat_log_panel.visible or (_combat_log_panel_floating and \
+			_combat_log_panel_window != null and _combat_log_panel_window.visible):
+		_refresh_combat_log_panel()
+
+
+func _refresh_combat_log_panel() -> void:
+	if _combat_log_panel == null:
+		return
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	_combat_log_panel.refresh_from_log(reg.combat.get_combat_log())
+	_combat_log_panel.apply_scale(_ui_scale())
+	if reg.ui_theme != null:
+		reg.ui_theme.theme_control_tree(_combat_log_panel, _ui_scale())
+
+
+func _on_combat_log_panel_undock() -> void:
+	if _combat_log_panel == null:
+		return
+	if _combat_log_panel_floating:
+		# Re-dock.
+		if _combat_log_panel_window != null:
+			_combat_log_panel_window.remove_child(_combat_log_panel)
+			_combat_log_panel_window.queue_free()
+			_combat_log_panel_window = null
+		_combat_log_panel_floating = false
+		_combat_log_panel.anchor_left = 0.0
+		_combat_log_panel.anchor_right = 0.0
+		_combat_log_panel.anchor_top = 0.0
+		_combat_log_panel.anchor_bottom = 1.0
+		_combat_log_panel.grow_horizontal = Control.GROW_DIRECTION_END
+		_combat_log_panel.grow_vertical = Control.GROW_DIRECTION_END
+		_ui_layer.add_child(_combat_log_panel)
+		_combat_log_panel.visible = true
+		_apply_combat_log_panel_size()
+		if _combat_log_panel._undock_btn != null:
+			_combat_log_panel._undock_btn.text = "\u21f2"
+	else:
+		# Undock into floating window.
+		_ui_layer.remove_child(_combat_log_panel)
+		_combat_log_panel_floating = true
+		var s: float = _ui_scale()
+		_combat_log_panel_window = Window.new()
+		_combat_log_panel_window.title = "Combat Log"
+		_combat_log_panel_window.size = Vector2i(roundi(380.0 * s), roundi(500.0 * s))
+		_combat_log_panel_window.min_size = Vector2i(roundi(300.0 * s), roundi(280.0 * s))
+		_combat_log_panel_window.transient = true
+		_combat_log_panel_window.wrap_controls = false
+		_combat_log_panel_window.close_requested.connect(func() -> void:
+			_combat_log_panel_window.visible = false
+		)
+		_combat_log_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_combat_log_panel.offset_left = 0.0
+		_combat_log_panel.offset_right = 0.0
+		_combat_log_panel.offset_top = 0.0
+		_combat_log_panel.offset_bottom = 0.0
+		_combat_log_panel_window.add_child(_combat_log_panel)
+		add_child(_combat_log_panel_window)
+		_combat_log_panel.visible = true
+		if _combat_log_panel._undock_btn != null:
+			_combat_log_panel._undock_btn.text = "\u21f1"
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(_combat_log_panel_window, _ui_scale())
+		_combat_log_panel_window.popup_centered()
+
+
+func _refresh_initiative_panel() -> void:
+	if _initiative_panel == null:
+		return
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	_initiative_panel.refresh(reg.combat, reg.token, reg.statblock)
+	_initiative_panel.apply_scale(_ui_scale())
+	# Re-apply theme to all newly created InitiativeEntry children.
+	if reg.ui_theme != null:
+		reg.ui_theme.theme_control_tree(_initiative_panel, _ui_scale())
+
+
+func _ensure_initiative_panel_visible() -> void:
+	## Make the initiative panel visible when combat starts, regardless of
+	## whether it was triggered from the panel itself or the multi-select bar.
+	## Also refreshes data so entries are populated at first show.
+	if _initiative_panel == null:
+		return
+	var did_show: bool = false
+	if _initiative_panel_floating:
+		if _initiative_panel_window != null and not _initiative_panel_window.visible:
+			_initiative_panel_window.visible = true
+			did_show = true
+	elif not _initiative_panel.visible:
+		_initiative_panel.visible = true
+		_set_view_checked(34, true)
+		did_show = true
+	if did_show:
+		# Recalculate the docked position now that the freeze panel is fully
+		# laid out (deferred so scrollbars/content have settled first).
+		call_deferred("_apply_initiative_panel_size")
+		_refresh_initiative_panel()
+
+
+## Check whether moving a token out of melee reach triggers opportunity attacks.
+## Compares old and new positions against all other combatants.
+func _check_opportunity_attacks(moved_id: String, old_pos: Vector2,
+		new_pos: Vector2, registry: ServiceRegistry) -> void:
+	if registry.token == null or registry.combat == null:
+		return
+	if not registry.combat.is_in_combat() or not registry.combat.is_combatant(moved_id):
+		return
+	var px5: float = _pixels_per_5ft_current()
+	# Standard melee reach = 5 ft = 1 cell.
+	var reach_px: float = px5
+	var order: Array = registry.combat.get_initiative_order()
+	var threats: PackedStringArray = PackedStringArray()
+	for entry: Dictionary in order:
+		var tid: String = str(entry.get("token_id", ""))
+		if tid.is_empty() or tid == moved_id:
+			continue
+		var td: TokenData = registry.token.get_token_by_id(tid)
+		if td == null:
+			continue
+		var other_pos: Vector2 = td.world_pos
+		var was_adjacent: bool = old_pos.distance_to(other_pos) <= reach_px * 1.5
+		var still_adjacent: bool = new_pos.distance_to(other_pos) <= reach_px * 1.5
+		if was_adjacent and not still_adjacent:
+			var threat_name: String = td.label if not td.label.is_empty() else tid
+			threats.append(threat_name)
+	if threats.is_empty():
+		return
+	# Resolve name of the moving token.
+	var moved_td: TokenData = registry.token.get_token_by_id(moved_id)
+	var moved_name: String = moved_td.label if moved_td != null and not moved_td.label.is_empty() else moved_id
+	# Show opportunity attack prompt.
+	var msg: String = "%s moved out of melee reach of:\n• %s\n\nOpportunity attack?" % [
+		moved_name, "\n• ".join(threats)]
+	var dlg := AcceptDialog.new()
+	dlg.dialog_text = msg
+	dlg.title = "Opportunity Attack"
+	dlg.ok_button_text = "Dismiss"
+	dlg.add_button("Log OA", true, "log_oa")
+	dlg.custom_action.connect(func(action: StringName) -> void:
+		if action == &"log_oa" and registry.combat != null:
+			for t_name: String in threats:
+				registry.combat.add_log_entry({
+					"type": "opportunity_attack",
+					"text": "%s provoked an opportunity attack from %s" % [moved_name, t_name],
+				})
+		dlg.hide())
+	dlg.canceled.connect(dlg.queue_free)
+	dlg.confirmed.connect(dlg.queue_free)
+	add_child(dlg)
+	if registry.ui_theme != null:
+		registry.ui_theme.prepare_window(dlg)
+	dlg.popup_centered()
+
+
+func _on_combat_started() -> void:
+	_refresh_initiative_panel()
+	_ensure_initiative_panel_visible()
+
+
+func _on_combat_ended() -> void:
+	_refresh_initiative_panel()
+	if _map_view != null and not _combat_turn_token_id.is_empty():
+		var prev: Node2D = _map_view.get_token_sprite(_combat_turn_token_id)
+		if prev != null:
+			prev.set_active_turn(false)
+	_combat_turn_token_id = ""
+	_set_status("Combat ended")
+
+
+func _on_combat_initiative_changed(_order: Array) -> void:
+	_refresh_initiative_panel()
+
+
+func _on_combat_turn_changed(token_id: String, round_number: int) -> void:
+	_refresh_initiative_panel()
+	# Restart the turn timer on the initiative panel.
+	if _initiative_panel != null:
+		_initiative_panel.on_turn_changed()
+	# Update active-turn ring on the map.
+	if _map_view != null:
+		if not _combat_turn_token_id.is_empty():
+			var prev: Node2D = _map_view.get_token_sprite(_combat_turn_token_id)
+			if prev != null:
+				prev.set_active_turn(false)
+		var curr: Node2D = _map_view.get_token_sprite(token_id)
+		if curr != null:
+			curr.set_active_turn(true)
+	_combat_turn_token_id = token_id
+	# Resolve a human-readable name for status bar and network broadcast.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var name_str: String = token_id
+	var td: TokenData = null
+	if reg != null:
+		if reg.token != null:
+			td = reg.token.get_token_by_id(token_id)
+			if td != null and not td.label.is_empty():
+				name_str = td.label
+		if name_str == token_id and reg.profile != null:
+			var prof: Variant = reg.profile.get_profile_by_id(token_id)
+			if prof is PlayerProfile and not (prof as PlayerProfile).player_name.is_empty():
+				name_str = (prof as PlayerProfile).player_name
+		if name_str == token_id and td != null and not td.statblock_refs.is_empty() and reg.statblock != null:
+			var sb: StatblockData = reg.statblock.get_statblock(str(td.statblock_refs[0]))
+			if sb != null and not sb.name.is_empty():
+				name_str = sb.name
+	_set_status("Round %d — %s's turn" % [round_number, name_str])
+	# Broadcast to player displays (with resolved name so PlayerWindow can display it).
+	_nm_broadcast_to_displays({"msg": "combat_turn_update",
+		"current_token_id": token_id, "round_number": round_number,
+		"token_name": name_str})
+
+
+func _on_combat_hp_changed(token_id: String, current_hp: int, max_hp: int, _delta: int) -> void:
+	_refresh_initiative_panel()
+	# Update the token sprite HP bar.
+	if _map_view != null:
+		var sprite: Node = _map_view.get_token_sprite(token_id)
+		if sprite != null and sprite.has_method("set_hp_bar"):
+			var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			var temp_hp: int = 0
+			if reg != null and reg.combat != null:
+				var status: Dictionary = reg.combat.get_hp_status(token_id)
+				temp_hp = int(status.get("temp", 0))
+			sprite.set_hp_bar(current_hp, max_hp, temp_hp)
+	# Broadcast HP update to player displays.
+	_nm_broadcast_to_displays({"msg": "combat_hp_update",
+		"token_id": token_id, "current_hp": current_hp, "max_hp": max_hp})
+
+
+func _on_combat_token_killed(token_id: String) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var name_str: String = token_id
+	var monster_cr: float = 0.0
+	var monster_xp: int = 0
+	if reg != null and reg.token != null:
+		var td: TokenData = reg.token.get_token_by_id(token_id)
+		if td != null and not td.label.is_empty():
+			name_str = td.label
+		# Look up monster CR for XP awarding.
+		if td != null and td.category == TokenData.TokenCategory.MONSTER and not td.statblock_refs.is_empty():
+			var sb_id: String = str(td.statblock_refs[0])
+			if reg.statblock != null and not sb_id.is_empty():
+				var sb: StatblockData = reg.statblock.get_statblock(sb_id)
+				if sb != null:
+					monster_cr = sb.challenge_rating
+					monster_xp = sb.xp if sb.xp > 0 else WizardConstants.cr_to_xp(monster_cr)
+	_set_status("%s killed!" % name_str)
+	_refresh_initiative_panel()
+
+	# Award XP if campaign is in XP mode.
+	if monster_xp > 0 and reg != null and reg.campaign != null:
+		var mode: String = str(reg.campaign.get_setting("advancement_mode"))
+		if mode == "xp":
+			_award_xp_to_party(monster_xp, name_str)
+
+
+func _on_combat_log_entry_added(entry: Dictionary) -> void:
+	if _combat_log_panel == null or not _combat_log_panel.visible:
+		return
+	_combat_log_panel.append_entry(entry)
+
+
+func _award_xp_to_party(total_xp: int, source_name: String) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.campaign == null or reg.character == null:
+		return
+	var char_ids: Array = reg.campaign.get_character_ids()
+	if char_ids.is_empty():
+		return
+	var pc_count: int = char_ids.size()
+	var xp_each: int = maxi(1, int(float(total_xp) / float(pc_count)))
+	var leveled: Array = []
+	for cid: Variant in char_ids:
+		var sb: StatblockData = reg.character.get_character_by_id(str(cid))
+		if sb == null:
+			continue
+		var old_level: int = sb.get_total_level()
+		sb.current_xp += xp_each
+		var new_level: int = WizardConstants.level_for_xp(sb.current_xp)
+		reg.character.add_character(sb)
+		if reg.statblock != null:
+			reg.statblock.update_statblock(sb)
+		if new_level > old_level:
+			leveled.append(sb.name)
+	var msg: String = "XP: %d from %s (%d each to %d PCs)." % [
+		total_xp, source_name, xp_each, pc_count]
+	if not leveled.is_empty():
+		msg += " Ready to level up: %s" % ", ".join(leveled)
+	_set_status(msg)
+
+
+func _on_condition_applied(token_id: String, _condition: Dictionary) -> void:
+	_refresh_initiative_panel()
+	_refresh_token_sprite_conditions(token_id)
+
+
+func _on_condition_removed(token_id: String, _condition: Dictionary) -> void:
+	_refresh_initiative_panel()
+	_refresh_token_sprite_conditions(token_id)
+	# If the condition dialog is open for this token, refresh its list.
+	if _condition_dialog != null and _condition_dialog.visible and \
+			_condition_dialog._token_id == token_id:
+		_open_condition_dialog(token_id)
+
+
+## Update the condition badges on the map sprite for a token.
+func _refresh_token_sprite_conditions(token_id: String) -> void:
+	if _map_view == null:
+		return
+	var sprite: Node = _map_view.get_token_sprite(token_id)
+	if sprite == null or not sprite.has_method("set_conditions"):
+		return
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	# Pass condition name strings so TokenSprite can look up abbrev/colour.
+	var names: Array = []
+	for cond: Variant in reg.combat.get_conditions(token_id):
+		if cond is Dictionary:
+			var n: String = str((cond as Dictionary).get("name", ""))
+			if not n.is_empty():
+				names.append(n)
+		elif cond is String:
+			names.append(cond as String)
+	sprite.set_conditions(names)
+
+
+## Open (or reopen) the condition dialog for a token.
+func _open_condition_dialog(token_id: String) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	if _condition_dialog == null:
+		_condition_dialog = ConditionDialog.new()
+		add_child(_condition_dialog)
+		_condition_dialog.condition_confirmed.connect(_on_condition_confirmed)
+		_condition_dialog.condition_removed_requested.connect(
+			_on_condition_remove_requested)
+		var reg_tm := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg_tm != null and reg_tm.ui_theme != null:
+			reg_tm.ui_theme.theme_control_tree(_condition_dialog, _ui_scale())
+		_condition_dialog.apply_scale(_ui_scale())
+	var token_name: String = token_id
+	if reg.token != null:
+		var td: TokenData = reg.token.get_token_by_id(token_id)
+		if td != null and not td.label.is_empty():
+			token_name = td.label
+	var current_conds: Array = reg.combat.get_conditions(token_id)
+	_condition_dialog.open_for_token(token_id, token_name, current_conds)
+
+
+func _on_condition_confirmed(token_id: String, condition_name: String,
+		source: String, duration_rounds: int) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	reg.combat.apply_condition(token_id, condition_name, source, duration_rounds)
+	# Refresh the dialog's active list immediately.
+	_open_condition_dialog(token_id)
+
+
+func _on_condition_remove_requested(token_id: String, condition_name: String) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	reg.combat.remove_condition(token_id, condition_name)
+
+
+func _on_initiative_damage_requested(token_id: String) -> void:
+	_open_quick_damage_dialog(token_id, false)
+
+
+func _on_initiative_heal_requested(token_id: String) -> void:
+	_open_quick_damage_dialog(token_id, true)
+
+
+func _open_quick_damage_dialog(token_id: String, is_healing: bool) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _quick_damage_dialog == null:
+		_quick_damage_dialog = QuickDamageDialog.new()
+		add_child(_quick_damage_dialog)
+		_quick_damage_dialog.applied.connect(_on_quick_damage_applied)
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(_quick_damage_dialog, _ui_scale())
+		_quick_damage_dialog.apply_scale(_ui_scale())
+	var token_name: String = token_id
+	if reg != null and reg.token != null:
+		var td: TokenData = reg.token.get_token_by_id(token_id)
+		if td != null and not td.label.is_empty():
+			token_name = td.label
+	if is_healing:
+		_quick_damage_dialog.open_healing(token_id, token_name)
+	else:
+		_quick_damage_dialog.open_damage(token_id, token_name)
+
+
+func _on_quick_damage_applied(token_id: String, amount: int, damage_type: String,
+		mode: QuickDamageDialog.HpMode) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	match mode:
+		QuickDamageDialog.HpMode.HEAL:
+			var result: Dictionary = reg.combat.apply_healing(token_id, amount)
+			var actual: int = int(result.get("actual_healing", 0))
+			_set_status("Healed %d HP" % actual)
+		QuickDamageDialog.HpMode.TEMP_HP:
+			reg.combat.apply_temp_hp(token_id, amount)
+			_set_status("Set %d temp HP" % amount)
+		_: # DAMAGE
+			var result: Dictionary = reg.combat.apply_damage(token_id, amount, damage_type)
+			var actual: int = int(result.get("actual_damage", 0))
+			var detail: String = str(result.get("detail", ""))
+			var killed: bool = bool(result.get("killed", false))
+			var msg: String = "Dealt %d damage" % actual
+			if not detail.is_empty():
+				msg += " (%s)" % detail
+			if killed:
+				msg += " \u2014 KILLED"
+			_set_status(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -4218,6 +5837,103 @@ func _build_roam_panel() -> void:
 	hbox.add_child(_roam_clear_btn)
 
 
+func _build_multi_select_bar() -> void:
+	_multi_select_bar = PanelContainer.new()
+	_multi_select_bar.name = "MultiSelectBar"
+	_multi_select_bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Anchor bottom-center.
+	_multi_select_bar.anchor_left = 0.5
+	_multi_select_bar.anchor_right = 0.5
+	_multi_select_bar.anchor_top = 1.0
+	_multi_select_bar.anchor_bottom = 1.0
+	_multi_select_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_multi_select_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_multi_select_bar.offset_top = -50.0
+	_multi_select_bar.offset_bottom = -8.0
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.12, 0.12, 0.14, 0.92)
+	bg.corner_radius_top_left = 8
+	bg.corner_radius_top_right = 8
+	bg.corner_radius_bottom_left = 8
+	bg.corner_radius_bottom_right = 8
+	bg.content_margin_left = 12.0
+	bg.content_margin_right = 12.0
+	bg.content_margin_top = 6.0
+	bg.content_margin_bottom = 6.0
+	bg.border_width_top = 1
+	bg.border_width_bottom = 1
+	bg.border_width_left = 1
+	bg.border_width_right = 1
+	bg.border_color = Color(0.35, 0.55, 1.0, 0.5)
+	_multi_select_bar.add_theme_stylebox_override("panel", bg)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	_multi_select_bar.add_child(row)
+
+	_multi_select_label = Label.new()
+	_multi_select_label.add_theme_font_size_override("font_size", 14)
+	_multi_select_label.add_theme_color_override("font_color", Color(0.8, 0.85, 1.0))
+	row.add_child(_multi_select_label)
+
+	var combat_btn := Button.new()
+	combat_btn.text = "Start Combat"
+	combat_btn.focus_mode = Control.FOCUS_NONE
+	combat_btn.pressed.connect(_on_multi_select_start_combat)
+	row.add_child(combat_btn)
+	_multi_select_combat_btn = combat_btn
+
+	var clear_btn := Button.new()
+	clear_btn.text = "Clear"
+	clear_btn.focus_mode = Control.FOCUS_NONE
+	clear_btn.pressed.connect(_on_multi_select_clear)
+	row.add_child(clear_btn)
+
+	_multi_select_bar.visible = false
+	_ui_layer.add_child(_multi_select_bar)
+
+
+func _update_multi_select_bar(selected_ids: Array) -> void:
+	if _multi_select_bar == null:
+		return
+	var count: int = selected_ids.size()
+	if count < 2:
+		_multi_select_bar.visible = false
+		return
+	_multi_select_label.text = "%d tokens selected" % count
+	# Update combat button label based on whether combat is already active.
+	if _multi_select_combat_btn != null:
+		var reg_msb := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		var in_combat: bool = reg_msb != null and reg_msb.combat != null and reg_msb.combat.is_in_combat()
+		_multi_select_combat_btn.text = "Add to Combat" if in_combat else "Start Combat"
+	_multi_select_bar.visible = true
+
+
+func _on_multi_select_start_combat() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.selection == null or reg.combat == null:
+		return
+	var ids: Array[String] = reg.selection.get_selected_ids()
+	if reg.combat.is_in_combat():
+		# Add selected tokens to an existing combat.
+		for tid: String in ids:
+			reg.combat.add_combatant(tid)
+	else:
+		if ids.is_empty():
+			return
+		reg.combat.start_combat(ids)
+		# _on_combat_started fires via signal, but call directly in case the
+		# panel was deferred-hidden and the signal fires before layout settles.
+		_ensure_initiative_panel_visible()
+
+
+func _on_multi_select_clear() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.selection == null:
+		return
+	reg.selection.clear_selection()
+
+
 func _on_token_selected(token_id: String) -> void:
 	## Show the passage paint panel when a SECRET_PASSAGE token is selected,
 	## or the roam panel when a MONSTER / NPC token is selected.
@@ -4244,6 +5960,40 @@ func _on_token_selected(token_id: String) -> void:
 	else:
 		_hide_passage_panel()
 		_hide_roam_panel()
+	# Mirror selection to the initiative panel so the matching row highlights.
+	if _initiative_panel != null:
+		_initiative_panel.set_selected_token(token_id)
+
+
+func _on_selection_changed(selected_ids: Array) -> void:
+	var count: int = selected_ids.size()
+	if count == 0:
+		_set_status("Selection cleared")
+		# Clear map-selection highlight in the initiative panel.
+		if _initiative_panel != null:
+			_initiative_panel.set_selected_token("")
+		# Hide context-sensitive panels that were open for the deselected token.
+		_hide_passage_panel()
+		_hide_roam_panel()
+	elif count == 1:
+		var tid: String = str(selected_ids[0])
+		# Mirror single-token selection to initiative panel highlight.
+		if _initiative_panel != null:
+			_initiative_panel.set_selected_token(tid)
+		var tm := _token_manager()
+		if tm != null:
+			var data: TokenData = tm.get_token_by_id(tid)
+			if data != null:
+				_set_status("Selected: %s" % (data.label if not data.label.is_empty() else tid))
+				_update_multi_select_bar(selected_ids)
+				return
+		_set_status("Selected: %s" % tid)
+	else:
+		# Multi-select: clear the single-token initiative highlight.
+		if _initiative_panel != null:
+			_initiative_panel.set_selected_token("")
+		_set_status("Selected: %d tokens" % count)
+	_update_multi_select_bar(selected_ids)
 
 
 func _hide_passage_panel() -> void:
@@ -4756,6 +6506,13 @@ func _paste_token(world_pos: Vector2) -> void:
 	var old_world_pos: Vector2 = data.world_pos
 	data.id = TokenData.generate_id()
 	data.world_pos = world_pos
+	# Strip any trailing " N" suffix from the clipboard label so that
+	# _ensure_unique_combatant_names can renumber cleanly when added to combat.
+	var paste_label: String = data.label
+	var _pi: int = paste_label.rfind(" ")
+	if _pi != -1 and paste_label.substr(_pi + 1).is_valid_int():
+		paste_label = paste_label.left(_pi)
+	data.label = paste_label
 	# Offset passage paths relative to the position delta.
 	if not data.passage_paths.is_empty():
 		var delta: Vector2 = world_pos - old_world_pos
@@ -4802,6 +6559,36 @@ func _paste_token(world_pos: Vector2) -> void:
 	_set_status("Pasted: %s" % data.label if not data.label.is_empty() else "Pasted token")
 
 
+## Returns a label that does not collide with any existing token on the current map.
+## Strips any trailing " N" suffix from base_label, then appends " 1", " 2" etc.
+## as needed.  If base_label is empty the original is returned unchanged.
+func _make_unique_token_label(base_label: String, tm: TokenManager) -> String:
+	if base_label.is_empty():
+		return base_label
+	# Strip a trailing " <integer>" suffix (e.g. "Goblin 2" → "Goblin").
+	var stripped: String = base_label
+	var space_idx: int = base_label.rfind(" ")
+	if space_idx != -1:
+		var suffix: String = base_label.substr(space_idx + 1)
+		if suffix.is_valid_int():
+			stripped = base_label.left(space_idx)
+	# Collect all existing token labels that share the same base name.
+	var all_tokens: Array = tm.get_all_tokens()
+	var existing_labels: Array = []
+	for tok: Variant in all_tokens:
+		if tok is TokenData:
+			var lbl: String = (tok as TokenData).label
+			if lbl == stripped or lbl.begins_with(stripped + " "):
+				existing_labels.append(lbl)
+	if existing_labels.is_empty():
+		return base_label # No conflict — keep original (no number needed yet).
+	# Find the lowest positive integer not already in use.
+	var n: int = 1
+	while existing_labels.has("%s %d" % [stripped, n]):
+		n += 1
+	return "%s %d" % [stripped, n]
+
+
 func _delete_token(token_id: String) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null:
@@ -4811,6 +6598,17 @@ func _delete_token(token_id: String) -> void:
 	var del_snapshot: TokenData = null
 	if del_data != null:
 		del_snapshot = TokenData.from_dict(del_data.to_dict())
+	# Capture combat state before removal so undo can restore it.
+	var was_combatant: bool = false
+	var saved_initiative: int = 0
+	if registry.combat != null and registry.combat.is_in_combat():
+		was_combatant = registry.combat.is_combatant(token_id)
+		if was_combatant:
+			for entry: Dictionary in registry.combat.get_initiative_order():
+				if str(entry.get("token_id", "")) == token_id:
+					saved_initiative = int(entry.get("initiative", 0))
+					break
+			registry.combat.remove_combatant(token_id)
 	# Clean up the token icon file from the map bundle.
 	if del_data != null and not del_data.icon_image_path.is_empty():
 		_delete_token_icon(token_id)
@@ -4829,8 +6627,13 @@ func _delete_token(token_id: String) -> void:
 				registry.token.add_token(restored)
 				if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
 				_broadcast_token_change(restored, true)
-				_broadcast_puzzle_notes_state(),
+				_broadcast_puzzle_notes_state()
+				if was_combatant and registry.combat != null and registry.combat.is_in_combat():
+					registry.combat.add_combatant(cid)
+					registry.combat.set_initiative(cid, saved_initiative),
 			func():
+				if registry.combat != null and registry.combat.is_combatant(cid):
+					registry.combat.remove_combatant(cid)
 				registry.token.remove_token(cid)
 				if mv != null: mv.remove_token_sprite(cid)
 				_nm_broadcast_to_displays({"msg": "token_removed", "token_id": cid,
@@ -4851,7 +6654,7 @@ func _on_token_place_requested(world_pos: Vector2) -> void:
 func _on_background_right_clicked(world_pos: Vector2, screen_pos: Vector2) -> void:
 	## Right-click on empty map space — show background context menu.
 	_background_right_click_pos = world_pos
-	if _background_context_menu == null:
+	if _background_context_menu == null or not is_instance_valid(_background_context_menu):
 		_background_context_menu = PopupMenu.new()
 		_background_context_menu.id_pressed.connect(_on_background_context_menu_id)
 		add_child(_background_context_menu)
@@ -4864,6 +6667,27 @@ func _on_background_right_clicked(world_pos: Vector2, screen_pos: Vector2) -> vo
 		_background_context_menu.add_item("Remove Effect", 1)
 	if not _token_clipboard.is_empty():
 		_background_context_menu.add_item("Paste Token", 0)
+	# Selection quick-filters.
+	var sel_registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if sel_registry != null and sel_registry.token != null:
+		var has_monsters: bool = false
+		var has_npcs: bool = false
+		for td_raw: Variant in sel_registry.token.get_all_tokens():
+			var td_item: TokenData = td_raw as TokenData
+			if td_item == null:
+				continue
+			if td_item.category == TokenData.TokenCategory.MONSTER:
+				has_monsters = true
+			elif td_item.category == TokenData.TokenCategory.NPC:
+				has_npcs = true
+			if has_monsters and has_npcs:
+				break
+		if has_monsters or has_npcs:
+			_background_context_menu.add_separator()
+			if has_monsters:
+				_background_context_menu.add_item("Select All Monsters", 10)
+			if has_npcs:
+				_background_context_menu.add_item("Select All NPCs", 11)
 	if _background_context_menu.item_count == 0:
 		return
 	_background_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
@@ -4877,6 +6701,27 @@ func _on_background_context_menu_id(id: int) -> void:
 			if not _background_right_click_effect_id.is_empty():
 				_delete_effect(_background_right_click_effect_id)
 				_background_right_click_effect_id = ""
+		10: # Select All Monsters
+			_select_all_tokens_by_category(TokenData.TokenCategory.MONSTER)
+		11: # Select All NPCs
+			_select_all_tokens_by_category(TokenData.TokenCategory.NPC)
+
+
+func _select_all_tokens_by_category(cat: int) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.token == null or registry.selection == null:
+		return
+	var cat_name: String = TokenData.category_name(cat).to_lower()
+	var ids: Array[String] = []
+	for raw: Variant in registry.token.get_all_tokens():
+		var td: TokenData = raw as TokenData
+		if td != null and td.category == cat:
+			ids.append(td.id)
+	if ids.is_empty():
+		_set_status("No %s tokens on the map" % cat_name)
+		return
+	registry.selection.select_many(ids, ISelectionService.SelectionLayer.TOKEN)
+	_set_status("Selected %d %s token(s)" % [ids.size(), cat_name])
 
 
 func _delete_effect(id: String) -> void:
@@ -4983,6 +6828,47 @@ func _on_effect_burst_ended() -> void:
 	_nm_broadcast_to_displays({"msg": "effect_remove", "effect_id": "__burst__"})
 
 
+func _on_measurement_right_clicked(meas_id: String, screen_pos: Vector2) -> void:
+	_measurement_context_id = meas_id
+	if _measurement_context_menu == null or not is_instance_valid(_measurement_context_menu):
+		_measurement_context_menu = PopupMenu.new()
+		_measurement_context_menu.id_pressed.connect(_on_measurement_context_menu_id)
+		add_child(_measurement_context_menu)
+	_apply_token_context_menu_theme_to(_measurement_context_menu)
+	_measurement_context_menu.clear()
+	_measurement_context_menu.add_item("Call for Saving Throw…", 0)
+	_measurement_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
+
+
+func _on_measurement_context_menu_id(id: int) -> void:
+	match id:
+		0: # Call for Saving Throw
+			var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if registry == null or registry.measurement == null:
+				return
+			var md: MeasurementData = registry.measurement.get_by_id(_measurement_context_id)
+			if md == null:
+				_set_status("Measurement shape not found.")
+				return
+			if _map_view == null:
+				return
+			var token_ids: Array[String] = _map_view.get_tokens_in_measurement(md)
+			# Filter to creature tokens only.
+			var tm := _token_manager()
+			if tm != null:
+				var filtered: Array[String] = []
+				for tid: String in token_ids:
+					var td: TokenData = tm.get_token_by_id(tid)
+					if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC or td.category == TokenData.TokenCategory.GENERIC):
+						filtered.append(tid)
+				token_ids = filtered
+			if token_ids.is_empty():
+				_set_status("No creature tokens inside the measurement shape.")
+				return
+			_pending_save_measurement_id = md.id
+			_open_save_config_dialog(token_ids)
+
+
 func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 	## Right-click on a token in SELECT mode — show context menu.
 	_token_context_id = id
@@ -5017,6 +6903,24 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 		else:
 			_token_context_menu.add_item("Play Roam", 10)
 		_token_context_menu.add_item("Reset Roam", 11)
+	# Show statblock shortcuts for MONSTER/NPC with attached statblocks.
+	if td != null and td.statblock_refs.size() > 0:
+		_token_context_menu.add_separator()
+		_token_context_menu.add_item("View Statblock", 20)
+		_token_context_menu.add_item("Quick HP…", 21)
+		_token_context_menu.add_item("Edit Token Statblocks…", 22)
+		_token_context_menu.add_item("Manage Inventory…", 23)
+	# Show combat options when a map is loaded.
+	var registry_cbt := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_cbt != null and registry_cbt.combat != null and registry_cbt.combat.is_in_combat():
+		_token_context_menu.add_separator()
+		if registry_cbt.combat.is_combatant(id):
+			_token_context_menu.add_item("Remove from Combat", 31)
+		else:
+			_token_context_menu.add_item("Add to Combat", 30)
+		# Conditions option — only for combatants with statblocks.
+		if registry_cbt.combat.is_combatant(id) and td != null and td.statblock_refs.size() > 0:
+			_token_context_menu.add_item("Conditions…", 40)
 	_token_context_menu.add_separator()
 	_token_context_menu.add_item("Delete Token", 2)
 	_token_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
@@ -5058,6 +6962,38 @@ func _on_token_context_menu_id(id: int) -> void:
 				_start_roam(_token_context_id)
 		11: # Reset Roam
 			_reset_roam(_token_context_id)
+		20: # View Statblock (primary)
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
+			if data != null and data.statblock_refs.size() > 0:
+				_show_token_statblock_card(data, str(data.statblock_refs[0]))
+		21: # Quick HP adjustment
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
+			if data != null and data.statblock_refs.size() > 0:
+				_show_quick_hp_dialog(data)
+		22: # Edit Overrides (primary statblock)
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
+			if data != null and data.statblock_refs.size() > 0:
+				_show_override_editor_for_token(data, str(data.statblock_refs[0]))
+		23: # Manage Inventory
+			var data: TokenData = tm.get_token_by_id(_token_context_id)
+			if data != null and data.statblock_refs.size() > 0:
+				var sb_id: String = str(data.statblock_refs[0])
+				var registry_inv := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+				var sb: StatblockData = registry_inv.statblock.get_statblock(sb_id) if (registry_inv != null and registry_inv.statblock != null) else null
+				if sb != null:
+					_open_char_sheet_for(sb)
+					if _char_sheet != null:
+						_char_sheet.select_inventory_tab()
+		30: # Add to Combat
+			var reg_cbt := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if reg_cbt != null and reg_cbt.combat != null:
+				reg_cbt.combat.add_combatant(_token_context_id)
+		31: # Remove from Combat
+			var reg_cbt2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+			if reg_cbt2 != null and reg_cbt2.combat != null:
+				reg_cbt2.combat.remove_combatant(_token_context_id)
+		40: # Conditions…
+			_open_condition_dialog(_token_context_id)
 
 
 func _open_token_editor(data: TokenData) -> void:
@@ -5121,6 +7057,7 @@ func _open_token_editor(data: TokenData) -> void:
 	_token_icon_crop_offset = data.icon_crop_offset
 	_token_icon_crop_zoom = data.icon_crop_zoom
 	_token_icon_facing_deg = data.icon_facing_deg
+	_token_icon_campaign_image_id = data.icon_campaign_image_id
 	if _token_icon_preview != null:
 		if not data.icon_image_path.is_empty():
 			var tex: ImageTexture = TokenIconUtils.get_or_load_circular_texture(data.icon_image_path)
@@ -5135,6 +7072,21 @@ func _open_token_editor(data: TokenData) -> void:
 		_token_icon_crop_btn.disabled = data.icon_image_path.is_empty()
 	# Populate puzzle notes rows.
 	_populate_puzzle_note_rows(data.puzzle_notes)
+	# Populate statblock references.
+	_token_pending_statblock_refs = data.statblock_refs.duplicate()
+	_token_pending_statblock_overrides = data.statblock_overrides.duplicate(true)
+	_refresh_token_statblock_list()
+	var is_creature_sb: bool = data.category == TokenData.TokenCategory.MONSTER or data.category == TokenData.TokenCategory.NPC
+	if _token_statblocks_section != null:
+		_token_statblocks_section.visible = is_creature_sb
+	# Populate statblock visibility dropdown
+	if _token_statblock_visibility_option != null:
+		var vis_idx: int = 0
+		match data.statblock_visibility:
+			"name": vis_idx = 1
+			"partial": vis_idx = 2
+			"full": vis_idx = 3
+		_token_statblock_visibility_option.selected = vis_idx
 	# Store temporary placement position in editor id if brand new.
 	if _token_editor_dialog != null:
 		var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -5154,10 +7106,16 @@ func _build_token_editor_dialog() -> void:
 	_token_editor_dialog.confirmed.connect(_on_token_editor_confirmed)
 	add_child(_token_editor_dialog)
 
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_token_editor_dialog.add_child(scroll)
+
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_token_editor_dialog_root = vbox
-	_token_editor_dialog.add_child(vbox)
+	scroll.add_child(vbox)
 
 	# Label
 	var lbl_row := HBoxContainer.new()
@@ -5209,6 +7167,11 @@ func _build_token_editor_dialog() -> void:
 	_token_icon_crop_btn.disabled = true
 	_token_icon_crop_btn.pressed.connect(_on_token_icon_crop_pressed)
 	icon_row.add_child(_token_icon_crop_btn)
+	var token_campaign_btn := Button.new()
+	token_campaign_btn.text = "Campaign..."
+	token_campaign_btn.tooltip_text = "Pick from campaign image library"
+	token_campaign_btn.pressed.connect(_on_token_icon_campaign_pressed)
+	icon_row.add_child(token_campaign_btn)
 	vbox.add_child(icon_row)
 	# Optional path / URL input row.
 	var icon_path_row := HBoxContainer.new()
@@ -5461,6 +7424,99 @@ func _build_token_editor_dialog() -> void:
 	_puzzle_notes_add_btn.pressed.connect(_on_puzzle_note_add_pressed)
 	vbox.add_child(_puzzle_notes_add_btn)
 
+	# Statblocks section (MONSTER / NPC only)
+	_token_statblocks_section = VBoxContainer.new()
+	_token_statblocks_section.add_theme_constant_override("separation", 4)
+	_token_statblocks_section.visible = false
+
+	var sb_sep := HSeparator.new()
+	_token_statblocks_section.add_child(sb_sep)
+
+	var sb_header := Label.new()
+	sb_header.text = "Statblocks"
+	sb_header.add_theme_font_size_override("font_size", 14)
+	_token_statblocks_section.add_child(sb_header)
+
+	_token_statblocks_list = ItemList.new()
+	_token_statblocks_list.custom_minimum_size = Vector2(0, 80)
+	_token_statblocks_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_token_statblocks_list.item_selected.connect(_on_token_statblock_selected)
+	_token_statblocks_section.add_child(_token_statblocks_list)
+
+	var sb_btns := HBoxContainer.new()
+	sb_btns.add_theme_constant_override("separation", 4)
+	_token_statblock_attach_btn = Button.new()
+	_token_statblock_attach_btn.text = "Attach…"
+	_token_statblock_attach_btn.pressed.connect(_on_token_statblock_attach)
+	sb_btns.add_child(_token_statblock_attach_btn)
+	_token_statblock_detach_btn = Button.new()
+	_token_statblock_detach_btn.text = "Detach"
+	_token_statblock_detach_btn.disabled = true
+	_token_statblock_detach_btn.pressed.connect(_on_token_statblock_detach)
+	sb_btns.add_child(_token_statblock_detach_btn)
+	_token_statblock_view_btn = Button.new()
+	_token_statblock_view_btn.text = "View"
+	_token_statblock_view_btn.disabled = true
+	_token_statblock_view_btn.pressed.connect(_on_token_statblock_view)
+	sb_btns.add_child(_token_statblock_view_btn)
+	_token_statblock_rollhp_btn = Button.new()
+	_token_statblock_rollhp_btn.text = "Roll HP"
+	_token_statblock_rollhp_btn.disabled = true
+	_token_statblock_rollhp_btn.pressed.connect(_on_token_statblock_roll_hp)
+	sb_btns.add_child(_token_statblock_rollhp_btn)
+	_token_statblock_edit_overrides_btn = Button.new()
+	_token_statblock_edit_overrides_btn.text = "Edit Overrides…"
+	_token_statblock_edit_overrides_btn.disabled = true
+	_token_statblock_edit_overrides_btn.pressed.connect(_on_token_statblock_edit_overrides)
+	sb_btns.add_child(_token_statblock_edit_overrides_btn)
+	_token_statblocks_section.add_child(sb_btns)
+
+	# HP editors
+	var hp_row := HBoxContainer.new()
+	hp_row.add_theme_constant_override("separation", 6)
+	_token_statblock_hp_label = Label.new()
+	_token_statblock_hp_label.text = "Current HP:"
+	hp_row.add_child(_token_statblock_hp_label)
+	_token_statblock_hp_spin = SpinBox.new()
+	_token_statblock_hp_spin.min_value = 0
+	_token_statblock_hp_spin.max_value = 9999
+	_token_statblock_hp_spin.step = 1
+	_token_statblock_hp_spin.value = 0
+	_token_statblock_hp_spin.custom_minimum_size = Vector2(90, 0)
+	_token_statblock_hp_spin.value_changed.connect(_on_token_statblock_hp_changed)
+	hp_row.add_child(_token_statblock_hp_spin)
+	var temp_label := Label.new()
+	temp_label.text = "Temp HP:"
+	hp_row.add_child(temp_label)
+	_token_statblock_temphp_spin = SpinBox.new()
+	_token_statblock_temphp_spin.min_value = 0
+	_token_statblock_temphp_spin.max_value = 9999
+	_token_statblock_temphp_spin.step = 1
+	_token_statblock_temphp_spin.value = 0
+	_token_statblock_temphp_spin.custom_minimum_size = Vector2(80, 0)
+	_token_statblock_temphp_spin.value_changed.connect(_on_token_statblock_temphp_changed)
+	hp_row.add_child(_token_statblock_temphp_spin)
+	_token_statblocks_section.add_child(hp_row)
+
+	# Statblock visibility level for player display
+	var sv_row := HBoxContainer.new()
+	sv_row.add_theme_constant_override("separation", 6)
+	var sv_label := Label.new()
+	sv_label.text = "Player Visibility:"
+	sv_label.custom_minimum_size = Vector2(120, 0)
+	sv_row.add_child(sv_label)
+	_token_statblock_visibility_option = OptionButton.new()
+	_token_statblock_visibility_option.custom_minimum_size = Vector2(180, 0)
+	_token_statblock_visibility_option.add_item("Hidden", 0)
+	_token_statblock_visibility_option.add_item("Name Only", 1)
+	_token_statblock_visibility_option.add_item("Partial (name/AC/HP)", 2)
+	_token_statblock_visibility_option.add_item("Full", 3)
+	sv_row.add_child(sv_label)
+	sv_row.add_child(_token_statblock_visibility_option)
+	_token_statblocks_section.add_child(sv_row)
+
+	vbox.add_child(_token_statblocks_section)
+
 	# Theme the token editor dialog
 	var _te_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _te_reg != null and _te_reg.ui_theme != null:
@@ -5496,6 +7552,8 @@ func _on_token_category_changed(idx: int) -> void:
 		_token_roam_info_row.visible = is_creature
 	if is_creature and _token_size_ft_spin != null and _token_size_ft_spin.value <= 0.0:
 		_token_size_ft_spin.value = 5.0
+	if _token_statblocks_section != null:
+		_token_statblocks_section.visible = is_creature
 	# Default trap flags: autopause (collision-only), pause-on-interact, auto-reveal.
 	if cat == TokenData.TokenCategory.TRAP:
 		if _token_autopause_check != null:
@@ -5506,6 +7564,547 @@ func _on_token_category_changed(idx: int) -> void:
 			_token_pause_interact_check.button_pressed = true
 		if _token_auto_reveal_check != null:
 			_token_auto_reveal_check.button_pressed = true
+
+
+# ── Token statblock helpers ─────────────────────────────────────────────────
+
+func _refresh_token_statblock_list() -> void:
+	if _token_statblocks_list == null:
+		return
+	_token_statblocks_list.clear()
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	for ref_id: Variant in _token_pending_statblock_refs:
+		var sb_id: String = str(ref_id)
+		var sb: StatblockData = _resolve_statblock(sb_id, registry)
+		var override_dict: Variant = _token_pending_statblock_overrides.get(sb_id, null)
+		var display_name: String = sb.name if sb != null else sb_id
+		var hp_str: String = ""
+		if override_dict is Dictionary:
+			var so: StatblockOverride = StatblockOverride.from_dict(override_dict as Dictionary)
+			var max_hp: int = so.max_hp if so.max_hp > 0 else (sb.hit_points if sb != null else 0)
+			hp_str = " [HP: %d/%d]" % [so.current_hp, max_hp]
+		elif sb != null:
+			hp_str = " [HP: %d]" % sb.hit_points
+		_token_statblocks_list.add_item(display_name + hp_str)
+	_update_token_statblock_buttons()
+
+
+func _resolve_statblock(sb_id: String, registry: ServiceRegistry) -> StatblockData:
+	if registry == null:
+		return null
+	# Try statblock service first (global + campaign + map), then SRD
+	if registry.statblock != null:
+		var s: StatblockData = registry.statblock.get_statblock(sb_id)
+		if s != null:
+			return s
+	if registry.srd != null:
+		var ruleset: String = "2014"
+		if registry.campaign != null:
+			var camp: CampaignData = registry.campaign.get_active_campaign()
+			if camp != null:
+				ruleset = camp.default_ruleset
+		var s2: StatblockData = registry.srd.get_monster(sb_id, ruleset)
+		if s2 != null:
+			return s2
+	return null
+
+
+func _update_token_statblock_buttons() -> void:
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items() if _token_statblocks_list != null else PackedInt32Array()
+	var has_sel: bool = sel.size() > 0
+	if _token_statblock_detach_btn != null:
+		_token_statblock_detach_btn.disabled = not has_sel
+	if _token_statblock_view_btn != null:
+		_token_statblock_view_btn.disabled = not has_sel
+	if _token_statblock_rollhp_btn != null:
+		_token_statblock_rollhp_btn.disabled = not has_sel
+	if _token_statblock_edit_overrides_btn != null:
+		_token_statblock_edit_overrides_btn.disabled = not has_sel
+	# Update HP spinboxes
+	if has_sel:
+		var idx: int = sel[0]
+		var sb_id: String = str(_token_pending_statblock_refs[idx]) if idx < _token_pending_statblock_refs.size() else ""
+		var override_dict: Variant = _token_pending_statblock_overrides.get(sb_id, null)
+		if override_dict is Dictionary:
+			var so: StatblockOverride = StatblockOverride.from_dict(override_dict as Dictionary)
+			if _token_statblock_hp_spin != null:
+				_token_statblock_hp_spin.value = so.current_hp
+			if _token_statblock_temphp_spin != null:
+				_token_statblock_temphp_spin.value = so.temp_hp
+
+
+func _on_token_statblock_selected(_index: int) -> void:
+	_update_token_statblock_buttons()
+
+
+func _on_token_statblock_attach() -> void:
+	# Open library in attach mode.
+	if _statblock_library == null or not is_instance_valid(_statblock_library):
+		_statblock_library = StatblockLibrary.new()
+		add_child(_statblock_library)
+		_apply_dialog_themes()
+	_statblock_library.set_attach_mode(true)
+	if not _statblock_library.statblock_picked.is_connected(_on_library_statblock_picked):
+		_statblock_library.statblock_picked.connect(_on_library_statblock_picked)
+	_statblock_library.popup_centered()
+
+
+func _on_library_statblock_picked(data: StatblockData) -> void:
+	if data == null:
+		return
+	# For SRD entries, store the srd_index (stable key for SRD lookups).
+	# For custom/campaign/global entries, store the generated id.
+	var sb_id: String = data.srd_index if not data.srd_index.is_empty() else data.id
+	if sb_id.is_empty():
+		return
+	# Avoid duplicates
+	for existing: Variant in _token_pending_statblock_refs:
+		if str(existing) == sb_id:
+			return
+	_token_pending_statblock_refs.append(sb_id)
+	# Create initial override with base HP
+	var so := StatblockOverride.new()
+	so.base_statblock_id = sb_id
+	so.current_hp = data.hit_points
+	so.max_hp = data.hit_points
+	_token_pending_statblock_overrides[sb_id] = so.to_dict()
+	_refresh_token_statblock_list()
+	# Auto-suggest a label from the statblock name when the label field is empty.
+	if _token_label_edit != null and _token_label_edit.text.strip_edges().is_empty():
+		_token_label_edit.text = data.name
+	# Auto-apply SRD icon if token has no custom icon
+	_maybe_apply_srd_icon(data)
+	# Auto-set size from statblock creature size
+	if _token_size_ft_spin != null and not data.size.is_empty():
+		var size_ft: float = StatblockData.size_to_feet(data.size)
+		if size_ft > 0.0:
+			_token_size_ft_spin.value = size_ft
+
+
+func _on_token_statblock_detach() -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	_token_pending_statblock_refs.remove_at(idx)
+	_token_pending_statblock_overrides.erase(sb_id)
+	_refresh_token_statblock_list()
+
+
+func _on_token_statblock_view() -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		return
+	# Apply overrides for display
+	var override_dict: Variant = _token_pending_statblock_overrides.get(sb_id, null)
+	if override_dict is Dictionary:
+		var so: StatblockOverride = StatblockOverride.from_dict(override_dict as Dictionary)
+		sb = so.apply_to(sb)
+	# Show in a popup card
+	var mgr: UIScaleManager = _get_ui_scale_mgr()
+	var popup := Window.new()
+	popup.title = sb.name
+	popup.transient = true
+	popup.size = Vector2i(mgr.scaled(420.0) if mgr != null else 420, mgr.scaled(650.0) if mgr != null else 650)
+	popup.min_size = Vector2i(mgr.scaled(350.0) if mgr != null else 350, mgr.scaled(400.0) if mgr != null else 400)
+	popup.wrap_controls = false
+	popup.close_requested.connect(func() -> void: popup.queue_free())
+	var m_pad: int = mgr.scaled(8.0) if mgr != null else 8
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", m_pad)
+	margin.add_theme_constant_override("margin_right", m_pad)
+	margin.add_theme_constant_override("margin_top", m_pad)
+	margin.add_theme_constant_override("margin_bottom", m_pad)
+	popup.add_child(margin)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(scroll)
+	var card := StatblockCardView.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(card)
+	add_child(popup)
+	card.display(sb)
+	if mgr != null:
+		card.apply_font_scale(mgr.scaled(14.0))
+	var _sv_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _sv_reg != null and _sv_reg.ui_theme != null:
+		_sv_reg.ui_theme.theme_control_tree(popup, _ui_scale())
+	popup.popup_centered()
+
+
+func _on_token_statblock_edit_overrides() -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		return
+	var override_dict: Variant = _token_pending_statblock_overrides.get(sb_id, null)
+	var so: StatblockOverride = null
+	if override_dict is Dictionary:
+		so = StatblockOverride.from_dict(override_dict as Dictionary)
+	else:
+		so = StatblockOverride.new()
+		so.base_statblock_id = sb_id
+	var editor: Window = OverrideEditorScript.new()
+	editor.transient = true
+	editor.setup(sb, so)
+	editor.overrides_confirmed.connect(func(new_dict: Dictionary) -> void:
+		_token_pending_statblock_overrides[sb_id] = new_dict
+		_refresh_token_statblock_list()
+		editor.queue_free()
+	)
+	add_child(editor)
+	var _oe_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _oe_reg != null and _oe_reg.ui_theme != null:
+		_oe_reg.ui_theme.theme_control_tree(editor, _ui_scale())
+	editor.popup_centered()
+
+
+## Open override editor for a token from the context menu. Saves directly to
+## the token on confirm (unlike the token-editor version which uses pending edits).
+func _show_override_editor_for_token(td: TokenData, sb_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		return
+	var override_dict: Variant = td.statblock_overrides.get(sb_id, null)
+	var so: StatblockOverride = null
+	if override_dict is Dictionary:
+		so = StatblockOverride.from_dict(override_dict as Dictionary)
+	else:
+		so = StatblockOverride.new()
+		so.base_statblock_id = sb_id
+		so.current_hp = sb.hit_points
+		so.max_hp = sb.hit_points
+	var editor: Window = OverrideEditorScript.new()
+	editor.transient = true
+	editor.setup(sb, so)
+	var token_id: String = td.id
+	editor.overrides_confirmed.connect(func(new_dict: Dictionary) -> void:
+		td.statblock_overrides[sb_id] = new_dict
+		if registry != null and registry.token != null:
+			registry.token.update_token(td)
+			if _map_view != null:
+				_map_view.update_token_sprite(td)
+			_broadcast_token_change(td, false)
+			_nm_broadcast_to_displays({"msg": "token_statblock_override_updated",
+				"token_id": token_id, "statblock_id": sb_id,
+				"overrides": new_dict})
+		editor.queue_free()
+	)
+	add_child(editor)
+	if registry != null and registry.ui_theme != null:
+		registry.ui_theme.theme_control_tree(editor, _ui_scale())
+	editor.popup_centered()
+
+
+func _on_token_statblock_roll_hp() -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		return
+	# Get or create override
+	var override_dict: Variant = _token_pending_statblock_overrides.get(sb_id, null)
+	var so: StatblockOverride
+	if override_dict is Dictionary:
+		so = StatblockOverride.from_dict(override_dict as Dictionary)
+	else:
+		so = StatblockOverride.new()
+		so.base_statblock_id = sb_id
+	var rolled: int = so.roll_hit_points(sb)
+	_token_pending_statblock_overrides[sb_id] = so.to_dict()
+	if _token_statblock_hp_spin != null:
+		_token_statblock_hp_spin.value = rolled
+	_refresh_token_statblock_list()
+
+
+func _on_token_statblock_hp_changed(new_val: float) -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	var so_dict: Variant = _token_pending_statblock_overrides.get(sb_id, {})
+	if not so_dict is Dictionary:
+		so_dict = {}
+	var d := so_dict as Dictionary
+	d["current_hp"] = int(new_val)
+	d["base_statblock_id"] = sb_id
+	_token_pending_statblock_overrides[sb_id] = d
+
+
+func _on_token_statblock_temphp_changed(new_val: float) -> void:
+	if _token_statblocks_list == null:
+		return
+	var sel: PackedInt32Array = _token_statblocks_list.get_selected_items()
+	if sel.size() == 0:
+		return
+	var idx: int = sel[0]
+	if idx < 0 or idx >= _token_pending_statblock_refs.size():
+		return
+	var sb_id: String = str(_token_pending_statblock_refs[idx])
+	var so_dict: Variant = _token_pending_statblock_overrides.get(sb_id, {})
+	if not so_dict is Dictionary:
+		so_dict = {}
+	var d := so_dict as Dictionary
+	d["temp_hp"] = int(new_val)
+	d["base_statblock_id"] = sb_id
+	_token_pending_statblock_overrides[sb_id] = d
+
+
+## Auto-apply SRD monster icon when statblock is attached and no custom icon set.
+func _maybe_apply_srd_icon(data: StatblockData) -> void:
+	# Only applies when the token editor icon preview is blank
+	if _token_icon_preview != null and _token_icon_preview.texture != null:
+		return
+	if not _token_icon_pending_source.is_empty():
+		return
+	if data.srd_image_url.is_empty():
+		return
+	# Determine cache path
+	var slug: String = data.srd_index if not data.srd_index.is_empty() else data.name.to_lower().replace(" ", "-")
+	var cache_dir: String = "user://data/srd_cache/images/monsters/"
+	var cache_path: String = cache_dir + slug + ".png"
+	if FileAccess.file_exists(cache_path):
+		_token_icon_pending_source = cache_path
+		var img: Image = TokenIconUtils.load_image_from_path(cache_path)
+		if img != null and _token_icon_preview != null:
+			_token_icon_preview.texture = TokenIconUtils.create_circular_texture(img)
+			if _token_icon_crop_btn != null:
+				_token_icon_crop_btn.disabled = false
+	else:
+		# Download asynchronously
+		DirAccess.make_dir_recursive_absolute(cache_dir)
+		var http := HTTPRequest.new()
+		add_child(http)
+		http.request_completed.connect(func(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+			http.queue_free()
+			if code != 200 or body.size() == 0:
+				return
+			var img := Image.new()
+			if img.load_png_from_buffer(body) != OK:
+				if img.load_jpg_from_buffer(body) != OK:
+					if img.load_webp_from_buffer(body) != OK:
+						return
+			img.save_png(cache_path)
+			_token_icon_pending_source = cache_path
+			if _token_icon_preview != null:
+				_token_icon_preview.texture = TokenIconUtils.create_circular_texture(img)
+				if _token_icon_crop_btn != null:
+					_token_icon_crop_btn.disabled = false
+		)
+		http.request(data.srd_image_url)
+
+
+## Show a stat card popup for a specific statblock attached to a token.
+func _show_token_statblock_card(td: TokenData, sb_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		push_warning("Cannot resolve statblock '%s' — detach and re-attach from the library." % sb_id)
+		return
+	# Apply overrides
+	var override_dict: Variant = td.statblock_overrides.get(sb_id, null)
+	if override_dict is Dictionary:
+		var so: StatblockOverride = StatblockOverride.from_dict(override_dict as Dictionary)
+		sb = so.apply_to(sb)
+	var mgr: UIScaleManager = _get_ui_scale_mgr()
+	var popup := Window.new()
+	popup.title = sb.name
+	popup.transient = true
+	popup.size = Vector2i(mgr.scaled(420.0) if mgr != null else 420, mgr.scaled(650.0) if mgr != null else 650)
+	popup.min_size = Vector2i(mgr.scaled(350.0) if mgr != null else 350, mgr.scaled(400.0) if mgr != null else 400)
+	popup.wrap_controls = false
+	popup.close_requested.connect(func() -> void: popup.queue_free())
+	var m_pad2: int = mgr.scaled(8.0) if mgr != null else 8
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", m_pad2)
+	margin.add_theme_constant_override("margin_right", m_pad2)
+	margin.add_theme_constant_override("margin_top", m_pad2)
+	margin.add_theme_constant_override("margin_bottom", m_pad2)
+	popup.add_child(margin)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(scroll)
+	var card := StatblockCardView.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(card)
+	add_child(popup)
+	card.display(sb)
+	if mgr != null:
+		card.apply_font_scale(mgr.scaled(14.0))
+	var _sc_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _sc_reg != null and _sc_reg.ui_theme != null:
+		_sc_reg.ui_theme.theme_control_tree(popup, _ui_scale())
+	popup.popup_centered()
+
+
+## Show a quick HP adjustment dialog for the primary statblock on a token.
+func _show_quick_hp_dialog(td: TokenData) -> void:
+	if td.statblock_refs.size() == 0:
+		return
+	var sb_id: String = str(td.statblock_refs[0])
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	# Get or create override
+	var override_dict: Variant = td.statblock_overrides.get(sb_id, null)
+	var so: StatblockOverride
+	if override_dict is Dictionary:
+		so = StatblockOverride.from_dict(override_dict as Dictionary)
+	else:
+		so = StatblockOverride.new()
+		so.base_statblock_id = sb_id
+		so.current_hp = sb.hit_points if sb != null else 0
+		so.max_hp = sb.hit_points if sb != null else 0
+	var max_hp: int = so.max_hp if so.max_hp > 0 else int(so.get_effective("hit_points", sb.hit_points if sb != null else 0))
+	var mgr: UIScaleManager = _get_ui_scale_mgr()
+	var s := func(base: float) -> int:
+		return mgr.scaled(base) if mgr != null else roundi(base)
+	var popup := AcceptDialog.new()
+	popup.title = "Quick HP — %s" % (sb.name if sb != null else sb_id)
+	popup.ok_button_text = "Close"
+
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", s.call(10.0))
+	popup.add_child(root)
+
+	# HP display header
+	var hp_label := Label.new()
+	hp_label.add_theme_font_size_override("font_size", s.call(18.0))
+	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_label.text = "%d / %d HP" % [so.current_hp, max_hp]
+	root.add_child(hp_label)
+
+	# Temp HP display
+	var temp_label := Label.new()
+	temp_label.add_theme_font_size_override("font_size", s.call(13.0))
+	temp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	temp_label.modulate = Color(0.5, 0.7, 1.0)
+	temp_label.text = "Temp HP: %d" % so.temp_hp if so.temp_hp > 0 else ""
+	root.add_child(temp_label)
+
+	root.add_child(HSeparator.new())
+
+	# Amount entry
+	var amount_label := Label.new()
+	amount_label.text = "Amount:"
+	amount_label.add_theme_font_size_override("font_size", s.call(14.0))
+	root.add_child(amount_label)
+
+	var amount_spin := SpinBox.new()
+	amount_spin.min_value = 1
+	amount_spin.max_value = 9999
+	amount_spin.step = 1
+	amount_spin.value = 1
+	amount_spin.custom_minimum_size = Vector2(s.call(200.0), 0)
+	amount_spin.get_line_edit().add_theme_font_size_override("font_size", s.call(14.0))
+	root.add_child(amount_spin)
+
+	# Button row
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", s.call(8.0))
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var damage_btn := Button.new()
+	damage_btn.text = "Deal Damage"
+	damage_btn.custom_minimum_size = Vector2(s.call(120.0), s.call(32.0))
+	damage_btn.add_theme_font_size_override("font_size", s.call(14.0))
+	btn_row.add_child(damage_btn)
+	var heal_btn := Button.new()
+	heal_btn.text = "Heal"
+	heal_btn.custom_minimum_size = Vector2(s.call(120.0), s.call(32.0))
+	heal_btn.add_theme_font_size_override("font_size", s.call(14.0))
+	btn_row.add_child(heal_btn)
+	root.add_child(btn_row)
+
+	if mgr != null:
+		mgr.scale_button(popup.get_ok_button(), 80.0, 28.0, 13.0)
+	add_child(popup)
+
+	var token_id: String = td.id
+	var update_display := func() -> void:
+		hp_label.text = "%d / %d HP" % [so.current_hp, max_hp]
+		temp_label.text = "Temp HP: %d" % so.temp_hp if so.temp_hp > 0 else ""
+
+	var apply_hp := func(delta: int) -> void:
+		var new_hp: int = clampi(so.current_hp + delta, 0, max_hp)
+		so.current_hp = new_hp
+		td.statblock_overrides[sb_id] = so.to_dict()
+		update_display.call()
+		# Update the token and sprite
+		if registry != null and registry.token != null:
+			registry.token.update_token(td)
+			if _map_view != null:
+				_map_view.update_token_sprite(td)
+			_broadcast_token_change(td, false)
+			_nm_broadcast_to_displays({"msg": "token_statblock_override_updated",
+				"token_id": token_id, "statblock_id": sb_id,
+				"overrides": so.to_dict()})
+
+	damage_btn.pressed.connect(func() -> void:
+		var amt: int = absi(int(amount_spin.value))
+		if amt <= 0:
+			return
+		# Damage absorbs temp HP first
+		var temp_absorbed: int = mini(so.temp_hp, amt)
+		so.temp_hp -= temp_absorbed
+		amt -= temp_absorbed
+		apply_hp.call(-amt)
+	)
+	heal_btn.pressed.connect(func() -> void:
+		var amt: int = absi(int(amount_spin.value))
+		if amt <= 0:
+			return
+		apply_hp.call(amt)
+	)
+	popup.confirmed.connect(func() -> void: popup.queue_free())
+	var _hp_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _hp_reg != null and _hp_reg.ui_theme != null:
+		_hp_reg.ui_theme.theme_control_tree(popup, _ui_scale())
+	if mgr != null:
+		mgr.popup_fitted(popup, 340.0, 0.0)
+	else:
+		popup.reset_size()
+		popup.popup_centered()
 
 
 # ── Token icon image helpers ────────────────────────────────────────────────
@@ -5561,12 +8160,40 @@ func _on_token_icon_clear_pressed() -> void:
 	_token_icon_crop_offset = Vector2.ZERO
 	_token_icon_crop_zoom = 1.0
 	_token_icon_facing_deg = 0.0
+	_token_icon_campaign_image_id = ""
 	if _token_icon_preview != null:
 		_token_icon_preview.texture = null
 	if _token_icon_path_edit != null:
 		_token_icon_path_edit.text = ""
 	if _token_icon_crop_btn != null:
 		_token_icon_crop_btn.disabled = true
+
+
+func _on_token_icon_campaign_pressed() -> void:
+	_ensure_campaign_image_picker()
+	if _campaign_image_picker == null:
+		return
+	# Disconnect any previous one-shot connection.
+	if _campaign_image_picker.image_selected.is_connected(_on_token_campaign_image_picked):
+		_campaign_image_picker.image_selected.disconnect(_on_token_campaign_image_picked)
+	_campaign_image_picker.image_selected.connect(_on_token_campaign_image_picked)
+	_campaign_image_picker.show_picker()
+
+
+func _on_token_campaign_image_picked(path: String, campaign_image_id: String) -> void:
+	_campaign_image_picker.image_selected.disconnect(_on_token_campaign_image_picked)
+	_token_icon_campaign_image_id = campaign_image_id
+	_load_token_icon_from_path(path)
+
+
+func _ensure_campaign_image_picker() -> void:
+	if _campaign_image_picker != null:
+		return
+	_campaign_image_picker = CampaignImagePicker.new()
+	add_child(_campaign_image_picker)
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.ui_theme != null:
+		reg.ui_theme.theme_control_tree(_campaign_image_picker, _ui_scale())
 
 
 ## Persist the pending token icon into the .map bundle and return the relative path.
@@ -6075,6 +8702,8 @@ func _on_token_editor_confirmed() -> void:
 		data.id = _token_editor_id if not _token_editor_id.is_empty() else TokenData.generate_id()
 		if _token_editor_dialog != null and _token_editor_dialog.has_meta("pending_world_pos"):
 			data.world_pos = _token_editor_dialog.get_meta("pending_world_pos") as Vector2
+		# Auto-number the label to keep multiple tokens of the same type distinct.
+		label_text = _make_unique_token_label(label_text, tm)
 
 	data.label = label_text
 	data.category = category
@@ -6095,6 +8724,19 @@ func _on_token_editor_confirmed() -> void:
 	data.token_shape = shape_val
 	data.blocks_los = blos_val
 
+	# Statblock references and overrides.
+	data.statblock_refs = _token_pending_statblock_refs.duplicate()
+	data.statblock_overrides = _token_pending_statblock_overrides.duplicate(true)
+
+	# Statblock visibility for player display.
+	if _token_statblock_visibility_option != null:
+		var vis_id: int = _token_statblock_visibility_option.get_selected_id()
+		match vis_id:
+			1: data.statblock_visibility = "name"
+			2: data.statblock_visibility = "partial"
+			3: data.statblock_visibility = "full"
+			_: data.statblock_visibility = "none"
+
 	# Icon facing direction.
 	data.icon_facing_deg = _token_icon_facing_deg
 
@@ -6110,6 +8752,7 @@ func _on_token_editor_confirmed() -> void:
 		data.icon_crop_zoom = _token_icon_crop_zoom
 		# Preserve original source so re-cropping operates on the full image.
 		data.icon_source_path = _token_icon_pending_source
+		data.icon_campaign_image_id = _token_icon_campaign_image_id
 	elif _token_icon_preview != null and _token_icon_preview.texture == null:
 		# DM cleared the icon — remove existing file.
 		if not data.icon_image_path.is_empty():
@@ -6119,6 +8762,7 @@ func _on_token_editor_confirmed() -> void:
 		data.icon_source_path = ""
 		data.icon_crop_offset = Vector2.ZERO
 		data.icon_crop_zoom = 1.0
+		data.icon_campaign_image_id = ""
 
 	if existing != null:
 		tm.update_token(data)
@@ -6146,7 +8790,8 @@ func _on_token_editor_confirmed() -> void:
 					tm.update_token(restored)
 					if mv != null: mv.update_token_sprite(restored); mv.apply_token_passthrough_state(restored)
 					_broadcast_token_change(restored, false)
-					_broadcast_puzzle_notes_state(),
+					_broadcast_puzzle_notes_state()
+					_refresh_initiative_panel(),
 				func():
 					var td: TokenData = tm.get_token_by_id(new_snapshot.id)
 					if td == null: return
@@ -6154,7 +8799,8 @@ func _on_token_editor_confirmed() -> void:
 					tm.update_token(reapplied)
 					if mv != null: mv.update_token_sprite(reapplied); mv.apply_token_passthrough_state(reapplied)
 					_broadcast_token_change(reapplied, false)
-					_broadcast_puzzle_notes_state()))
+					_broadcast_puzzle_notes_state()
+					_refresh_initiative_panel()))
 		else:
 			# New token creation.
 			var new_id := new_snapshot.id
@@ -6175,6 +8821,8 @@ func _on_token_editor_confirmed() -> void:
 	# Broadcast to player displays.
 	_broadcast_token_change(data, existing == null)
 	_broadcast_puzzle_notes_state()
+	# Refresh initiative panel in case the label or statblock changed for a combatant.
+	_refresh_initiative_panel()
 
 
 func _on_token_visibility_changed(id: String, is_visible: bool) -> void:
@@ -6218,6 +8866,10 @@ func _resize_tokens_for_calibration(map: MapData) -> void:
 		if _map_view != null:
 			_map_view.update_token_sprite(td)
 		_broadcast_token_change(td, false)
+
+	# Resize player sprites to match their profile size_ft.
+	if _backend != null:
+		_backend.resize_player_tokens_for_calibration()
 
 
 ## Snap every token on the current map to its nearest grid cell centre.
@@ -6403,6 +9055,73 @@ func _snap_all_tokens_to_grid() -> void:
 	_set_status("Snapped %s to grid" % ", ".join(parts))
 
 
+## Populate the transient statblock_display dict on a TokenData based on its
+## visibility level and attached statblock references.  The dict travels in the
+## network message so the player display can render name / AC / HP / full info.
+func _inject_statblock_display(data: TokenData, registry: ServiceRegistry) -> void:
+	data.statblock_display = {}
+	if data.statblock_visibility == "none" or data.statblock_refs.is_empty():
+		return
+	if registry == null:
+		return
+	var sb_id: String = str(data.statblock_refs[0])
+	var sb: StatblockData = _resolve_statblock(sb_id, registry)
+	if sb == null:
+		return
+	# Apply overrides for runtime HP, etc.
+	var ovr_raw: Variant = data.statblock_overrides.get(sb_id, null)
+	var so: StatblockOverride = null
+	if ovr_raw is Dictionary:
+		so = StatblockOverride.from_dict(ovr_raw as Dictionary)
+	# Name level — just creature name and type.
+	var display: Dictionary = {
+		"name": sb.name,
+		"creature_type": sb.creature_type,
+		"size": sb.size,
+	}
+	if data.statblock_visibility == "name":
+		data.statblock_display = display
+		return
+	# Partial — add AC, HP, CR.
+	var ac_val: int = 0
+	if sb.armor_class.size() > 0:
+		var ac_entry: Variant = sb.armor_class[0]
+		if ac_entry is Dictionary:
+			ac_val = int((ac_entry as Dictionary).get("value", 0))
+		elif ac_entry is float or ac_entry is int:
+			ac_val = int(ac_entry)
+	display["ac"] = ac_val
+	display["cr"] = sb.challenge_rating
+	if so != null and so.max_hp > 0:
+		display["hp_current"] = so.current_hp
+		display["hp_max"] = so.max_hp
+		display["temp_hp"] = so.temp_hp
+	else:
+		display["hp_current"] = sb.hit_points
+		display["hp_max"] = sb.hit_points
+		display["temp_hp"] = 0
+	if data.statblock_visibility == "partial":
+		data.statblock_display = display
+		return
+	# Full — include everything the player might want.
+	display["alignment"] = sb.alignment
+	display["speed"] = sb.speed
+	display["str"] = sb.strength
+	display["dex"] = sb.dexterity
+	display["con"] = sb.constitution
+	display["int"] = sb.intelligence
+	display["wis"] = sb.wisdom
+	display["cha"] = sb.charisma
+	display["damage_resistances"] = sb.damage_resistances
+	display["damage_immunities"] = sb.damage_immunities
+	display["condition_immunities"] = sb.condition_immunities
+	display["senses"] = sb.senses
+	display["languages"] = sb.languages
+	if so != null:
+		display["conditions"] = so.conditions
+	data.statblock_display = display
+
+
 func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 	# DOOR and SECRET_PASSAGE tokens affect wall/passthrough geometry on the
 	# player display, so they must always be broadcast regardless of token
@@ -6413,6 +9132,8 @@ func _broadcast_token_change(data: TokenData, is_new: bool) -> void:
 	)
 	if not data.is_visible_to_players and not is_passthrough_category:
 		return
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	_inject_statblock_display(data, reg)
 	var msg_type: String = "token_added" if is_new else "token_updated"
 	var token_dict: Dictionary = data.to_dict()
 	# Attach inline base64 icon for the player display.
@@ -6521,12 +9242,16 @@ func _on_measurement_edit_completed(data: MeasurementData, old_start: Vector2, o
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.measurement == null:
 		return
+	# Capture old extra_value from the service store before applying the update.
+	var old_md: MeasurementData = registry.measurement.get_by_id(data.id)
+	var old_extra: float = old_md.extra_value if old_md != null else data.extra_value
 	var new_snapshot: Dictionary = data.to_dict()
 	_meas_apply_update(data)
 	if registry.history != null:
 		var old_data: MeasurementData = MeasurementData.from_dict(new_snapshot)
 		old_data.world_start = old_start
 		old_data.world_end = old_end
+		old_data.extra_value = old_extra
 		var old_snapshot: Dictionary = old_data.to_dict()
 		var cmd := HistoryCommand.create("Edit measurement",
 			func() -> void: _meas_apply_update(MeasurementData.from_dict(old_snapshot)),
@@ -6564,6 +9289,7 @@ func _meas_apply_add(data: MeasurementData) -> void:
 		_map_view.measurement_overlay.add_or_update(data)
 	_nm_broadcast_to_displays({"msg": "measurement_added", "measurement": data.to_dict()})
 	_refresh_measure_shape_list()
+	_select_measure_shape_by_id(data.id)
 	_mark_map_dirty()
 
 
@@ -6662,12 +9388,25 @@ func _on_effect_place_requested(world_pos: Vector2) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.effect == null:
 		return
-	var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
 	var size_px: float = _effect_panel.get_effect_size() if _effect_panel != null else 128.0
-	var shape: int = _effect_panel.get_selected_shape() if _effect_panel != null else 0
-	var data: EffectData = EffectData.create(eff_type, world_pos, size_px, -1.0)
-	data.shape = shape
-	data.palette = _effect_panel.get_selected_palette() if _effect_panel != null else 0
+	var def_id: String = _effect_panel.get_selected_effect_definition_id() if _effect_panel != null else ""
+	var data: EffectData
+	if not def_id.is_empty() and registry.effect.is_manifest_loaded():
+		# Manifest-driven (Phase 11): instantiate a scene effect.
+		var def: EffectDefinition = registry.effect.get_definition(def_id)
+		data = EffectData.create(0, world_pos, size_px, -1.0)
+		data.scene_effect_id = def_id
+		if def != null:
+			data.scene_path = def.scene_path
+			if def.mode == EffectDefinition.Mode.ONE_SHOT:
+				data.duration_sec = 3.0 ## Scene handles its own timing; this marks it as transient.
+	else:
+		# Legacy shader path.
+		var eff_type: int = _effect_panel.get_selected_effect_type() if _effect_panel != null else 0
+		var shape: int = _effect_panel.get_selected_shape() if _effect_panel != null else 0
+		data = EffectData.create(eff_type, world_pos, size_px, -1.0)
+		data.shape = shape
+		data.palette = _effect_panel.get_selected_palette() if _effect_panel != null else 0
 	var snapshot: Dictionary = data.to_dict()
 	var id: String = data.id
 	_effect_apply_add(data)
@@ -6746,6 +9485,30 @@ func _mark_map_dirty_effects() -> void:
 
 # ---------------------------------------------------------------------------
 # Background audio volume window
+# ---------------------------------------------------------------------------
+
+func _open_statblock_library() -> void:
+	if _statblock_library != null and is_instance_valid(_statblock_library):
+		_statblock_library.show()
+		_statblock_library.grab_focus()
+		return
+	_statblock_library = StatblockLibrary.new()
+	add_child(_statblock_library)
+	_apply_dialog_themes()
+	_statblock_library.popup_centered()
+
+
+func _open_item_library() -> void:
+	if _item_library != null and is_instance_valid(_item_library):
+		_item_library.show()
+		_item_library.grab_focus()
+		return
+	_item_library = ItemLibrary.new()
+	add_child(_item_library)
+	_apply_dialog_themes()
+	_item_library.popup_centered()
+
+
 # ---------------------------------------------------------------------------
 
 func _open_volume_window() -> void:
@@ -6860,50 +9623,76 @@ static func _db_to_linear_pct(db: float) -> float:
 # Measurement panel
 # ---------------------------------------------------------------------------
 
+func _close_measure_panel() -> void:
+	if _map_view != null:
+		_map_view._set_active_tool(_map_view.Tool.SELECT)
+	if _measure_panel != null:
+		_measure_panel.hide()
+	_set_view_checked(26, false)
+
+
 func _open_measure_panel() -> void:
-	if _measure_panel != null and is_instance_valid(_measure_panel):
-		_measure_panel.grab_focus()
-		return
-	_measure_panel = Window.new()
-	_measure_panel.title = "Measurement Tools"
-	_measure_panel.close_requested.connect(func() -> void:
-		if _measure_panel != null: _measure_panel.hide())
-	add_child(_measure_panel)
-	_build_measure_panel_contents()
-	# Theme the measurement panel window + all its child controls
-	var _mp_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if _mp_reg != null and _mp_reg.ui_theme != null:
-		_mp_reg.ui_theme.theme_control_tree(_measure_panel, _ui_scale())
-	var mgr := _get_ui_scale_mgr()
-	if mgr != null:
-		mgr.popup_fitted(_measure_panel, 260.0, 420.0)
-	else:
-		_measure_panel.popup_centered()
+	if _measure_panel != null:
+		_measure_panel.show()
+		_apply_measure_panel_size()
+		_set_view_checked(26, true)
 
 
-func _build_measure_panel_contents() -> void:
-	if _measure_panel == null:
-		return
-	var mgr := _get_ui_scale_mgr()
-	var root := VBoxContainer.new()
-	var margin := MarginContainer.new()
-	var m: int = mgr.scaled(8.0) if mgr != null else 8
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, m)
-	margin.add_child(root)
-	_measure_panel.add_child(margin)
+func _build_measure_panel() -> void:
+	var scale := _ui_scale()
+
+	_measure_panel = PanelContainer.new()
+	_measure_panel.name = "MeasurePanel"
+	_measure_panel.visible = false
+	_measure_panel.anchor_left = 1.0
+	_measure_panel.anchor_right = 1.0
+	_measure_panel.anchor_top = 0.0
+	_measure_panel.anchor_bottom = 1.0
+	_measure_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_ui_layer.add_child(_measure_panel)
+
+	var mp_margin := MarginContainer.new()
+	mp_margin.add_theme_constant_override("margin_left", 4)
+	mp_margin.add_theme_constant_override("margin_right", 4)
+	mp_margin.add_theme_constant_override("margin_top", 4)
+	mp_margin.add_theme_constant_override("margin_bottom", 4)
+	_measure_panel.add_child(mp_margin)
+
+	_measure_vbox = VBoxContainer.new()
+	_measure_vbox.add_theme_constant_override("separation", 2)
+	mp_margin.add_child(_measure_vbox)
+
+	_measure_undock_btn = Button.new()
+	_measure_undock_btn.text = "⇲"
+	_measure_undock_btn.focus_mode = Control.FOCUS_NONE
+	_measure_undock_btn.tooltip_text = "Detach / re-dock measurement panel"
+	_measure_undock_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_measure_undock_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_measure_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))
+	_measure_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	_measure_undock_btn.pressed.connect(_on_measure_undock_btn_pressed)
+	_measure_vbox.add_child(_measure_undock_btn)
+
+	_measure_vbox.add_child(HSeparator.new())
+
+	_measure_panel_title = Label.new()
+	_measure_panel_title.text = "Measurement Tools"
+	_measure_panel_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_measure_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * scale))
+	_measure_vbox.add_child(_measure_panel_title)
+
+	_measure_vbox.add_child(HSeparator.new())
 
 	# Tool buttons
 	var title_lbl := Label.new()
 	title_lbl.text = "Draw Tool"
-	if mgr != null:
-		title_lbl.add_theme_font_size_override("font_size", mgr.scaled(13.0))
-	root.add_child(title_lbl)
+	title_lbl.add_theme_font_size_override("font_size", roundi(13.0 * scale))
+	_measure_vbox.add_child(title_lbl)
 
 	_measure_tool_group = ButtonGroup.new()
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 4)
-	root.add_child(btn_row)
+	_measure_vbox.add_child(btn_row)
 
 	const TOOL_DEFS: Array = [
 		["╌", "Line", "measure_line"],
@@ -6922,51 +9711,165 @@ func _build_measure_panel_contents() -> void:
 		btn.toggle_mode = true
 		btn.button_group = _measure_tool_group
 		btn.focus_mode = Control.FOCUS_NONE
-		if mgr != null:
-			btn.custom_minimum_size = Vector2(mgr.scaled(34.0), mgr.scaled(34.0))
-			btn.add_theme_font_size_override("font_size", mgr.scaled(18.0))
+		btn.custom_minimum_size = Vector2(roundi(34.0 * scale), roundi(34.0 * scale))
+		btn.add_theme_font_size_override("font_size", roundi(18.0 * scale))
 		var k := key # capture
 		btn.pressed.connect(func(): _on_measure_tool_btn_pressed(k))
 		btn_row.add_child(btn)
 
-	root.add_child(HSeparator.new())
+	_measure_vbox.add_child(HSeparator.new())
 
 	# Active shapes list
 	var shapes_lbl := Label.new()
 	shapes_lbl.text = "Active shapes"
-	if mgr != null:
-		shapes_lbl.add_theme_font_size_override("font_size", mgr.scaled(13.0))
-	root.add_child(shapes_lbl)
+	shapes_lbl.add_theme_font_size_override("font_size", roundi(13.0 * scale))
+	_measure_vbox.add_child(shapes_lbl)
 
 	_measure_shape_list = ItemList.new()
-	var list_h: int = mgr.scaled(140.0) if mgr != null else 140
-	_measure_shape_list.custom_minimum_size = Vector2(0, list_h)
+	_measure_shape_list.custom_minimum_size = Vector2(0, roundi(140.0 * scale))
 	_measure_shape_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_measure_shape_list.focus_mode = Control.FOCUS_NONE
 	_measure_shape_list.item_selected.connect(_on_measure_shape_selected)
-	root.add_child(_measure_shape_list)
+	_measure_vbox.add_child(_measure_shape_list)
 	_refresh_measure_shape_list()
 
 	# Action buttons row
 	var action_row := HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 6)
-	root.add_child(action_row)
+	_measure_vbox.add_child(action_row)
 
 	var del_btn := Button.new()
-	del_btn.text = "Delete Selected"
+	del_btn.text = "Delete"
 	del_btn.focus_mode = Control.FOCUS_NONE
-	if mgr != null:
-		mgr.scale_button(del_btn)
+	del_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
+	del_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
 	del_btn.pressed.connect(_on_measure_delete_selected_pressed)
 	action_row.add_child(del_btn)
 
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear All"
 	clear_btn.focus_mode = Control.FOCUS_NONE
-	if mgr != null:
-		mgr.scale_button(clear_btn, 80.0)
+	clear_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
+	clear_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
 	clear_btn.pressed.connect(_on_measure_clear_all_pressed)
 	action_row.add_child(clear_btn)
+
+	# AoE / Save section
+	_measure_vbox.add_child(HSeparator.new())
+
+	var save_btn := Button.new()
+	save_btn.text = "Call for Save"
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
+	save_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
+	save_btn.pressed.connect(_on_measure_call_for_save_pressed)
+	_measure_vbox.add_child(save_btn)
+
+	_apply_measure_panel_size()
+
+
+func _apply_measure_panel_size() -> void:
+	if _measure_panel == null:
+		return
+	var scale := _ui_scale()
+	var panel_w := roundi(200.0 * scale)
+	var freeze_w := roundi(200.0 * scale) if (_freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating) else 0
+	# Derive effect width from the offsets already set by _apply_effect_panel_size
+	# so we always match the effect panel's actual rendered width regardless of content.
+	var effect_w: int = 0
+	if _effect_panel != null and _effect_panel.visible and not _effect_panel_floating:
+		effect_w = roundi(_effect_panel.offset_right - _effect_panel.offset_left)
+	var right_offset: int = freeze_w + effect_w
+	_measure_panel.offset_left = float(- (panel_w + right_offset))
+	_measure_panel.offset_right = float(-right_offset)
+	_measure_panel.offset_top = _menu_bar_screen_height()
+	_measure_panel.offset_bottom = 0.0
+
+
+func _on_measure_undock_btn_pressed() -> void:
+	if _measure_panel_floating:
+		_dock_measure_panel()
+	else:
+		_undock_measure_panel()
+
+
+func _undock_measure_panel() -> void:
+	if _measure_panel_floating or _measure_panel == null:
+		return
+	_measure_panel_floating = true
+	if _measure_undock_btn:
+		_measure_undock_btn.text = "⇱"
+		_measure_undock_btn.tooltip_text = "Re-dock measurement panel"
+	if _measure_panel_title != null:
+		_measure_panel_title.hide()
+
+	_measure_panel_window = Window.new()
+	_measure_panel_window.title = "Measurement Tools"
+	_measure_panel_window.popup_window = false
+	_measure_panel_window.exclusive = false
+	add_child(_measure_panel_window)
+
+	var old_parent := _measure_panel.get_parent()
+	if old_parent:
+		old_parent.remove_child(_measure_panel)
+	_measure_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_measure_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_measure_panel_window.add_child(_measure_panel)
+	_measure_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_measure_panel.offset_left = 0.0
+	_measure_panel.offset_right = 0.0
+	_measure_panel.offset_top = 0.0
+	_measure_panel.offset_bottom = 0.0
+
+	_measure_panel_window.close_requested.connect(_close_floating_measure_panel)
+	var _mw_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _mw_reg != null and _mw_reg.ui_theme != null:
+		_mw_reg.ui_theme.theme_control_tree(_measure_panel_window, _ui_scale())
+	var _mm := _get_ui_scale_mgr()
+	if _mm != null:
+		_mm.popup_fitted(_measure_panel_window, 220.0, 420.0)
+	else:
+		_measure_panel_window.popup_centered()
+
+	_set_view_checked(26, true)
+
+
+func _dock_measure_panel() -> void:
+	if not _measure_panel_floating or _measure_panel == null:
+		return
+	_measure_panel_floating = false
+	if _measure_undock_btn:
+		_measure_undock_btn.text = "⇲"
+		_measure_undock_btn.tooltip_text = "Detach / re-dock measurement panel"
+
+	if _measure_panel_window:
+		_measure_panel_window.remove_child(_measure_panel)
+
+	_measure_panel.anchor_left = 1.0
+	_measure_panel.anchor_right = 1.0
+	_measure_panel.anchor_top = 0.0
+	_measure_panel.anchor_bottom = 1.0
+	_measure_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+
+	if _ui_layer != null:
+		_ui_layer.add_child(_measure_panel)
+		_apply_measure_panel_size()
+
+	if _measure_panel_title != null:
+		_measure_panel_title.show()
+
+	if _measure_panel_window:
+		_measure_panel_window.queue_free()
+		_measure_panel_window = null
+
+	_set_view_checked(26, true)
+
+
+func _close_floating_measure_panel() -> void:
+	_dock_measure_panel()
+	if _measure_panel != null:
+		_measure_panel.visible = false
+	_set_view_checked(26, false)
 
 
 ## Wire measure signals from MapView (called after MapView is ready).
@@ -6985,6 +9888,9 @@ func _wire_measure_signals() -> void:
 	if not _map_view.is_connected("measurement_edit_completed",
 			Callable(self , "_on_measurement_edit_completed")):
 		_map_view.measurement_edit_completed.connect(_on_measurement_edit_completed)
+	if not _map_view.is_connected("measurement_selected",
+			Callable(self , "_on_measurement_selected_on_map")):
+		_map_view.measurement_selected.connect(_on_measurement_selected_on_map)
 
 
 func _on_measure_tool_btn_pressed(key: String) -> void:
@@ -7037,6 +9943,20 @@ func _on_measure_shape_selected(idx: int) -> void:
 		_map_view.measurement_overlay.set_selected(shape_id)
 
 
+func _on_measurement_selected_on_map(meas_id: String) -> void:
+	_select_measure_shape_by_id(meas_id)
+
+
+func _select_measure_shape_by_id(meas_id: String) -> void:
+	if _measure_shape_list == null:
+		return
+	for i: int in _measure_shape_list.item_count:
+		if str(_measure_shape_list.get_item_metadata(i)) == meas_id:
+			_measure_shape_list.select(i)
+			_measure_shape_list.ensure_current_is_visible()
+			return
+
+
 func _on_measure_delete_selected_pressed() -> void:
 	if _measure_shape_list == null:
 		return
@@ -7052,6 +9972,11 @@ func _on_measure_delete_selected_pressed() -> void:
 func _refresh_measure_shape_list() -> void:
 	if _measure_shape_list == null or not is_instance_valid(_measure_shape_list):
 		return
+	# Preserve the currently selected ID across rebuild.
+	var prev_selected_id: String = ""
+	var prev_sel: PackedInt32Array = _measure_shape_list.get_selected_items()
+	if not prev_sel.is_empty():
+		prev_selected_id = str(_measure_shape_list.get_item_metadata(prev_sel[0]))
 	_measure_shape_list.clear()
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.measurement == null:
@@ -7068,6 +9993,209 @@ func _refresh_measure_shape_list() -> void:
 		var item_text: String = "%s: %d ft" % [shape_name, ft]
 		var idx: int = _measure_shape_list.add_item(item_text)
 		_measure_shape_list.set_item_metadata(idx, md.id)
+	# Restore selection if the previously selected item still exists.
+	if not prev_selected_id.is_empty():
+		_select_measure_shape_by_id(prev_selected_id)
+
+
+# ---------------------------------------------------------------------------
+# AoE / Saving throw workflow
+# ---------------------------------------------------------------------------
+
+## "Call for Save" button on the measurement panel — uses the selected shape.
+func _on_measure_call_for_save_pressed() -> void:
+	if _measure_shape_list == null:
+		return
+	var selected_items: PackedInt32Array = _measure_shape_list.get_selected_items()
+	if selected_items.is_empty():
+		_set_status("Select a measurement shape first.")
+		return
+	var shape_id: String = str(_measure_shape_list.get_item_metadata(selected_items[0]))
+	if shape_id.is_empty():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null:
+		return
+	var md: MeasurementData = registry.measurement.get_by_id(shape_id)
+	if md == null:
+		return
+	# Find tokens inside the shape.
+	if _map_view == null:
+		return
+	var token_ids: Array[String] = _map_view.get_tokens_in_measurement(md)
+	# Filter to creature tokens only (monsters, NPCs, and player tokens).
+	var tm := _token_manager()
+	if tm != null:
+		var filtered: Array[String] = []
+		for tid: String in token_ids:
+			var td: TokenData = tm.get_token_by_id(tid)
+			if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC or td.category == TokenData.TokenCategory.GENERIC):
+				filtered.append(tid)
+		token_ids = filtered
+	if token_ids.is_empty():
+		_set_status("No creature tokens inside the selected shape.")
+		return
+	# Store the measurement id and open the save config dialog.
+	_pending_save_measurement_id = md.id
+	_open_save_config_dialog(token_ids)
+
+
+## Opens a small popup to choose save ability + DC before rolling.
+func _open_save_config_dialog(token_ids: Array[String]) -> void:
+	if _save_config_dialog != null and is_instance_valid(_save_config_dialog):
+		_save_config_dialog.queue_free()
+	_save_config_dialog = Window.new()
+	_save_config_dialog.title = "Configure Saving Throw"
+	_save_config_dialog.transient = true
+	_save_config_dialog.exclusive = true
+	_save_config_dialog.close_requested.connect(func() -> void:
+		_save_config_dialog.hide())
+	add_child(_save_config_dialog)
+
+	var mgr := _get_ui_scale_mgr()
+	var margin := MarginContainer.new()
+	var m: int = mgr.scaled(12.0) if mgr != null else 12
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, m)
+	_save_config_dialog.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", mgr.scaled(8.0) if mgr != null else 8)
+	margin.add_child(vbox)
+
+	# Token count info
+	var info_lbl := Label.new()
+	info_lbl.text = "%d token(s) in area" % token_ids.size()
+	vbox.add_child(info_lbl)
+
+	# Ability selector
+	var ab_row := HBoxContainer.new()
+	ab_row.add_theme_constant_override("separation", mgr.scaled(6.0) if mgr != null else 6)
+	vbox.add_child(ab_row)
+	var ab_lbl := Label.new()
+	ab_lbl.text = "Ability:"
+	ab_row.add_child(ab_lbl)
+	var ability_option := OptionButton.new()
+	for ab: String in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
+		ability_option.add_item(ab)
+	ability_option.selected = 1 # Default to DEX (most common AoE save)
+	ability_option.custom_minimum_size.x = float(mgr.scaled(100.0)) if mgr != null else 100.0
+	ab_row.add_child(ability_option)
+
+	# DC spinner
+	var dc_row := HBoxContainer.new()
+	dc_row.add_theme_constant_override("separation", mgr.scaled(6.0) if mgr != null else 6)
+	vbox.add_child(dc_row)
+	var dc_lbl := Label.new()
+	dc_lbl.text = "DC:"
+	dc_row.add_child(dc_lbl)
+	var dc_spin := SpinBox.new()
+	dc_spin.min_value = 1
+	dc_spin.max_value = 30
+	dc_spin.value = 15
+	dc_spin.custom_minimum_size.x = float(mgr.scaled(80.0)) if mgr != null else 80.0
+	dc_row.add_child(dc_spin)
+
+	# Buttons
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", mgr.scaled(8.0) if mgr != null else 8)
+	vbox.add_child(btn_row)
+	var roll_btn := Button.new()
+	roll_btn.text = "Roll Saves"
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	if mgr != null:
+		mgr.scale_button(roll_btn)
+		mgr.scale_button(cancel_btn)
+
+	# Capture references for the lambda.
+	var tids: Array[String] = token_ids
+	var ab_opt := ability_option
+	var dc_sp := dc_spin
+	roll_btn.pressed.connect(func() -> void:
+		var abilities: Array[String] = ["str", "dex", "con", "int", "wis", "cha"]
+		var idx: int = ab_opt.selected
+		var ability: String = abilities[idx] if idx >= 0 and idx < abilities.size() else "dex"
+		var dc: int = int(dc_sp.value)
+		_save_config_dialog.hide()
+		_execute_save_for_tokens(ability, dc, tids))
+	cancel_btn.pressed.connect(func() -> void:
+		_save_config_dialog.hide()
+		_pending_save_measurement_id = "")
+	btn_row.add_child(roll_btn)
+	btn_row.add_child(cancel_btn)
+
+	# Theme, font scaling, and show.
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.ui_theme != null:
+		reg.ui_theme.theme_control_tree(_save_config_dialog, _ui_scale())
+	if mgr != null:
+		mgr.scale_control_fonts(margin)
+		mgr.popup_fitted(_save_config_dialog, 260.0, 200.0)
+	else:
+		_save_config_dialog.popup_centered()
+
+
+## Rolls saves for the given tokens and opens the results panel.
+func _execute_save_for_tokens(ability: String, dc: int,
+		token_ids: Array[String]) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.combat == null:
+		return
+	var results: Array = registry.combat.call_for_save(ability, dc, token_ids)
+	if results.is_empty():
+		_set_status("No save results (tokens may lack statblocks).")
+		return
+	_open_save_results_panel(ability, dc, results)
+
+
+## Creates / shows the save results panel.
+func _open_save_results_panel(ability: String, dc: int, results: Array) -> void:
+	if _save_results_panel == null:
+		_save_results_panel = SaveResultsPanel.new()
+		add_child(_save_results_panel)
+		_save_results_panel.apply_damage_to_results.connect(
+			_on_save_results_apply_damage)
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(_save_results_panel, _ui_scale())
+		_save_results_panel.apply_scale(_ui_scale())
+	_save_results_panel.show_results(ability, dc, results)
+	# Broadcast save event to player displays for optional notification.
+	_nm_broadcast_to_displays({"msg": "save_called",
+		"ability": ability.to_upper(), "dc": dc,
+		"token_count": results.size()})
+
+
+## Applies damage from the save results panel to affected tokens.
+func _on_save_results_apply_damage(results: Array, damage_amount: int,
+		damage_type: String, half_on_pass: bool) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.combat == null:
+		return
+	var total_applied: int = 0
+	var count: int = 0
+	for r: Dictionary in results:
+		var tid: String = str(r.get("token_id", ""))
+		if tid.is_empty():
+			continue
+		var passed: bool = bool(r.get("passed", false))
+		var amount: int = 0
+		if passed and half_on_pass:
+			amount = int(floor(damage_amount / 2.0))
+		elif not passed:
+			amount = damage_amount
+		else:
+			continue # passed and not half_on_pass — no damage
+		if amount <= 0:
+			continue
+		var result: Dictionary = registry.combat.apply_damage(tid, amount, damage_type)
+		total_applied += int(result.get("actual_damage", 0))
+		count += 1
+	_set_status("Applied damage to %d token(s), total: %d HP" % [count, total_applied])
+	# Optionally create an AoE record linking to the measurement.
+	if not _pending_save_measurement_id.is_empty():
+		_pending_save_measurement_id = ""
 
 
 func _broadcast_token_state() -> void:
@@ -7079,6 +10207,7 @@ func _broadcast_token_state() -> void:
 	for raw in visible:
 		var td: TokenData = raw as TokenData
 		if td != null:
+			_inject_statblock_display(td, registry)
 			var d: Dictionary = td.to_dict()
 			dicts.append(d)
 	# Include non-visible DOOR and SECRET_PASSAGE tokens so the player display
@@ -7167,6 +10296,8 @@ func _run_autopause_check() -> void:
 	# Broadcast trap reveals triggered by collision (trap sprung).
 	for tid in revealed_ids:
 		_on_token_visibility_changed(str(tid), true)
+	if paused_ids.is_empty() and revealed_ids.is_empty():
+		return
 	for pid in paused_ids:
 		var pid_s: String = str(pid)
 		if _autopause_locked_ids.has(pid_s):
@@ -7324,6 +10455,225 @@ func _profiles_to_array() -> Array:
 			(profile as PlayerProfile).ensure_id()
 			out.append((profile as PlayerProfile).to_dict())
 	return out
+
+
+# ---------------------------------------------------------------------------
+# File — Statblock Import / Export
+# ---------------------------------------------------------------------------
+
+func _on_export_statblocks() -> void:
+	if _statblocks_export_dialog != null:
+		_statblocks_export_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_import_statblocks() -> void:
+	if _statblocks_import_dialog != null:
+		_statblocks_import_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_statblocks_export_path_selected(path: String) -> void:
+	var target_path := path
+	if not target_path.to_lower().ends_with(".json"):
+		target_path += ".json"
+	var parent_dir := target_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent_dir):
+		var mk_err := DirAccess.make_dir_recursive_absolute(parent_dir)
+		if mk_err != OK:
+			_set_status("Export failed: could not create directory.")
+			return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.statblock == null:
+		_set_status("Export failed: statblock service unavailable.")
+		return
+	var all_sb: Array = registry.statblock.get_all_by_scope("global")
+	var out: Array = []
+	for entry: Variant in all_sb:
+		if entry is StatblockData:
+			out.append((entry as StatblockData).to_dict())
+	if out.is_empty():
+		_set_status("Export skipped: no custom statblocks to export.")
+		return
+	var file := FileAccess.open(target_path, FileAccess.WRITE)
+	if file == null:
+		_set_status("Export failed: could not write file.")
+		return
+	file.store_string(JSON.stringify(out, "\t"))
+	file.close()
+	_set_status("Exported %d statblocks." % out.size())
+
+
+func _on_statblocks_import_path_selected(path: String) -> void:
+	if not FileAccess.file_exists(path):
+		_set_status("Import failed: file not found.")
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_set_status("Import failed: could not read file.")
+		return
+	var text := file.get_as_text()
+	file.close()
+	var parsed: Variant = JsonUtilsScript.parse_json_text(text)
+	if parsed == null or not parsed is Array:
+		_set_status("Import failed: JSON must be an array of statblocks.")
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.statblock == null:
+		_set_status("Import failed: statblock service unavailable.")
+		return
+	var count: int = 0
+	for item: Variant in parsed:
+		if not item is Dictionary:
+			continue
+		var sb := StatblockData.from_dict(item as Dictionary)
+		if sb.id.is_empty():
+			sb.id = StatblockData.generate_id()
+		sb.source = "custom"
+		registry.statblock.add_statblock(sb, "global")
+		count += 1
+	if count == 0:
+		_set_status("Import skipped: no valid statblocks found.")
+		return
+	_set_status("Imported %d statblocks." % count)
+
+
+# ---------------------------------------------------------------------------
+# File — Campaign Import / Export
+# ---------------------------------------------------------------------------
+
+func _on_export_campaign() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		_set_status("No campaign service available.")
+		return
+	var camp: CampaignData = registry.campaign.get_active_campaign()
+	if camp == null:
+		_set_status("No active campaign to export.")
+		return
+	if _campaign_export_dialog != null:
+		_campaign_export_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_import_campaign() -> void:
+	if _campaign_import_dialog != null:
+		_campaign_import_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_campaign_export_path_selected(path: String) -> void:
+	var target_path := path
+	if not target_path.to_lower().ends_with(".json"):
+		target_path += ".json"
+	var parent_dir := target_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent_dir):
+		var mk_err := DirAccess.make_dir_recursive_absolute(parent_dir)
+		if mk_err != OK:
+			_set_status("Export failed: could not create directory.")
+			return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		_set_status("Export failed: campaign service unavailable.")
+		return
+	var camp: CampaignData = registry.campaign.get_active_campaign()
+	if camp == null:
+		_set_status("Export failed: no active campaign.")
+		return
+	registry.campaign.save_campaign()
+	var file := FileAccess.open(target_path, FileAccess.WRITE)
+	if file == null:
+		_set_status("Export failed: could not write file.")
+		return
+	file.store_string(JSON.stringify(camp.to_dict(), "\t"))
+	file.close()
+	_set_status("Exported campaign \"%s\"." % camp.name)
+
+
+func _on_campaign_import_path_selected(path: String) -> void:
+	if not FileAccess.file_exists(path):
+		_set_status("Import failed: file not found.")
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_set_status("Import failed: could not read file.")
+		return
+	var text := file.get_as_text()
+	file.close()
+	var parsed: Variant = JsonUtilsScript.parse_json_text(text)
+	if parsed == null or not parsed is Dictionary:
+		_set_status("Import failed: JSON must be a campaign object.")
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null:
+		_set_status("Import failed: campaign service unavailable.")
+		return
+	# Save current campaign before replacing
+	if registry.campaign.get_active_campaign() != null:
+		registry.campaign.save_campaign()
+	var camp := CampaignData.from_dict(parsed as Dictionary)
+	# Give it a fresh ID to avoid collision with existing campaigns
+	if camp.id.is_empty():
+		camp.generate_id()
+	var new_camp: CampaignData = registry.campaign.new_campaign(camp.name, camp.default_ruleset)
+	# Merge imported data into newly created campaign
+	new_camp.description = camp.description
+	new_camp.bestiary = camp.bestiary
+	new_camp.character_ids = camp.character_ids
+	new_camp.spell_library = camp.spell_library
+	new_camp.item_library = camp.item_library
+	new_camp.notes = camp.notes
+	new_camp.note_folders = camp.note_folders
+	new_camp.images = camp.images
+	new_camp.image_folders = camp.image_folders
+	new_camp.settings = camp.settings
+	registry.campaign.save_campaign()
+	_set_status("Imported campaign \"%s\"." % new_camp.name)
+
+
+# ---------------------------------------------------------------------------
+# File — SRD Update Check
+# ---------------------------------------------------------------------------
+
+const SRD_VERSION_URL: String = "https://raw.githubusercontent.com/5e-bits/5e-database/main/src/5e-SRD-version.json"
+
+func _on_check_srd_updates() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.srd == null:
+		_set_status("SRD service unavailable.")
+		return
+	_set_status("Checking for SRD updates…")
+	# Signal subscription: ISRDLibraryService extends Node; signals live on the
+	# Node instance. RefCounted manager cannot re-emit them — approved narrow exception.
+	var svc: ISRDLibraryService = registry.srd.service
+	if not svc.update_check_completed.is_connected(_on_srd_update_check_result):
+		svc.update_check_completed.connect(_on_srd_update_check_result)
+	registry.srd.check_for_updates(SRD_VERSION_URL)
+
+
+func _on_srd_update_check_result(has_update: bool, remote_version: String, message: String) -> void:
+	_set_status(message)
+	if has_update:
+		var s: float = _ui_scale()
+		var dlg := AcceptDialog.new()
+		dlg.title = "SRD Update Available"
+		dlg.ok_button_text = "OK"
+		dlg.min_size = Vector2i(roundi(400.0 * s), roundi(120.0 * s))
+		var lbl := Label.new()
+		lbl.text = "A newer SRD version is available: v%s\nCurrent version: v%s\n\nA future update will include the new SRD data." % [remote_version, _get_srd_version()]
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.add_theme_font_size_override("font_size", roundi(14.0 * s))
+		dlg.add_child(lbl)
+		add_child(dlg)
+		var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg != null and reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(dlg, s)
+		dlg.confirmed.connect(dlg.queue_free)
+		dlg.canceled.connect(dlg.queue_free)
+		dlg.popup_centered()
+
+
+func _get_srd_version() -> String:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.srd != null:
+		return registry.srd.get_version()
+	return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -7961,6 +11311,9 @@ func _save_map_as_path(bundle_path: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _apply_map(map: MapData, from_save: bool = false) -> void:
+	# Hide the campaign hub whenever a map is loaded — the map view becomes primary.
+	if _campaign_panel != null and is_instance_valid(_campaign_panel) and _campaign_panel.visible:
+		_campaign_panel.hide()
 	# ── Clear per-map transient state so nothing leaks between maps ──────
 	_detected_token_ids.clear()
 	_autopause_locked_ids.clear()
@@ -7986,6 +11339,9 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 		var gs := _game_state()
 		if gs != null:
 			gs.reset_session()
+			# Create an ephemeral session so profile active toggles work
+			# immediately without requiring a Save Game first.
+			gs.init_ephemeral_session()
 		_player_cam_rotation = 0
 		_active_save_bundle_path = ""
 	_map_view.load_map(map)
@@ -8211,6 +11567,8 @@ func _broadcast_fog_delta_chunked(cell_px: int, revealed_cells: Array, hidden_ce
 
 
 func _on_map_walls_changed(map: MapData) -> void:
+	if _backend != null:
+		_backend.mark_walls_dirty()
 	_nm_broadcast_map_update(map)
 	_set_status("Wall added. Save map to persist wall/fog edits.")
 
@@ -8227,11 +11585,6 @@ func _on_spawn_point_selected(_idx: int) -> void:
 # ---------------------------------------------------------------------------
 # Spawn context panel — profile assignment
 # ---------------------------------------------------------------------------
-
-func _build_spawn_context_widgets() -> void:
-	# Spawn context widgets are now owned by ToolPalette.
-	pass
-
 
 func _refresh_spawn_profile_option() -> void:
 	if _palette == null or _palette.spawn_profile_option == null:
@@ -8510,7 +11863,7 @@ func _load_map_from_bundle(bundle_path: String) -> MapData:
 func _set_status(msg: String) -> void:
 	if _status_label:
 		_status_label.text = msg
-	print("DMWindow: %s" % msg)
+	Log.debug("DMWindow", msg)
 
 
 func _generate_thumbnail(bundle_path: String, media_path: String) -> void:
@@ -8658,6 +12011,9 @@ func _apply_freeze_panel_size() -> void:
 	_freeze_panel.offset_right = 0.0
 	_freeze_panel.offset_top = _menu_bar_screen_height()
 	_freeze_panel.offset_bottom = 0.0
+	# Initiative panel stacks left of the freeze panel — reposition now that
+	# freeze width is finalised.
+	_apply_initiative_panel_size()
 
 
 func _apply_passage_panel_size() -> void:
@@ -8768,10 +12124,25 @@ func _apply_ui_scale() -> void:
 		_apply_freeze_panel_size()
 	if _effect_panel and _effect_panel.get_parent() == _ui_layer:
 		_apply_effect_panel_size()
+	if _measure_panel and _measure_panel.get_parent() == _ui_layer:
+		_apply_measure_panel_size()
 	if _passage_panel and _passage_panel.get_parent() == _ui_layer:
 		_apply_passage_panel_size()
 	if _roam_panel and _roam_panel.get_parent() == _ui_layer:
 		_apply_roam_panel_size()
+	if _dice_tray and _dice_tray.get_parent() == _ui_layer:
+		_apply_dice_tray_size()
+	if _initiative_panel and _initiative_panel.get_parent() == _ui_layer:
+		_apply_initiative_panel_size()
+	# Scale initiative panel child content (works both docked and floating).
+	if _initiative_panel:
+		_initiative_panel.apply_scale(scale)
+	if _combat_log_panel and _combat_log_panel.get_parent() == _ui_layer:
+		_apply_combat_log_panel_size()
+	if _combat_log_panel:
+		_combat_log_panel.apply_scale(scale)
+	if _dice_renderer != null:
+		_apply_dice_renderer_size()
 	# Update freeze panel static widget sizes and rebuild rows at new scale.
 	if _freeze_undock_btn:
 		_freeze_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))
@@ -8782,6 +12153,12 @@ func _apply_ui_scale() -> void:
 		_freeze_master_btn.custom_minimum_size = Vector2(0, roundi(30.0 * scale))
 		_freeze_master_btn.add_theme_font_size_override("font_size", roundi(13.0 * scale))
 	_refresh_freeze_panel()
+	# Update measure panel static widget sizes at new scale.
+	if _measure_undock_btn:
+		_measure_undock_btn.custom_minimum_size = Vector2(0, roundi(22.0 * scale))
+		_measure_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
+	if _measure_panel_title:
+		_measure_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * scale))
 	# Only reposition freeze panel when docked — floating window manages its own layout.
 	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
 		_apply_freeze_panel_size()
@@ -8872,6 +12249,81 @@ func _apply_ui_scale() -> void:
 	if _crop_editor_ok_btn != null:
 		mgr.scale_button(_crop_editor_ok_btn)
 
+	# ── Quick damage dialog ──
+	if _quick_damage_dialog != null:
+		_quick_damage_dialog.apply_scale(scale)
+		var qd_root: Control = _first_control_child(_quick_damage_dialog)
+		if qd_root != null:
+			mgr.scale_control_fonts(qd_root)
+
+	# ── Save results panel ──
+	if _save_results_panel != null:
+		_save_results_panel.apply_scale(scale)
+		var sr_root: Control = _first_control_child(_save_results_panel)
+		if sr_root != null:
+			mgr.scale_control_fonts(sr_root)
+
+	# ── Save config dialog ──
+	if _save_config_dialog != null:
+		_save_config_dialog.min_size = Vector2i(mgr.scaled(260.0), mgr.scaled(200.0))
+		var sc_root: Control = _first_control_child(_save_config_dialog)
+		if sc_root != null:
+			mgr.scale_control_fonts(sc_root)
+			# Re-scale separations and min sizes for child containers.
+			for child: Node in sc_root.get_children():
+				if child is VBoxContainer:
+					(child as VBoxContainer).add_theme_constant_override("separation", mgr.scaled(8.0))
+					for row: Node in child.get_children():
+						if row is HBoxContainer:
+							(row as HBoxContainer).add_theme_constant_override("separation", mgr.scaled(6.0))
+							for btn: Node in row.get_children():
+								if btn is Button:
+									mgr.scale_button(btn as Button)
+
+	# ── Character manager / wizard / sheet ──
+	if _char_mgr_dialog != null:
+		_char_mgr_dialog.min_size = Vector2i(mgr.scaled(540.0), mgr.scaled(380.0))
+		mgr.scale_button(_char_mgr_dialog.get_ok_button())
+		var cm_root: Control = _first_control_child(_char_mgr_dialog)
+		if cm_root != null:
+			mgr.scale_control_fonts(cm_root)
+	if _char_wizard != null:
+		_char_wizard.min_size = Vector2i(mgr.scaled(480.0), mgr.scaled(420.0))
+		var cw_root: Control = _first_control_child(_char_wizard)
+		if cw_root != null:
+			mgr.scale_control_fonts(cw_root)
+	if _char_sheet != null:
+		_char_sheet.min_size = Vector2i(mgr.scaled(700.0), mgr.scaled(550.0))
+		var cs_root: Control = _first_control_child(_char_sheet)
+		if cs_root != null:
+			mgr.scale_control_fonts(cs_root)
+	if _level_up_wizard != null:
+		_level_up_wizard.min_size = Vector2i(mgr.scaled(500.0), mgr.scaled(400.0))
+		var lu_root: Control = _first_control_child(_level_up_wizard)
+		if lu_root != null:
+			mgr.scale_control_fonts(lu_root)
+
+	# ── Multi-selection bar ──
+	if _multi_select_bar != null:
+		mgr.scale_control_fonts(_multi_select_bar)
+		var ms_bg: StyleBoxFlat = _multi_select_bar.get_theme_stylebox("panel") as StyleBoxFlat
+		if ms_bg != null:
+			var pad_x: float = 12.0 * scale
+			var pad_y: float = 6.0 * scale
+			ms_bg.content_margin_left = pad_x
+			ms_bg.content_margin_right = pad_x
+			ms_bg.content_margin_top = pad_y
+			ms_bg.content_margin_bottom = pad_y
+		_multi_select_bar.offset_top = - roundi(50.0 * scale)
+		_multi_select_bar.offset_bottom = - roundi(8.0 * scale)
+
+
+func _first_control_child(win: Window) -> Control:
+	for child: Node in win.get_children():
+		if child is Control:
+			return child as Control
+	return null
+
 
 func _ui_scale() -> float:
 	## Delegates to UIScaleManager so scale logic lives in one place.
@@ -8879,6 +12331,19 @@ func _ui_scale() -> float:
 	if mgr != null:
 		return mgr.get_scale()
 	return 1.0
+
+
+func _show_window_centered(win: Window, ratio: float = 0.0) -> void:
+	## Show a Window centered on the current screen without setting
+	## popup_window = true (which prevents title-bar dragging on macOS).
+	var parent_wid: int = get_window().get_window_id()
+	var scr: int = DisplayServer.window_get_current_screen(parent_wid)
+	var rect: Rect2i = DisplayServer.screen_get_usable_rect(scr)
+	if ratio > 0.0:
+		win.size = Vector2i(roundi(rect.size.x * ratio), roundi(rect.size.y * ratio))
+	win.position = rect.position + (rect.size - win.size) / 2
+	win.show()
+	win.grab_focus()
 
 
 func _get_ui_scale_mgr() -> UIScaleManager:
@@ -9009,6 +12474,15 @@ func _build_native_menus() -> void:
 	nm.call(&"AddItem", "File", "Load Game…", 6)
 	nm.call(&"AddItem", "File", "Browse Saves…", 8)
 	nm.call(&"AddSeparator", "File")
+	nm.call(&"AddItem", "File", "New Campaign…", 40)
+	nm.call(&"AddItem", "File", "Open Campaign…", 41)
+	nm.call(&"AddItem", "File", "Save Campaign", 42)
+	nm.call(&"AddItem", "File", "Campaign Settings…", 43)
+	nm.call(&"AddItem", "File", "Close Campaign", 44)
+	nm.call(&"AddSeparator", "File")
+	nm.call(&"AddItem", "File", "Close Map", 45)
+	nm.call(&"AddItem", "File", "Close Save", 46)
+	nm.call(&"AddSeparator", "File")
 	nm.call(&"AddItem", "File", "Quit", 9)
 
 	# Edit
@@ -9114,3 +12588,380 @@ func _set_view_checked(id: int, on: bool) -> void:
 	if _view_menu != null:
 		_view_menu.set_item_checked(_view_menu.get_item_index(id), on)
 	_nm_set_checked("View", id, on)
+
+
+# ── Phase 23: character management ───────────────────────────────────────────
+
+func _open_characters_manager() -> void:
+	if _char_mgr_dialog == null:
+		_build_characters_manager()
+	_refresh_chars_list()
+	_apply_ui_scale()
+	_apply_dialog_themes()
+	_char_mgr_dialog.reset_size()
+	_char_mgr_dialog.popup_centered(Vector2i(roundi(540.0 * _ui_scale()), roundi(380.0 * _ui_scale())))
+
+
+func _build_characters_manager() -> void:
+	_char_mgr_dialog = AcceptDialog.new()
+	_char_mgr_dialog.title = "Characters"
+	_char_mgr_dialog.ok_button_text = "Close"
+	var s: float = _ui_scale()
+	_char_mgr_dialog.min_size = Vector2i(roundi(540.0 * s), roundi(380.0 * s))
+	add_child(_char_mgr_dialog)
+	_char_mgr_dialog.confirmed.connect(func() -> void: _char_mgr_dialog.hide())
+	_char_mgr_dialog.close_requested.connect(func() -> void: _char_mgr_dialog.hide())
+
+	var root := VBoxContainer.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_theme_constant_override("separation", roundi(6.0 * s))
+	_char_mgr_dialog.add_child(root)
+
+	var lbl := Label.new()
+	lbl.text = "All Characters (campaign-independent)"
+	lbl.add_theme_font_size_override("font_size", roundi(15.0 * s))
+	root.add_child(lbl)
+
+	_char_mgr_list = ItemList.new()
+	_char_mgr_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_char_mgr_list.add_theme_font_size_override("font_size", roundi(14.0 * s))
+	_char_mgr_list.auto_height = true
+	_char_mgr_list.item_selected.connect(_on_chars_list_selection_changed)
+	root.add_child(_char_mgr_list)
+
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", roundi(6.0 * s))
+	root.add_child(btn_row)
+
+	var new_btn := Button.new()
+	new_btn.text = "New Character…"
+	new_btn.custom_minimum_size = Vector2(roundi(120.0 * s), roundi(30.0 * s))
+	new_btn.pressed.connect(_on_chars_new_pressed)
+	btn_row.add_child(new_btn)
+
+	var open_btn := Button.new()
+	open_btn.text = "Open Sheet"
+	open_btn.custom_minimum_size = Vector2(roundi(100.0 * s), roundi(30.0 * s))
+	open_btn.pressed.connect(_on_chars_open_sheet_pressed)
+	btn_row.add_child(open_btn)
+
+	var level_up_btn := Button.new()
+	level_up_btn.text = "Grant Level"
+	level_up_btn.custom_minimum_size = Vector2(roundi(100.0 * s), roundi(30.0 * s))
+	level_up_btn.pressed.connect(_on_chars_grant_level_pressed)
+	btn_row.add_child(level_up_btn)
+
+	_chars_assign_btn = Button.new()
+	_chars_assign_btn.text = "Assign to Campaign"
+	_chars_assign_btn.custom_minimum_size = Vector2(roundi(140.0 * s), roundi(30.0 * s))
+	_chars_assign_btn.disabled = true
+	_chars_assign_btn.pressed.connect(_on_chars_assign_pressed)
+	btn_row.add_child(_chars_assign_btn)
+
+	_chars_remove_btn = Button.new()
+	_chars_remove_btn.text = "Remove from Campaign"
+	_chars_remove_btn.custom_minimum_size = Vector2(roundi(160.0 * s), roundi(30.0 * s))
+	_chars_remove_btn.disabled = true
+	_chars_remove_btn.pressed.connect(_on_chars_remove_from_campaign_pressed)
+	btn_row.add_child(_chars_remove_btn)
+
+	var del_btn := Button.new()
+	del_btn.text = "Delete"
+	del_btn.custom_minimum_size = Vector2(roundi(80.0 * s), roundi(30.0 * s))
+	del_btn.pressed.connect(_on_chars_delete_pressed)
+	btn_row.add_child(del_btn)
+
+
+func _refresh_chars_list() -> void:
+	if _char_mgr_list == null:
+		return
+	_char_mgr_list.clear()
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_char_mgr_list.add_item("(character service unavailable)")
+		return
+	var chars: Array = registry.character.get_characters()
+	if chars.is_empty():
+		_char_mgr_list.add_item("(no characters — click New Character…)")
+		return
+	var campaign_active: bool = registry.campaign != null and registry.campaign.get_active_campaign() != null
+	for ch: Variant in chars:
+		if not ch is StatblockData:
+			continue
+		var sb := ch as StatblockData
+		var label: String = "%s — %s %d (%s)" % [sb.name, sb.class_name_str, sb.level, sb.race]
+		if campaign_active:
+			if registry.campaign.has_character(sb.id):
+				var cname: String = registry.campaign.get_active_campaign().name
+				label += "  [Campaign: %s]" % cname
+		_char_mgr_list.add_item(label)
+		_char_mgr_list.set_item_metadata(_char_mgr_list.get_item_count() - 1, sb.id)
+	_on_chars_list_selection_changed(-1)
+
+
+func _on_chars_list_selection_changed(_idx: int) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var campaign_active: bool = registry != null and registry.campaign != null and registry.campaign.get_active_campaign() != null
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items() if _char_mgr_list != null else PackedInt32Array()
+	var has_sel: bool = not selected.is_empty()
+	var ch_id: String = ""
+	if has_sel:
+		ch_id = str(_char_mgr_list.get_item_metadata(selected[0]))
+	var assigned: bool = campaign_active and not ch_id.is_empty() and registry.campaign.has_character(ch_id)
+	if _chars_assign_btn != null:
+		_chars_assign_btn.disabled = not (has_sel and campaign_active and not assigned)
+	if _chars_remove_btn != null:
+		_chars_remove_btn.disabled = not (has_sel and assigned)
+
+
+func _on_chars_new_pressed() -> void:
+	if _char_wizard == null:
+		_char_wizard = CharacterWizardScript.new()
+		add_child(_char_wizard)
+		_char_wizard.character_created.connect(_on_char_wizard_character_created)
+	_apply_ui_scale()
+	_apply_dialog_themes()
+	_char_wizard.open_wizard()
+
+
+func _on_char_wizard_character_created(statblock: StatblockData, profile_id: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_set_status("Cannot save character: character service unavailable.")
+		return
+	registry.character.add_character(statblock)
+	## Also assign to current campaign if one is active.
+	if registry.campaign != null and registry.campaign.get_active_campaign() != null:
+		registry.campaign.add_character(statblock.id)
+		registry.campaign.save_campaign()
+	if not profile_id.is_empty():
+		var pm := _profile_service()
+		if pm != null:
+			var profiles_arr: Array = pm.get_profiles()
+			for i: int in profiles_arr.size():
+				var item: Variant = profiles_arr[i]
+				if item is PlayerProfile:
+					var p := item as PlayerProfile
+					if p.id == profile_id:
+						p.statblock_id = statblock.id
+						pm.update_profile_at(i, p)
+						break
+	_set_status("Character '%s' created." % statblock.name)
+	_refresh_chars_list()
+	if _campaign_panel != null:
+		_campaign_panel.refresh_chars()
+	## Auto-open the character sheet so the user can review immediately.
+	_open_char_sheet_for(statblock)
+
+
+func _on_chars_open_sheet_pressed() -> void:
+	if _char_mgr_list == null:
+		return
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items()
+	if selected.is_empty():
+		_set_status("Select a character first.")
+		return
+	var idx: int = selected[0]
+	var sb_id: String = str(_char_mgr_list.get_item_metadata(idx))
+	if sb_id.is_empty():
+		_set_status("No character selected.")
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_set_status("Character service unavailable.")
+		return
+	var sb: StatblockData = registry.character.get_character_by_id(sb_id)
+	if sb == null:
+		_set_status("Character not found.")
+		return
+	_open_char_sheet_for(sb)
+
+
+func _on_chars_grant_level_pressed() -> void:
+	if _char_mgr_list == null:
+		return
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items()
+	if selected.is_empty():
+		_set_status("Select a character first.")
+		return
+	var idx: int = selected[0]
+	var sb_id: String = str(_char_mgr_list.get_item_metadata(idx))
+	if sb_id.is_empty():
+		_set_status("No character selected.")
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_set_status("Character service unavailable.")
+		return
+	var sb: StatblockData = registry.character.get_character_by_id(sb_id)
+	if sb == null:
+		_set_status("Character not found.")
+		return
+	_open_level_up_wizard(sb)
+
+
+func _on_chars_assign_pressed() -> void:
+	if _char_mgr_list == null:
+		return
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items()
+	if selected.is_empty():
+		return
+	var ch_id: String = str(_char_mgr_list.get_item_metadata(selected[0]))
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.get_active_campaign() == null:
+		_set_status("No active campaign loaded.")
+		return
+	registry.campaign.add_character(ch_id)
+	registry.campaign.save_campaign()
+	_refresh_chars_list()
+	var sb: StatblockData = registry.character.get_character_by_id(ch_id)
+	var char_name: String = sb.name if sb != null else ch_id
+	_set_status("Assigned '%s' to campaign." % char_name)
+
+
+func _on_chars_remove_from_campaign_pressed() -> void:
+	if _char_mgr_list == null:
+		return
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items()
+	if selected.is_empty():
+		return
+	var ch_id: String = str(_char_mgr_list.get_item_metadata(selected[0]))
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.get_active_campaign() == null:
+		return
+	registry.campaign.remove_character(ch_id)
+	registry.campaign.save_campaign()
+	_refresh_chars_list()
+	var sb: StatblockData = registry.character.get_character_by_id(ch_id) if registry.character != null else null
+	var char_name: String = sb.name if sb != null else ch_id
+	_set_status("Removed '%s' from campaign." % char_name)
+
+
+func _open_char_sheet_for(sb: StatblockData) -> void:
+	if _char_sheet == null:
+		_char_sheet = CharacterSheetScript.new()
+		add_child(_char_sheet)
+		_char_sheet.character_saved.connect(_on_char_sheet_saved)
+		_char_sheet.level_up_requested.connect(_on_char_sheet_level_up)
+	_char_sheet.load_character(sb)
+	_char_sheet.reapply_theme()
+	if not _char_sheet.is_visible():
+		var target_size := Vector2i(roundi(900.0 * _ui_scale()), roundi(750.0 * _ui_scale()))
+		_char_sheet.size = target_size
+		_show_window_centered(_char_sheet)
+	_char_sheet.grab_focus()
+
+
+func _on_char_sheet_saved(statblock: StatblockData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.character != null:
+		registry.character.add_character(statblock)
+	# Sync to StatblockService so tokens see updated data.
+	if registry != null and registry.statblock != null:
+		registry.statblock.update_statblock(statblock)
+	_set_status("Character '%s' saved." % statblock.name)
+	_refresh_chars_list()
+	if _campaign_panel != null:
+		_campaign_panel.refresh_chars()
+
+
+func _on_char_sheet_level_up(statblock: StatblockData) -> void:
+	_open_level_up_wizard(statblock)
+
+
+func _open_level_up_wizard(statblock: StatblockData) -> void:
+	if _level_up_wizard == null:
+		_level_up_wizard = LevelUpWizardScript.new()
+		add_child(_level_up_wizard)
+		_level_up_wizard.character_leveled_up.connect(_on_character_leveled_up)
+	_apply_ui_scale()
+	_apply_dialog_themes()
+	_level_up_wizard.open(statblock)
+
+
+func _on_character_leveled_up(statblock: StatblockData) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.character != null:
+		registry.character.add_character(statblock)
+	if registry != null and registry.statblock != null:
+		registry.statblock.update_statblock(statblock)
+	_set_status("Character '%s' leveled up to %d." % [statblock.name, statblock.level])
+	_refresh_chars_list()
+	if _campaign_panel != null:
+		_campaign_panel.refresh_chars()
+	## Refresh the character sheet if it was open.
+	if _char_sheet != null and _char_sheet.is_visible():
+		_char_sheet.load_character(statblock)
+
+
+func _on_chars_delete_pressed() -> void:
+	if _char_mgr_list == null:
+		return
+	var selected: PackedInt32Array = _char_mgr_list.get_selected_items()
+	if selected.is_empty():
+		_set_status("Select a character to delete.")
+		return
+	var idx: int = selected[0]
+	var ch_id: String = str(_char_mgr_list.get_item_metadata(idx))
+	if ch_id.is_empty():
+		return
+	var ch_name: String = _char_mgr_list.get_item_text(idx)
+	var dlg := ConfirmationDialog.new()
+	dlg.dialog_text = "Delete character '%s'? This cannot be undone." % ch_name
+	add_child(dlg)
+	var _cd_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _cd_reg != null and _cd_reg.ui_theme != null:
+		_cd_reg.ui_theme.prepare_window(dlg)
+	dlg.popup_centered()
+	dlg.confirmed.connect(func() -> void:
+		var reg2 := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if reg2 != null and reg2.character != null:
+			## Remove from global roster (also implicitly removes from any campaign reference).
+			reg2.character.remove_character(ch_id)
+		if reg2 != null and reg2.campaign != null and reg2.campaign.get_active_campaign() != null:
+			if reg2.campaign.has_character(ch_id):
+				reg2.campaign.remove_character(ch_id)
+				reg2.campaign.save_campaign()
+		_refresh_chars_list()
+		_set_status("Deleted character '%s'." % ch_name)
+		dlg.queue_free())
+	dlg.canceled.connect(func() -> void: dlg.queue_free())
+
+
+func _on_profile_open_sheet_pressed() -> void:
+	if _profile_char_option == null or _profile_char_option.selected < 0:
+		return
+	var sb_id: String = str(_profile_char_option.get_item_metadata(_profile_char_option.selected))
+	if sb_id.is_empty():
+		_set_status("No character linked to this profile.")
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		return
+	var sb: StatblockData = registry.character.get_character_by_id(sb_id)
+	if sb == null:
+		_set_status("Linked character not found.")
+		return
+	_open_char_sheet_for(sb)
+
+
+func _refresh_profile_char_link_option(current_statblock_id: String) -> void:
+	if _profile_char_option == null:
+		return
+	_profile_char_option.clear()
+	_profile_char_option.add_item("— None —")
+	_profile_char_option.set_item_metadata(0, "")
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.character == null:
+		_profile_char_option.select(0)
+		return
+	var chars: Array = registry.character.get_characters()
+	for i: int in chars.size():
+		var ch: Variant = chars[i]
+		if not ch is StatblockData:
+			continue
+		var sb := ch as StatblockData
+		_profile_char_option.add_item("%s (%s %d)" % [sb.name, sb.class_name_str, sb.level])
+		_profile_char_option.set_item_metadata(i + 1, sb.id)
+		if sb.id == current_statblock_id:
+			_profile_char_option.select(i + 1)

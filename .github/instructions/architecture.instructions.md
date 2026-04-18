@@ -215,7 +215,7 @@ The manager (`registry.ui_scale`) provides convenience helpers that keep scale m
 | `get_scale() -> float` | Returns the current blend of DPI + viewport scale |
 | `scaled(base) -> int` | `roundi(base * get_scale())` — use for any px value |
 | `scale_button(btn, base_w, base_h, base_font)` | Sets `custom_minimum_size` and `font_size` on a `BaseButton` |
-| `scale_control_fonts(root_node, base_font_size)` | Recursively sets font sizes on Labels, LineEdits, SpinBoxes, etc. |
+| `scale_control_fonts(root_node, base_font_size)` | Recursively sets font sizes on Labels, LineEdits, SpinBoxes, OptionButtons, CheckBoxes, Buttons, TextEdits, **and RichTextLabels** (`normal_font_size` + `bold_font_size`) |
 | `popup_fitted(dialog, base_min_w, base_min_h)` | Enables `wrap_controls`, sets `min_size`, calls `reset_size()` + `popup_centered()` |
 | `refresh()` | Recomputes scale; emits `scale_changed` if it changed |
 
@@ -282,6 +282,107 @@ _my_dialog.popup_centered()  # auto-fits to content
 ### Refreshing on resize
 
 `UIScaleManager.refresh()` must be called when the viewport size changes. The service caches the scale and only emits `scale_changed` when the value actually changes. DMWindow calls `refresh()` in its `NOTIFICATION_WM_SIZE_CHANGED` handler.
+
+### UI Scaling Checklist — Every Control Must Be Scaled
+
+When creating or modifying any UI, **every hardcoded pixel value** must go through `mgr.scaled()` (or a local `s` callable). This applies to ALL of the following — missing even one produces visibly tiny or mismatched controls:
+
+| What | How to scale | Common mistake |
+|---|---|---|
+| `custom_minimum_size` | `Vector2(s.call(120.0), 0)` | Leaving raw `Vector2(120, 0)` |
+| Label / Button `font_size` | `add_theme_font_size_override("font_size", s.call(14.0))` | Relying on `scale_control_fonts` for section headers that should be larger than body |
+| **SpinBox text** | `spin.get_line_edit().add_theme_font_size_override("font_size", s.call(14.0))` | Forgetting the internal `LineEdit` — SpinBox arrows scale but the number text stays tiny |
+| RichTextLabel | `add_theme_font_size_override("normal_font_size", sz)` **and** `"bold_font_size"` | Only setting `normal_font_size`, leaving bold at default |
+| Margin constants | `add_theme_constant_override("margin_left", s.call(8.0))` | Hardcoded `8` |
+| Separation constants | `add_theme_constant_override("separation", s.call(4.0))` | Hardcoded `4` |
+| Window `size` / `min_size` | `Vector2i(s.call(480.0), s.call(580.0))` | Unscaled window dimensions |
+| Icon / reset buttons | `custom_minimum_size = Vector2(s.call(28.0), s.call(28.0))` plus font size | Tiny symbol buttons (e.g. "⟲") with no minimum size |
+
+**`scale_control_fonts()` respects per-node font hierarchies.** If a control carries `_font_base` metadata (set via `UIScaleManager.set_font_base(ctrl, base)`), `scale_control_fonts` uses that node's individual base instead of the tree-wide default. This lets a **single call** handle headers, body, and compact labels without a separate fixup pass. Use `set_font_base` during UI construction, then call `scale_control_fonts(root, body_base)` once.
+
+```gdscript
+# During construction:
+UIScaleManager.set_font_base(header_label, 18.0)  # header
+UIScaleManager.set_font_base(skill_label, 14.0)   # compact
+# At theme time — one call handles all sizes:
+registry.ui_scale.scale_control_fonts(root, 16.0)  # 16.0 is the fallback for unlabelled controls
+```
+
+## UI Theming — Mandatory Pattern
+
+All dynamically created Windows and dialogs **must** be themed via `UIThemeManager.theme_control_tree()`. Unthemed popups render with Godot's default grey style instead of the app's dark theme.
+
+### When to apply theming
+
+- **After `add_child()`** — theming must happen after the popup is in the scene tree so theme propagation works.
+- **Before or after `popup_centered()`** — order relative to showing doesn't matter, but it must be after `add_child()`.
+
+### Two categories of popups
+
+**1. Persistent dialogs** (created once in `_ready()` or `_build_ui()`):
+- Add to the `_apply_dialog_themes()` array in `DMWindow.gd`
+- They get re-themed automatically when the user changes the theme preset
+
+```gdscript
+# In _apply_dialog_themes():
+if _my_dialog != null:
+    dialogs.append(_my_dialog)
+```
+
+**2. Ephemeral popups** (created on demand, `queue_free()` on close):
+- Call `theme_control_tree()` inline right after `add_child()`
+- No need to register in `_apply_dialog_themes()` since they don't survive theme changes
+
+```gdscript
+add_child(popup)
+var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+if reg != null and reg.ui_theme != null:
+    reg.ui_theme.theme_control_tree(popup, _ui_scale())
+popup.popup_centered()
+```
+
+### Complete pattern for ephemeral popup with scaling + theming
+
+```gdscript
+var mgr: UIScaleManager = _get_ui_scale_mgr()
+var s := func(base_val: float) -> int:
+    return mgr.scaled(base_val) if mgr != null else roundi(base_val)
+
+var popup := Window.new()
+popup.title = "My Popup"
+popup.size = Vector2i(s.call(420.0), s.call(650.0))
+popup.min_size = Vector2i(s.call(350.0), s.call(400.0))
+popup.transient = true
+popup.wrap_controls = false
+popup.close_requested.connect(func() -> void: popup.queue_free())
+
+var m_pad: int = s.call(8.0)
+var margin := MarginContainer.new()
+margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+margin.add_theme_constant_override("margin_left", m_pad)
+margin.add_theme_constant_override("margin_right", m_pad)
+margin.add_theme_constant_override("margin_top", m_pad)
+margin.add_theme_constant_override("margin_bottom", m_pad)
+popup.add_child(margin)
+
+var scroll := ScrollContainer.new()
+scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+margin.add_child(scroll)
+
+# ... add scaled content to scroll ...
+
+add_child(popup)  # Must be in tree before theming
+# Theme
+var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+if reg != null and reg.ui_theme != null:
+    reg.ui_theme.theme_control_tree(popup, _ui_scale())
+popup.popup_centered()
+```
+
+### Scroll containers for content popups
+
+Any popup that displays variable-length content (statblock cards, override editors, lists) **must** wrap its content in a `ScrollContainer` so overflow is scrollable rather than clipped. Fixed-layout dialogs (Quick HP, confirmation dialogs) that use `AcceptDialog` + `popup_fitted()` do not need a scroll container.
 
 ## Cross-Platform Menu Bar (Windows native menu)
 

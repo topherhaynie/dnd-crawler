@@ -109,6 +109,23 @@ var icon_crop_zoom: float = 1.0
 ## Direction the icon image faces, in degrees (0 = right, 90 = down).
 ## Used to correct rotation during movement so the image faces forward.
 var icon_facing_deg: float = 0.0
+## Optional back-reference to a campaign image ID this icon was sourced from.
+## Metadata only — rendering uses icon_image_path, never resolves through
+## the campaign image library at draw time.
+var icon_campaign_image_id: String = ""
+
+# --- Statblocks -----------------------------------------------------------
+## IDs of attached statblocks (multiple allowed, e.g. multiclass NPC).
+var statblock_refs: Array = []
+## Per-statblock overrides: {statblock_id: StatblockOverride.to_dict()}.
+## Runtime combat state (current HP, conditions, etc.) lives here.
+var statblock_overrides: Dictionary = {}
+## Player-facing visibility level for this token's statblock.
+## "none" = hidden, "name" = name only, "partial" = name + AC + HP, "full" = everything.
+var statblock_visibility: String = "none"
+## Resolved statblock info for player display, populated by DM before broadcast.
+## Keys vary by visibility level (e.g. "name", "ac", "creature_type", "cr").
+var statblock_display: Dictionary = {}
 
 # --- Passage geometry (SECRET_PASSAGE category only) ---------------------
 ## Array of polyline chains defining the passage corridor geometry.
@@ -184,6 +201,11 @@ func to_dict() -> Dictionary:
 		"icon_crop_offset": {"x": icon_crop_offset.x, "y": icon_crop_offset.y},
 		"icon_crop_zoom": icon_crop_zoom,
 		"icon_facing_deg": icon_facing_deg,
+		"icon_campaign_image_id": icon_campaign_image_id,
+		"statblock_refs": statblock_refs.duplicate(),
+		"statblock_overrides": _serialize_statblock_overrides(),
+		"statblock_visibility": statblock_visibility,
+		"statblock_display": statblock_display,
 	}
 
 
@@ -227,6 +249,23 @@ static func from_dict(d: Dictionary) -> TokenData:
 		t.icon_crop_offset = Vector2(float(icd.get("x", 0.0)), float(icd.get("y", 0.0)))
 	t.icon_crop_zoom = float(d.get("icon_crop_zoom", 1.0))
 	t.icon_facing_deg = float(d.get("icon_facing_deg", 0.0))
+	t.icon_campaign_image_id = str(d.get("icon_campaign_image_id", ""))
+	# Statblock references
+	var raw_refs: Variant = d.get("statblock_refs", [])
+	if raw_refs is Array:
+		for r: Variant in raw_refs as Array:
+			t.statblock_refs.append(str(r))
+	# Statblock overrides
+	var raw_overrides: Variant = d.get("statblock_overrides", {})
+	if raw_overrides is Dictionary:
+		for key: String in (raw_overrides as Dictionary):
+			var val: Variant = (raw_overrides as Dictionary)[key]
+			if val is Dictionary:
+				t.statblock_overrides[key] = val
+	t.statblock_visibility = str(d.get("statblock_visibility", "none"))
+	var raw_display: Variant = d.get("statblock_display", {})
+	if raw_display is Dictionary:
+		t.statblock_display = raw_display as Dictionary
 	return t
 
 
@@ -317,6 +356,16 @@ static func _deserialize_puzzle_notes(d: Dictionary) -> Array:
 			continue
 		var ed := entry as Dictionary
 		result.append({"text": str(ed.get("text", "")), "revealed": bool(ed.get("revealed", false))})
+	return result
+
+
+## Serialise statblock_overrides dict to JSON-safe form.
+func _serialize_statblock_overrides() -> Dictionary:
+	var result: Dictionary = {}
+	for key: String in statblock_overrides:
+		var val: Variant = statblock_overrides[key]
+		if val is Dictionary:
+			result[key] = (val as Dictionary).duplicate(true)
 	return result
 
 

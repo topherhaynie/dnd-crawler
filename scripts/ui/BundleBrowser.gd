@@ -20,6 +20,9 @@ signal save_selected(path: String)
 signal new_map_requested()
 signal open_map_file_requested()
 signal open_save_file_requested()
+## Emitted instead of map_selected / save_selected when pick_mode is true.
+## bundle_type is "map" or "save" depending on the active tab at confirm-time.
+signal bundle_picked(path: String, bundle_type: String)
 
 const _SUPPORTED_IMG_EXT: Array = ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
@@ -42,9 +45,16 @@ var _save_search_edit: LineEdit = null
 var _map_empty_label: Label = null
 var _save_empty_label: Label = null
 
+## When true, the browser acts as a picker: Open emits bundle_picked and the
+## New / folder-file buttons are hidden.  Set via open_as_picker().
+var pick_mode: bool = false
+
 # ── Shared UI references ─────────────────────────────────────────────────────
 var _tabs: TabContainer = null
 var _open_btn: Button = null
+var _new_btn: Button = null
+var _folder_btn: Button = null
+var _campaign_filter: OptionButton = null
 
 ## Style
 var _normal_style: StyleBoxFlat = null
@@ -68,6 +78,19 @@ func open_to_mode(browse_mode: String) -> void:
 	if _tabs == null:
 		return
 	_tabs.current_tab = 0 if browse_mode == "map" else 1
+
+## Open in "pick for campaign" mode.  The Open button becomes "Link to Campaign";
+## New and folder-file buttons are hidden.  Emits bundle_picked on confirm.
+func open_as_picker(tab: String) -> void:
+	pick_mode = true
+	title = "Select %s Bundle" % ("Map" if tab == "map" else "Save")
+	if _open_btn != null:
+		_open_btn.text = "Link to Campaign"
+	if _new_btn != null:
+		_new_btn.visible = false
+	if _folder_btn != null:
+		_folder_btn.visible = false
+	open_to_mode(tab)
 
 
 func _build_ui() -> void:
@@ -101,21 +124,21 @@ func _build_ui() -> void:
 	btn_row.add_theme_constant_override("separation", roundi(8.0 * scale))
 	root_vbox.add_child(btn_row)
 
-	var new_btn := Button.new()
-	new_btn.text = "New"
-	new_btn.custom_minimum_size = Vector2(roundi(90.0 * scale), roundi(32.0 * scale))
-	new_btn.add_theme_font_size_override("font_size", roundi(13.0 * scale))
-	new_btn.tooltip_text = "New Map from Image…"
-	new_btn.pressed.connect(_on_new_pressed)
-	btn_row.add_child(new_btn)
+	_new_btn = Button.new()
+	_new_btn.text = "New"
+	_new_btn.custom_minimum_size = Vector2(roundi(90.0 * scale), roundi(32.0 * scale))
+	_new_btn.add_theme_font_size_override("font_size", roundi(13.0 * scale))
+	_new_btn.tooltip_text = "New Map from Image…"
+	_new_btn.pressed.connect(_on_new_pressed)
+	btn_row.add_child(_new_btn)
 
-	var folder_btn := Button.new()
-	folder_btn.text = "📁"
-	folder_btn.custom_minimum_size = Vector2(roundi(36.0 * scale), roundi(32.0 * scale))
-	folder_btn.add_theme_font_size_override("font_size", roundi(15.0 * scale))
-	folder_btn.tooltip_text = "Open file…"
-	folder_btn.pressed.connect(_on_folder_pressed)
-	btn_row.add_child(folder_btn)
+	_folder_btn = Button.new()
+	_folder_btn.text = "📁"
+	_folder_btn.custom_minimum_size = Vector2(roundi(36.0 * scale), roundi(32.0 * scale))
+	_folder_btn.add_theme_font_size_override("font_size", roundi(15.0 * scale))
+	_folder_btn.tooltip_text = "Open file…"
+	_folder_btn.pressed.connect(_on_folder_pressed)
+	btn_row.add_child(_folder_btn)
 
 	# Flexible spacer pushes Cancel/Open to the right
 	var spacer := Control.new()
@@ -330,12 +353,34 @@ func _rebuild_grid(is_maps: bool) -> void:
 	var visible_cards: int = 0
 	var filter_text: String = search_edit.text.strip_edges().to_lower() if search_edit != null else ""
 
+	## Campaign path filter
+	var campaign_paths: Array = []
+	var use_campaign_filter: bool = false
+	if _campaign_filter != null and _campaign_filter.selected > 0:
+		var sel_meta: Variant = _campaign_filter.get_item_metadata(_campaign_filter.selected)
+		if sel_meta is Dictionary:
+			use_campaign_filter = true
+			var key: String = "map_paths" if is_maps else "save_paths"
+			var raw_paths: Variant = (sel_meta as Dictionary).get(key, [])
+			if raw_paths is Array:
+				campaign_paths = raw_paths as Array
+
 	for i: int in range(cards.size()):
 		var card_data: Dictionary = cards[i]
 		var card_name: String = card_data["name"] as String
 
 		if not filter_text.is_empty() and card_name.to_lower().find(filter_text) == -1:
 			continue
+
+		if use_campaign_filter:
+			var norm_bundle: String = _normalize_path(str(card_data["bundle_path"]))
+			var in_campaign: bool = false
+			for cp: Variant in campaign_paths:
+				if _normalize_path(str(cp)) == norm_bundle:
+					in_campaign = true
+					break
+			if not in_campaign:
+				continue
 
 		var card := _build_card(i, card_data, card_w, thumb_h, scale, is_maps)
 		grid.add_child(card)
@@ -499,7 +544,18 @@ func _on_open_pressed() -> void:
 		return
 	var path: String = cards[sel]["bundle_path"] as String
 	hide()
-	if is_maps:
+	if pick_mode:
+		bundle_picked.emit(path, "map" if is_maps else "save")
+		# Reset pick mode after use so the browser can be reused normally.
+		pick_mode = false
+		title = "Maps & Saves"
+		if _open_btn != null:
+			_open_btn.text = "Open"
+		if _new_btn != null:
+			_new_btn.visible = true
+		if _folder_btn != null:
+			_folder_btn.visible = true
+	elif is_maps:
 		map_selected.emit(path)
 	else:
 		save_selected.emit(path)
@@ -531,6 +587,11 @@ func _on_map_search_changed(_new_text: String) -> void:
 
 
 func _on_save_search_changed(_new_text: String) -> void:
+	_rebuild_grid(false)
+
+
+func _on_campaign_filter_changed(_idx: int) -> void:
+	_rebuild_grid(true)
 	_rebuild_grid(false)
 
 
@@ -575,6 +636,12 @@ func _find_bundle_image(bundle_path: String) -> String:
 		if FileAccess.file_exists(candidate):
 			return candidate
 	return ""
+
+
+func _normalize_path(p: String) -> String:
+	if p.begins_with("user://") or p.begins_with("res://"):
+		return ProjectSettings.globalize_path(p)
+	return p
 
 
 func _ui_scale() -> float:

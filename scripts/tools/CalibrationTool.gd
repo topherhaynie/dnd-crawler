@@ -147,8 +147,8 @@ func apply_measurement(feet: float) -> void:
 	_map.cell_px = px_per_foot * 5.0
 	_map.hex_size = _map.cell_px / 2.0
 	if _map.grid_type == MapData.GridType.SQUARE:
-		print("CalibrationTool: cell_px = %.2f" % _map.cell_px)
+		Log.info("CalibrationTool", "cell_px = %.2f" % _map.cell_px)
 	else:
-		print("CalibrationTool: hex_size = %.2f" % _map.hex_size)
+		Log.info("CalibrationTool", "hex_size = %.2f" % _map.hex_size)
 	calibration_done.emit(_map)
 	deactivate()

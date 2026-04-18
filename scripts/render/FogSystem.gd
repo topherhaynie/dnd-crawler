@@ -12,7 +12,6 @@ const LIVE_LIGHT_ENERGY_GAIN: float = 8.0
 const LIVE_LIGHT_MIN_ENERGY: float = 10.0
 const LIVE_MASK_GAIN: float = 6.0
 const LOS_BAKE_GAIN: float = 4.0
-const DEBUG_FOG_TELEMETRY: bool = false
 const LOS_BAKE_INTERVAL_MSEC: int = 0
 const LIGHT_MOVE_EPSILON_PX: float = 0.0
 const MIN_LIGHT_RADIUS_PX: float = 12.0
@@ -191,12 +190,11 @@ func _ready() -> void:
 		_live_lights_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_apply_shader_uniforms()
 	_verify_live_viewport_no_camera()
-	if DEBUG_FOG_TELEMETRY:
-		print("FogSystem: ready (is_dm=%s map_size=%s viewport=%s)" % [
-			str(_is_dm),
-			str(_map_size),
-			str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
-		])
+	Log.debug("FogSystem", "ready (is_dm=%s map_size=%s viewport=%s)" % [
+		str(_is_dm),
+		str(_map_size),
+		str(_live_lights_viewport.size if _live_lights_viewport else Vector2i.ZERO),
+	])
 	set_process(true)
 
 
@@ -232,8 +230,7 @@ func _process(_delta: float) -> void:
 		return
 	if _should_bake_los_now():
 		_bake_live_los_into_history()
-	if DEBUG_FOG_TELEMETRY:
-		_log_debug_metrics()
+	_log_debug_metrics()
 
 
 func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
@@ -272,15 +269,14 @@ func configure(map_size: Vector2, is_dm: bool, enabled: bool) -> void:
 			mgr.fog_enabled_changed.connect(_on_fog_enabled_changed)
 		mgr.set_fog_scale(base_fog_scale)
 		mgr.configure(base_fog_size, _is_dm, _fog_enabled)
-	if DEBUG_FOG_TELEMETRY:
-		print("FogSystem: configure (is_dm=%s fog_enabled=%s map_size=%s fog_size=%s fog_scale=%.3f viewport_local=%s)" % [
-			str(_is_dm),
-			str(_fog_enabled),
-			str(_map_size),
-			str(_fog_size),
-			_fog_scale,
-			str(_viewport_local),
-		])
+	Log.debug("FogSystem", "configure (is_dm=%s fog_enabled=%s map_size=%s fog_size=%s fog_scale=%.3f viewport_local=%s)" % [
+		str(_is_dm),
+		str(_fog_enabled),
+		str(_map_size),
+		str(_fog_size),
+		_fog_scale,
+		str(_viewport_local),
+	])
 
 func is_flashlights_only() -> bool:
 	return _flashlights_only
@@ -900,8 +896,7 @@ func _bake_live_los_into_history() -> void:
 		_gpu_history_dirty = true
 		_los_dirty_regions.clear()
 		_last_los_bake_msec = Time.get_ticks_msec()
-		if DEBUG_FOG_TELEMETRY:
-			_debug_los_bakes_frame += 1
+		_debug_los_bakes_frame += 1
 		return
 
 
@@ -1077,7 +1072,7 @@ func _log_debug_metrics() -> void:
 		live_size = _live_lights_viewport.size
 	var light_count := _live_light_by_token_id.size()
 
-	print("FogSystem metrics: is_dm=%s hist=%s live=%s fog_scale=%.3f lights=%d los_bakes_last_sec=%d pending=%s dirty_regions=%d vp_local=%s" % [
+	Log.debug("FogSystem", "metrics: is_dm=%s hist=%s live=%s fog_scale=%.3f lights=%d los_bakes_last_sec=%d pending=%s dirty_regions=%d vp_local=%s" % [
 		str(_is_dm),
 		str(hist_size),
 		str(live_size),

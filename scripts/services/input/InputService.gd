@@ -33,7 +33,7 @@ func _map_rotation_deg() -> int:
 
 func _process(_delta: float) -> void:
 	for device_id in gamepad_bindings.keys():
-		var player_id = gamepad_bindings[device_id]
+		var player_id: Variant = gamepad_bindings[device_id]
 		var raw := Vector2(
 			Input.get_joy_axis(device_id, JOY_AXIS_LEFT_X),
 			Input.get_joy_axis(device_id, JOY_AXIS_LEFT_Y)
@@ -109,15 +109,15 @@ func clear_vector(player_id, source: int = -1) -> void:
 	else:
 		_source_vectors[player_id] = source_map
 
-func clear_dm_vector(player_id) -> void:
+func clear_dm_vector(player_id: Variant) -> void:
 	clear_vector(player_id, InputSource.DM)
 
-func bind_gamepad(device_id: int, player_id) -> void:
+func bind_gamepad(device_id: int, player_id: Variant) -> void:
 	gamepad_bindings[device_id] = player_id
 	emit_signal("input_binding_changed", player_id)
 
 func unbind_gamepad(device_id: int) -> void:
-	var player_id = gamepad_bindings.get(device_id, null)
+	var player_id: Variant = gamepad_bindings.get(device_id, null)
 	if player_id != null:
 		clear_vector(player_id, InputSource.GAMEPAD)
 	gamepad_bindings.erase(device_id)

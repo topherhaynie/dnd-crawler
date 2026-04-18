@@ -48,3 +48,24 @@ func get_all_effects() -> Array:
 func get_effect_by_id(_id: String) -> EffectData:
 	push_error("IEffectService.get_effect_by_id: not implemented")
 	return null
+
+
+# --- Manifest (EffectDefinition library) -----------------------------------
+
+func load_manifest(_path: String) -> void:
+	push_error("IEffectService.load_manifest: not implemented")
+
+
+func get_definitions() -> Array:
+	push_error("IEffectService.get_definitions: not implemented")
+	return []
+
+
+func get_definition(_effect_id: String) -> EffectDefinition:
+	push_error("IEffectService.get_definition: not implemented")
+	return null
+
+
+func is_manifest_loaded() -> bool:
+	push_error("IEffectService.is_manifest_loaded: not implemented")
+	return false

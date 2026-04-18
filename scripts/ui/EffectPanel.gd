@@ -14,6 +14,8 @@ signal shape_changed(shape: int)
 signal palette_changed(palette: int)
 signal burst_mode_changed(enabled: bool)
 signal size_changed(size_px: float)
+## Emitted when a manifest-driven effect is selected (Phase 11).
+signal effect_definition_id_selected(effect_id: String)
 
 var _selected_effect_type: int = 0
 var _selected_shape: int = EffectData.EffectShape.CIRCLE
@@ -21,6 +23,11 @@ var _selected_palette: int = 0
 var _burst_mode: bool = false
 var _effect_size_ft: float = 20.0 ## Size in feet (slider unit)
 var _px_per_foot: float = 0.0 ## 0 = uncalibrated
+
+## Phase 11: manifest mode — populated by setup_manifest().
+var _definitions: Array = []
+var _selected_effect_definition_id: String = ""
+var _manifest_mode: bool = false
 
 var _vbox: VBoxContainer = null
 var _type_buttons: Array[Button] = []
@@ -122,42 +129,31 @@ func _build() -> void:
 
 	_vbox.add_child(HSeparator.new())
 
-	# Effect type buttons
+	# Effect type buttons — manifest-grouped or legacy hardcoded
 	_type_group = ButtonGroup.new()
-	var icons: Array[String] = ["🔥", "🔥○", "🔥▬", "🔥│", "🔥↓", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]
-	for idx in EffectData.EFFECT_LABELS.size():
-		var btn := Button.new()
-		btn.toggle_mode = true
-		btn.text = "%s %s" % [icons[idx], EffectData.EFFECT_LABELS[idx]]
-		btn.button_group = _type_group
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.custom_minimum_size = Vector2(0, roundi(26.0 * s))
-		btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		if _ui_theme_mgr != null:
-			_ui_theme_mgr.apply_button_style(btn, s)
-		var type_idx: int = idx
-		btn.pressed.connect(func() -> void: _on_type_pressed(type_idx))
-		_vbox.add_child(btn)
-		_type_buttons.append(btn)
-	_type_buttons[0].button_pressed = true
+
+	if _manifest_mode:
+		_build_manifest_buttons(s)
+	else:
+		_build_legacy_buttons(s)
 
 	_vbox.add_child(HSeparator.new())
 
-	# Shape selector row
+	# Shape selector row — hidden in manifest mode (scenes are self-contained)
 	var shape_header := Label.new()
 	shape_header.text = "SHAPE"
 	shape_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	shape_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
 	var _hdr_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
 	shape_header.add_theme_color_override("font_color", _hdr_tint)
+	shape_header.visible = not _manifest_mode
 	_vbox.add_child(shape_header)
 
 	_shape_group = ButtonGroup.new()
 	_shape_container = HBoxContainer.new()
 	_shape_container.add_theme_constant_override("separation", roundi(4.0 * s))
 	_shape_container.alignment = BoxContainer.ALIGNMENT_CENTER
+	_shape_container.visible = not _manifest_mode
 	var shape_icons: Array[String] = ["\u25cf", "\u2500", "\u25e5"] # Circle, Line, Cone
 	for sidx in EffectData.SHAPE_LABELS.size():
 		var sbtn := Button.new()
@@ -180,13 +176,14 @@ func _build() -> void:
 
 	_vbox.add_child(HSeparator.new())
 
-	# Palette selector row (only visible for palette-enabled effects)
+	# Palette selector row (only visible for palette-enabled legacy effects)
 	_palette_header = Label.new()
 	_palette_header.text = "PALETTE"
 	_palette_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_palette_header.add_theme_font_size_override("font_size", roundi(9.0 * s))
 	var _pal_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
 	_palette_header.add_theme_color_override("font_color", _pal_tint)
+	_palette_header.visible = not _manifest_mode
 	_vbox.add_child(_palette_header)
 
 	_palette_group = ButtonGroup.new()
@@ -243,6 +240,7 @@ func _build() -> void:
 		_palette_container.add_child(pbtn)
 		_palette_buttons.append(pbtn)
 	_palette_buttons[0].button_pressed = true
+	_palette_container.visible = not _manifest_mode
 	_vbox.add_child(_palette_container)
 	_refresh_palette_visibility()
 
@@ -275,19 +273,118 @@ func _build() -> void:
 
 	_vbox.add_child(HSeparator.new())
 
-	# Burst checkbox
+	# Burst checkbox — hidden in manifest mode (scene effects use click-to-place)
 	_burst_check = CheckBox.new()
 	_burst_check.text = "Burst (hold to play)"
 	_burst_check.add_theme_font_size_override("font_size", roundi(12.0 * s))
 	_burst_check.toggled.connect(_on_burst_toggled)
+	_burst_check.visible = not _manifest_mode
 	_vbox.add_child(_burst_check)
+
+
+func _build_legacy_buttons(s: float) -> void:
+	var icons: Array[String] = ["🔥", "🔥○", "🔥▬", "🔥│", "🔥↓", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]
+	for idx in EffectData.EFFECT_LABELS.size():
+		var btn := Button.new()
+		btn.toggle_mode = true
+		btn.text = "%s %s" % [icons[idx], EffectData.EFFECT_LABELS[idx]]
+		btn.button_group = _type_group
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.custom_minimum_size = Vector2(0, roundi(26.0 * s))
+		btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		if _ui_theme_mgr != null:
+			_ui_theme_mgr.apply_button_style(btn, s)
+		var type_idx: int = idx
+		btn.pressed.connect(func() -> void: _on_type_pressed(type_idx))
+		_vbox.add_child(btn)
+		_type_buttons.append(btn)
+	if not _type_buttons.is_empty():
+		_type_buttons[0].button_pressed = true
+
+
+func _build_manifest_buttons(s: float) -> void:
+	## Group definitions by category and render a header + buttons for each group.
+	var categories: Array[String] = []
+	var by_category: Dictionary = {}
+	for raw in _definitions:
+		var def: EffectDefinition = raw as EffectDefinition
+		if def == null:
+			continue
+		if not by_category.has(def.category):
+			categories.append(def.category)
+			by_category[def.category] = []
+		(by_category[def.category] as Array).append(def)
+
+	var first_btn: Button = null
+	var first_def_id: String = ""
+	var first_def_size: float = 100.0
+
+	for cat in categories:
+		# Category header
+		var hdr := Label.new()
+		hdr.text = cat.to_upper()
+		hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		hdr.add_theme_font_size_override("font_size", roundi(9.0 * s))
+		var hdr_tint: Color = _ui_theme_mgr.get_header_tint() if _ui_theme_mgr != null else Color(0.6, 0.6, 0.6)
+		hdr.add_theme_color_override("font_color", hdr_tint)
+		hdr.add_theme_constant_override("margin_top", roundi(4.0 * s))
+		_vbox.add_child(hdr)
+
+		for raw2 in (by_category[cat] as Array):
+			var def: EffectDefinition = raw2 as EffectDefinition
+			if def == null:
+				continue
+			var btn := Button.new()
+			btn.toggle_mode = true
+			var mode_tag: String = " ♾" if def.mode == EffectDefinition.Mode.PERSISTENT else " ▶"
+			btn.text = "%s %s%s" % [def.icon, def.display_name, mode_tag]
+			btn.tooltip_text = "%s\nSize: %.0f px default  |  %s" % [
+				def.display_name,
+				def.default_size,
+				"Persistent" if def.mode == EffectDefinition.Mode.PERSISTENT else "One-shot"
+			]
+			btn.button_group = _type_group
+			btn.focus_mode = Control.FOCUS_NONE
+			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			btn.custom_minimum_size = Vector2(0, roundi(26.0 * s))
+			btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			if _ui_theme_mgr != null:
+				_ui_theme_mgr.apply_button_style(btn, s)
+			var def_id: String = def.effect_id
+			var def_size: float = def.default_size
+			btn.pressed.connect(func() -> void: _on_manifest_btn_pressed(def_id, def_size))
+			_vbox.add_child(btn)
+			_type_buttons.append(btn)
+			if first_btn == null:
+				first_btn = btn
+				first_def_id = def.effect_id
+				first_def_size = def.default_size
+
+	if first_btn != null:
+		first_btn.button_pressed = true
+		_selected_effect_definition_id = first_def_id
+		var default_ft: float = first_def_size / maxf(_px_per_foot, 1.0)
+		_effect_size_ft = clampf(default_ft, 5.0, 200.0)
 
 
 func _on_type_pressed(idx: int) -> void:
 	_selected_effect_type = idx
+	_selected_effect_definition_id = ""
 	_refresh_shape_buttons()
 	_refresh_palette_visibility()
 	effect_type_selected.emit(idx)
+
+
+func _on_manifest_btn_pressed(effect_id: String, size_default_ft: float) -> void:
+	_selected_effect_definition_id = effect_id
+	_selected_effect_type = 0 ## Legacy type irrelevant in manifest mode
+	## Update size slider to the effect's default size (converted from px to ft).
+	var default_ft: float = size_default_ft / maxf(_px_per_foot, 1.0)
+	set_effect_size(clampf(default_ft, 5.0, 200.0))
+	effect_definition_id_selected.emit(effect_id)
 
 
 func _on_shape_pressed(idx: int) -> void:
@@ -319,7 +416,7 @@ func _refresh_shape_buttons() -> void:
 	## Show/hide shape buttons based on the available shapes for the current
 	## effect type. If the currently selected shape is not available, auto-select
 	## the first available one.
-	if _shape_buttons.is_empty():
+	if _manifest_mode or _shape_buttons.is_empty():
 		return
 	var available: Variant = EffectData.AVAILABLE_SHAPES.get(_selected_effect_type, null)
 	if available == null:
@@ -336,6 +433,8 @@ func _refresh_shape_buttons() -> void:
 
 
 func _refresh_palette_visibility() -> void:
+	if _manifest_mode:
+		return ## Palette is hidden in manifest mode (scenes handle their own appearance)
 	var show_palette: bool = EffectData.PALETTE_ENABLED.has(_selected_effect_type)
 	if _palette_header != null:
 		_palette_header.visible = show_palette
@@ -381,3 +480,53 @@ func set_effect_size(val: float) -> void:
 		_size_slider.value = val
 	if _size_label != null:
 		_size_label.text = _format_size(val)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11: Manifest-driven palette
+# ---------------------------------------------------------------------------
+
+## Replace the effect type buttons with category-grouped manifest entries.
+## Call after the manifest is loaded.  Passing an empty array resets to
+## the legacy hard-coded list.
+func setup_manifest(definitions: Array) -> void:
+	_definitions = definitions
+	_manifest_mode = not _definitions.is_empty()
+	_selected_effect_definition_id = ""
+	_rebuild()
+
+
+func get_selected_effect_definition_id() -> String:
+	return _selected_effect_definition_id
+
+
+## Rebuild the full panel UI.  Called once at setup and again after
+## setup_manifest() to switch between legacy and manifest layouts.
+func _rebuild() -> void:
+	if _vbox == null:
+		return
+	# Free all children immediately so _build() starts with a clean node.
+	var old_children: Array[Node] = []
+	old_children.assign(get_children())
+	for child in old_children:
+		child.free()
+	_type_buttons.clear()
+	_type_group = null
+	_shape_buttons.clear()
+	_shape_group = null
+	_shape_container = null
+	_palette_header = null
+	_palette_container = null
+	_palette_buttons.clear()
+	_palette_group = null
+	_burst_check = null
+	_size_slider = null
+	_size_label = null
+	# _vbox and _undock_btn are also freed — recreate via _build()
+	_vbox = null
+	_undock_btn = null
+	_title_label = null
+	_build()
+	# Re-wire the undock button — caller (DMWindow) must reconnect it.
+	# We emit a signal so DMWindow knows to reconnect.
+	# (No direct notification needed; DMWindow reconnects when it builds the panel.)

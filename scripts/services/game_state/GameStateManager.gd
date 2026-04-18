@@ -220,3 +220,8 @@ func has_active_session() -> bool:
 	if service == null:
 		return false
 	return service.has_active_session()
+
+
+func init_ephemeral_session() -> void:
+	if service != null:
+		service.init_ephemeral_session()

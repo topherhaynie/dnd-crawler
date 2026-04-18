@@ -5,19 +5,19 @@ extends Node
 # or execute Godot with `--script` pointing at a small runner that instantiates
 # this node. This is a smoke test demonstrating logging behavior only.
 
-func _ready():
+func _ready() -> void:
     print("network_input_parsing_test: starting")
-    var svc = preload("res://scripts/services/network/NetworkService.gd").new()
+    var svc: NetworkService = preload("res://scripts/services/network/NetworkService.gd").new()
 
-    var cases = {
+    var cases: Dictionary = {
         "valid": '{"type":"input","x":0.5,"y":-0.25,"player_id":"player-123"}',
         "missing_x": '{"type":"input","y":0.0,"player_id":"player-123"}',
         "missing_y": '{"type":"input","x":0.0,"player_id":"player-123"}',
         "non_numeric": '{"type":"input","x":"NaN","y":0.0,"player_id":"player-123"}'
     }
 
-    for case_name in cases.keys():
-        var payload = cases[case_name]
+    for case_name: String in cases.keys():
+        var payload: String = cases[case_name]
         print("--- case: %s ---" % case_name)
         svc._handle_packet(payload, 42)
 

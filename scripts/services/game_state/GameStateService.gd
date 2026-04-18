@@ -269,10 +269,21 @@ func has_active_session() -> bool:
 	return _model != null and _model.active_save != null
 
 
+func init_ephemeral_session() -> void:
+	if _model == null:
+		return
+	var state := _GameSaveDataClass.new()
+	# No save_name — ephemeral session that hasn't been saved to disk yet.
+	# Starts with no active profiles; the DM activates them individually.
+	_model.active_save = state
+
+
 func _save_session_state_only() -> void:
 	if _model == null or _model.active_save == null:
 		return
 	var save := _model.active_save as GameSaveData
+	if save.save_name.is_empty():
+		return  # Ephemeral session — no disk location yet.
 	save.updated_at = Time.get_datetime_string_from_system(true)
 	var bundle_path := "user://data/saves/%s.sav" % save.save_name
 	var abs_bundle := ProjectSettings.globalize_path(bundle_path)

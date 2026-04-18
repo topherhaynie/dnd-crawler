@@ -88,3 +88,6 @@ func is_profile_active(_id: String) -> bool:
 func has_active_session() -> bool:
 	push_error("IGameStateService.has_active_session: not implemented")
 	return false
+
+func init_ephemeral_session() -> void:
+	push_error("IGameStateService.init_ephemeral_session: not implemented")

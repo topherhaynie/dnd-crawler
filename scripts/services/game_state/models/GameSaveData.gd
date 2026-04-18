@@ -42,6 +42,11 @@ var active_profile_ids: Array = []
 var created_at: String = ""
 var updated_at: String = ""
 
+# --- Combat state -----------------------------------------------------------
+## Serialised CombatState snapshot (initiative order, round, active turn).
+## Empty dict when no combat is active.
+var combat_state: Dictionary = {}
+
 
 # ---------------------------------------------------------------------------
 # Serialisation
@@ -76,6 +81,7 @@ func to_dict() -> Dictionary:
 		"active_profile_ids": active_profile_ids.duplicate(),
 		"created_at": created_at,
 		"updated_at": updated_at,
+		"combat_state": combat_state,
 	}
 
 
@@ -115,4 +121,7 @@ static func from_dict(d: Dictionary) -> GameSaveData:
 			s.active_profile_ids.append(str(entry))
 	s.created_at = str(d.get("created_at", ""))
 	s.updated_at = str(d.get("updated_at", ""))
+	var raw_cs: Variant = d.get("combat_state", {})
+	if raw_cs is Dictionary:
+		s.combat_state = raw_cs as Dictionary
 	return s
