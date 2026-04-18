@@ -26,8 +26,8 @@ static func resolve(class_key: String, level: int) -> Array:
 
 	# Collect features the character has earned (level <= current level).
 	# When a feature has replace=true, keep only the highest-level version.
-	var seen: Dictionary = {}  # name -> resolved feature dict
-	var order: Array = []      # names in insertion order
+	var seen: Dictionary = {} # name -> resolved feature dict
+	var order: Array = [] # names in insertion order
 
 	for entry_var: Variant in table:
 		if not (entry_var is Dictionary):

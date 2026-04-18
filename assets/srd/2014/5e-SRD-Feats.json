@@ -19,20 +19,41 @@
     "name": "Athlete",
     "desc": "You have undergone extensive physical training to gain the following benefits:\n- Increase your Strength or Dexterity score by 1, to a maximum of 20.\n- When you are prone, standing up uses only 5 feet of your movement.\n- Climbing doesn't cost you extra movement.\n- You can make a running long jump or a running high jump after moving only 5 feet on foot, rather than 10 feet.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Quick Stand", "desc": "When you are prone, standing up uses only 5 feet of your movement."},
-      {"name": "Climbing Speed", "desc": "Climbing doesn't cost you extra movement."},
-      {"name": "Running Jump", "desc": "You can make a running long jump or a running high jump after moving only 5 feet on foot, rather than 10 feet."}
+      {
+        "name": "Quick Stand",
+        "desc": "When you are prone, standing up uses only 5 feet of your movement."
+      },
+      {
+        "name": "Climbing Speed",
+        "desc": "Climbing doesn't cost you extra movement."
+      },
+      {
+        "name": "Running Jump",
+        "desc": "You can make a running long jump or a running high jump after moving only 5 feet on foot, rather than 10 feet."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "dex"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "dex"
+        ]
+      }
     ]
   },
   {
@@ -40,13 +61,21 @@
     "name": "Actor",
     "desc": "Skilled at mimicry and dramatics, you gain the following benefits:\n- Increase your Charisma score by 1, to a maximum of 20.\n- You have advantage on Deception and Performance checks when trying to pass yourself off as a different person.\n- You can mimic the speech of another person or the sounds made by other creatures. You must have heard the person speaking, or heard the creature make the sound, for at least 1 minute.",
     "prerequisite": "",
-    "asi": [{"ability": "cha", "amount": 1}],
+    "asi": [
+      {
+        "ability": "cha",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Mimicry", "desc": "You can mimic the speech of another person or the sounds made by other creatures. A successful Wisdom (Insight) check contested by your Charisma (Deception) check allows a listener to determine that the effect is faked."}
+      {
+        "name": "Mimicry",
+        "desc": "You can mimic the speech of another person or the sounds made by other creatures. A successful Wisdom (Insight) check contested by your Charisma (Deception) check allows a listener to determine that the effect is faked."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -63,7 +92,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Charger", "desc": "When you use your action to Dash, you can use a bonus action to make one melee weapon attack or to shove a creature. If you move at least 10 feet in a straight line immediately before, you gain +5 to the attack's damage roll or push the target up to 10 feet."}
+      {
+        "name": "Charger",
+        "desc": "When you use your action to Dash, you can use a bonus action to make one melee weapon attack or to shove a creature. If you move at least 10 feet in a straight line immediately before, you gain +5 to the attack's damage roll or push the target up to 10 feet."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -80,7 +112,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Crossbow Expert", "desc": "You ignore the loading quality of crossbows. Being within 5 feet of a hostile doesn't impose disadvantage on ranged attacks. When you Attack with a one-handed weapon, you can bonus action attack with a hand crossbow."}
+      {
+        "name": "Crossbow Expert",
+        "desc": "You ignore the loading quality of crossbows. Being within 5 feet of a hostile doesn't impose disadvantage on ranged attacks. When you Attack with a one-handed weapon, you can bonus action attack with a hand crossbow."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -97,7 +132,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Defensive Duelist", "desc": "When wielding a finesse weapon and hit by a melee attack, you can use your reaction to add your proficiency bonus to AC for that attack."}
+      {
+        "name": "Defensive Duelist",
+        "desc": "When wielding a finesse weapon and hit by a melee attack, you can use your reaction to add your proficiency bonus to AC for that attack."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -114,7 +152,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Dual Wielder", "desc": "+1 AC while wielding a melee weapon in each hand. You can two-weapon fight with non-light one-handed melee weapons. You can draw or stow two one-handed weapons at once."}
+      {
+        "name": "Dual Wielder",
+        "desc": "+1 AC while wielding a melee weapon in each hand. You can two-weapon fight with non-light one-handed melee weapons. You can draw or stow two one-handed weapons at once."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -131,7 +172,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Dungeon Delver", "desc": "Advantage on Perception/Investigation to detect secret doors. Advantage on saves vs traps. Resistance to trap damage. No -5 passive Perception penalty at fast travel pace."}
+      {
+        "name": "Dungeon Delver",
+        "desc": "Advantage on Perception/Investigation to detect secret doors. Advantage on saves vs traps. Resistance to trap damage. No -5 passive Perception penalty at fast travel pace."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -142,13 +186,21 @@
     "name": "Durable",
     "desc": "Hardy and resilient, you gain the following benefits:\n- Increase your Constitution score by 1, to a maximum of 20.\n- When you roll a Hit Die to regain hit points, the minimum number of hit points you regain from the roll equals twice your Constitution modifier (minimum of 2).",
     "prerequisite": "",
-    "asi": [{"ability": "con", "amount": 1}],
+    "asi": [
+      {
+        "ability": "con",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Durable Recovery", "desc": "When you roll a Hit Die to regain hit points, the minimum number of hit points you regain equals twice your Constitution modifier (minimum of 2)."}
+      {
+        "name": "Durable Recovery",
+        "desc": "When you roll a Hit Die to regain hit points, the minimum number of hit points you regain equals twice your Constitution modifier (minimum of 2)."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -165,12 +217,25 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Elemental Adept", "desc": "Spells you cast ignore resistance to your chosen damage type. When rolling damage for such spells, treat any 1 on a damage die as a 2."}
+      {
+        "name": "Elemental Adept",
+        "desc": "Spells you cast ignore resistance to your chosen damage type. When rolling damage for such spells, treat any 1 on a damage die as a 2."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "element", "label": "Damage Type", "options": ["acid", "cold", "fire", "lightning", "thunder"]}
+      {
+        "type": "element",
+        "label": "Damage Type",
+        "options": [
+          "acid",
+          "cold",
+          "fire",
+          "lightning",
+          "thunder"
+        ]
+      }
     ]
   },
   {
@@ -184,7 +249,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Grappler", "desc": "Advantage on attack rolls against a creature you are grappling. You can use your action to pin a grappled creature — both of you are restrained until the grapple ends."}
+      {
+        "name": "Grappler",
+        "desc": "Advantage on attack rolls against a creature you are grappling. You can use your action to pin a grappled creature — both of you are restrained until the grapple ends."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -201,7 +269,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Great Weapon Master", "desc": "On a critical hit or reducing a creature to 0 HP with a melee weapon, make one melee weapon attack as a bonus action. You can take -5 to hit with a heavy weapon for +10 damage."}
+      {
+        "name": "Great Weapon Master",
+        "desc": "On a critical hit or reducing a creature to 0 HP with a melee weapon, make one melee weapon attack as a bonus action. You can take -5 to hit with a heavy weapon for +10 damage."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -218,7 +289,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Healer", "desc": "Stabilizing with a healer's kit also restores 1 HP. As an action, spend a healer's kit use to restore 1d6+4 + creature's max Hit Dice HP (once per short/long rest per creature)."}
+      {
+        "name": "Healer",
+        "desc": "Stabilizing with a healer's kit also restores 1 HP. As an action, spend a healer's kit use to restore 1d6+4 + creature's max Hit Dice HP (once per short/long rest per creature)."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -229,13 +303,23 @@
     "name": "Heavily Armored",
     "desc": "You have trained to master the use of heavy armor, gaining the following benefits:\n- Increase your Strength score by 1, to a maximum of 20.\n- You gain proficiency with heavy armor.",
     "prerequisite": "Proficiency with medium armor",
-    "asi": [{"ability": "str", "amount": 1}],
+    "asi": [
+      {
+        "ability": "str",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [],
-    "proficiencies": [{"index": "heavy-armor", "name": "Heavy Armor"}],
+    "proficiencies": [
+      {
+        "index": "heavy-armor",
+        "name": "Heavy Armor"
+      }
+    ],
     "granted_spells": [],
     "choices": []
   },
@@ -244,13 +328,21 @@
     "name": "Heavy Armor Master",
     "desc": "You can use your armor to deflect strikes that would kill others. You gain the following benefits:\n- Increase your Strength score by 1, to a maximum of 20.\n- While you are wearing heavy armor, bludgeoning, piercing, and slashing damage that you take from nonmagical weapons is reduced by 3.",
     "prerequisite": "Proficiency with heavy armor",
-    "asi": [{"ability": "str", "amount": 1}],
+    "asi": [
+      {
+        "ability": "str",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Damage Reduction", "desc": "While wearing heavy armor, bludgeoning, piercing, and slashing damage from nonmagical weapons is reduced by 3."}
+      {
+        "name": "Damage Reduction",
+        "desc": "While wearing heavy armor, bludgeoning, piercing, and slashing damage from nonmagical weapons is reduced by 3."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -267,7 +359,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Inspiring Leader", "desc": "Spend 10 minutes to give up to 6 friendly creatures within 30 ft temporary HP equal to your level + CHA modifier (once per short/long rest per creature)."}
+      {
+        "name": "Inspiring Leader",
+        "desc": "Spend 10 minutes to give up to 6 friendly creatures within 30 ft temporary HP equal to your level + CHA modifier (once per short/long rest per creature)."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -278,13 +373,21 @@
     "name": "Keen Mind",
     "desc": "You have a mind that can track time, direction, and detail with uncanny precision. You gain the following benefits:\n- Increase your Intelligence score by 1, to a maximum of 20.\n- You always know which way is north.\n- You always know the number of hours left before the next sunrise or sunset.\n- You can accurately recall anything you have seen or heard within the past month.",
     "prerequisite": "",
-    "asi": [{"ability": "int", "amount": 1}],
+    "asi": [
+      {
+        "ability": "int",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Keen Mind", "desc": "You always know which way is north, the hours until sunrise/sunset, and can accurately recall anything seen or heard within the past month."}
+      {
+        "name": "Keen Mind",
+        "desc": "You always know which way is north, the hours until sunrise/sunset, and can accurately recall anything seen or heard within the past month."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -295,16 +398,33 @@
     "name": "Lightly Armored",
     "desc": "You have trained to master the use of light armor, gaining the following benefits:\n- Increase your Strength or Dexterity score by 1, to a maximum of 20.\n- You gain proficiency with light armor.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [],
-    "proficiencies": [{"index": "light-armor", "name": "Light Armor"}],
+    "proficiencies": [
+      {
+        "index": "light-armor",
+        "name": "Light Armor"
+      }
+    ],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "dex"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "dex"
+        ]
+      }
     ]
   },
   {
@@ -312,18 +432,48 @@
     "name": "Linguist",
     "desc": "You have studied languages and codes, gaining the following benefits:\n- Increase your Intelligence score by 1, to a maximum of 20.\n- You learn three languages of your choice.\n- You can ably create written ciphers. Others can't decipher a code you create unless you teach them, they succeed on an Intelligence check (DC equal to your Intelligence score + your proficiency bonus), or they use magic to decipher it.",
     "prerequisite": "",
-    "asi": [{"ability": "int", "amount": 1}],
+    "asi": [
+      {
+        "ability": "int",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Ciphers", "desc": "You can create written ciphers that others can't decipher without being taught, an Intelligence check (DC = INT + prof bonus), or magic."}
+      {
+        "name": "Ciphers",
+        "desc": "You can create written ciphers that others can't decipher without being taught, an Intelligence check (DC = INT + prof bonus), or magic."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "language", "label": "Languages (3)", "count": 3, "options": ["Abyssal", "Celestial", "Common", "Deep Speech", "Draconic", "Dwarvish", "Elvish", "Giant", "Gnomish", "Goblin", "Halfling", "Infernal", "Orc", "Primordial", "Sylvan", "Undercommon"]}
+      {
+        "type": "language",
+        "label": "Languages (3)",
+        "count": 3,
+        "options": [
+          "Abyssal",
+          "Celestial",
+          "Common",
+          "Deep Speech",
+          "Draconic",
+          "Dwarvish",
+          "Elvish",
+          "Giant",
+          "Gnomish",
+          "Goblin",
+          "Halfling",
+          "Infernal",
+          "Orc",
+          "Primordial",
+          "Sylvan",
+          "Undercommon"
+        ]
+      }
     ]
   },
   {
@@ -337,7 +487,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Lucky", "desc": "3 luck points per long rest. Spend to roll an additional d20 on attack rolls, ability checks, or saving throws and choose which die to use. Can also spend when attacked to potentially replace the attacker's roll."}
+      {
+        "name": "Lucky",
+        "desc": "3 luck points per long rest. Spend to roll an additional d20 on attack rolls, ability checks, or saving throws and choose which die to use. Can also spend when attacked to potentially replace the attacker's roll."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -354,7 +507,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Mage Slayer", "desc": "Reaction melee attack when a creature within 5 ft casts a spell. Targets you damage have disadvantage on concentration saves. Advantage on saves vs spells from creatures within 5 ft."}
+      {
+        "name": "Mage Slayer",
+        "desc": "Reaction melee attack when a creature within 5 ft casts a spell. Targets you damage have disadvantage on concentration saves. Advantage on saves vs spells from creatures within 5 ft."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -371,14 +527,40 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Magic Initiate", "desc": "Learn 2 cantrips and 1 1st-level spell from the chosen class's spell list. You can cast the 1st-level spell once per long rest. Spellcasting ability depends on the class chosen."}
+      {
+        "name": "Magic Initiate",
+        "desc": "Learn 2 cantrips and 1 1st-level spell from the chosen class's spell list. You can cast the 1st-level spell once per long rest. Spellcasting ability depends on the class chosen."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "class", "label": "Spellcasting Class", "options": ["bard", "cleric", "druid", "sorcerer", "warlock", "wizard"]},
-      {"type": "spell", "label": "Cantrips (2)", "count": 2, "spell_level": 0, "from_chosen_class": true},
-      {"type": "spell", "label": "1st-Level Spell (1)", "count": 1, "spell_level": 1, "from_chosen_class": true}
+      {
+        "type": "class",
+        "label": "Spellcasting Class",
+        "options": [
+          "bard",
+          "cleric",
+          "druid",
+          "sorcerer",
+          "warlock",
+          "wizard"
+        ]
+      },
+      {
+        "type": "spell",
+        "label": "Cantrips (2)",
+        "count": 2,
+        "spell_level": 0,
+        "from_chosen_class": true
+      },
+      {
+        "type": "spell",
+        "label": "1st-Level Spell (1)",
+        "count": 1,
+        "spell_level": 1,
+        "from_chosen_class": true
+      }
     ]
   },
   {
@@ -392,7 +574,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Martial Adept", "desc": "Learn 2 Battle Master maneuvers. Gain 1 superiority die (d6), regained on short/long rest. Maneuver save DC = 8 + prof bonus + STR or DEX modifier."}
+      {
+        "name": "Martial Adept",
+        "desc": "Learn 2 Battle Master maneuvers. Gain 1 superiority die (d6), regained on short/long rest. Maneuver save DC = 8 + prof bonus + STR or DEX modifier."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -409,7 +594,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Medium Armor Master", "desc": "Medium armor doesn't impose Stealth disadvantage. Add 3 instead of 2 to AC from medium armor if DEX is 16+."}
+      {
+        "name": "Medium Armor Master",
+        "desc": "Medium armor doesn't impose Stealth disadvantage. Add 3 instead of 2 to AC from medium armor if DEX is 16+."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -426,7 +614,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 10,
     "features": [
-      {"name": "Mobile", "desc": "Dash action ignores difficult terrain. After a melee attack against a creature, you don't provoke opportunity attacks from it for the rest of the turn."}
+      {
+        "name": "Mobile",
+        "desc": "Dash action ignores difficult terrain. After a melee attack against a creature, you don't provoke opportunity attacks from it for the rest of the turn."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -437,19 +628,37 @@
     "name": "Moderately Armored",
     "desc": "You have trained to master the use of medium armor and shields, gaining the following benefits:\n- Increase your Strength or Dexterity score by 1, to a maximum of 20.\n- You gain proficiency with medium armor and shields.",
     "prerequisite": "Proficiency with light armor",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [],
     "proficiencies": [
-      {"index": "medium-armor", "name": "Medium Armor"},
-      {"index": "shields", "name": "Shields"}
+      {
+        "index": "medium-armor",
+        "name": "Medium Armor"
+      },
+      {
+        "index": "shields",
+        "name": "Shields"
+      }
     ],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "dex"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "dex"
+        ]
+      }
     ]
   },
   {
@@ -463,7 +672,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Mounted Combatant", "desc": "While mounted: advantage vs smaller unmounted creatures, redirect attacks from mount to you, mount gains evasion on DEX saves."}
+      {
+        "name": "Mounted Combatant",
+        "desc": "While mounted: advantage vs smaller unmounted creatures, redirect attacks from mount to you, mount gains evasion on DEX saves."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -474,20 +686,38 @@
     "name": "Observant",
     "desc": "Quick to notice details of your environment, you gain the following benefits:\n- Increase your Intelligence or Wisdom score by 1, to a maximum of 20.\n- If you can see a creature's mouth while it is speaking a language you understand, you can interpret what it's saying by reading its lips.\n- You have a +5 bonus to your passive Wisdom (Perception) and passive Intelligence (Investigation) scores.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "passive_perception_bonus": 5,
     "features": [
-      {"name": "Lip Reading", "desc": "If you can see a creature's mouth while it speaks a language you understand, you can read its lips."},
-      {"name": "Observant", "desc": "+5 bonus to passive Perception and passive Investigation."}
+      {
+        "name": "Lip Reading",
+        "desc": "If you can see a creature's mouth while it speaks a language you understand, you can read its lips."
+      },
+      {
+        "name": "Observant",
+        "desc": "+5 bonus to passive Perception and passive Investigation."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["int", "wis"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "int",
+          "wis"
+        ]
+      }
     ]
   },
   {
@@ -501,7 +731,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Polearm Master", "desc": "Bonus action d4 bludgeoning attack with butt end of glaive/halberd/quarterstaff/spear. Creatures provoke opportunity attacks when entering your reach with these weapons."}
+      {
+        "name": "Polearm Master",
+        "desc": "Bonus action d4 bludgeoning attack with butt end of glaive/halberd/quarterstaff/spear. Creatures provoke opportunity attacks when entering your reach with these weapons."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -512,7 +745,12 @@
     "name": "Resilient",
     "desc": "Choose one ability score. You gain the following benefits:\n- Increase the chosen ability score by 1, to a maximum of 20.\n- You gain proficiency in saving throws using the chosen ability.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
@@ -521,7 +759,19 @@
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "dex", "con", "int", "wis", "cha"], "grants_save_proficiency": true}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "dex",
+          "con",
+          "int",
+          "wis",
+          "cha"
+        ],
+        "grants_save_proficiency": true
+      }
     ]
   },
   {
@@ -535,13 +785,34 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Ritual Caster", "desc": "You acquire a ritual book with two 1st-level ritual spells from a chosen class. You can cast these as rituals and add more ritual spells you find if they are of a level you can cast."}
+      {
+        "name": "Ritual Caster",
+        "desc": "You acquire a ritual book with two 1st-level ritual spells from a chosen class. You can cast these as rituals and add more ritual spells you find if they are of a level you can cast."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "class", "label": "Spellcasting Class", "options": ["bard", "cleric", "druid", "sorcerer", "warlock", "wizard"]},
-      {"type": "spell", "label": "Ritual Spells (2)", "count": 2, "spell_level": 1, "ritual_only": true, "from_chosen_class": true}
+      {
+        "type": "class",
+        "label": "Spellcasting Class",
+        "options": [
+          "bard",
+          "cleric",
+          "druid",
+          "sorcerer",
+          "warlock",
+          "wizard"
+        ]
+      },
+      {
+        "type": "spell",
+        "label": "Ritual Spells (2)",
+        "count": 2,
+        "spell_level": 1,
+        "ritual_only": true,
+        "from_chosen_class": true
+      }
     ]
   },
   {
@@ -555,7 +826,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Savage Attacker", "desc": "Once per turn, reroll melee weapon damage dice and use either total."}
+      {
+        "name": "Savage Attacker",
+        "desc": "Once per turn, reroll melee weapon damage dice and use either total."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -572,7 +846,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Sentinel", "desc": "Opportunity attacks reduce creature speed to 0. Disengage doesn't prevent your opportunity attacks. Reaction melee attack when a creature within 5 ft attacks someone other than you."}
+      {
+        "name": "Sentinel",
+        "desc": "Opportunity attacks reduce creature speed to 0. Disengage doesn't prevent your opportunity attacks. Reaction melee attack when a creature within 5 ft attacks someone other than you."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -589,7 +866,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Sharpshooter", "desc": "No disadvantage at long range. Ignore half and three-quarters cover. Take -5 to hit for +10 damage with ranged weapons."}
+      {
+        "name": "Sharpshooter",
+        "desc": "No disadvantage at long range. Ignore half and three-quarters cover. Take -5 to hit for +10 damage with ranged weapons."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -606,7 +886,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Shield Master", "desc": "Bonus action shove with shield after Attack. Add shield AC bonus to DEX saves vs spells targeting only you. Reaction to take no damage on successful DEX save (evasion with shield)."}
+      {
+        "name": "Shield Master",
+        "desc": "Bonus action shove with shield after Attack. Add shield AC bonus to DEX saves vs spells targeting only you. Reaction to take no damage on successful DEX save (evasion with shield)."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -626,7 +909,54 @@
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "skill_or_tool", "label": "Skills or Tools (3)", "count": 3, "options": ["skill-acrobatics", "skill-animal-handling", "skill-arcana", "skill-athletics", "skill-deception", "skill-history", "skill-insight", "skill-intimidation", "skill-investigation", "skill-medicine", "skill-nature", "skill-perception", "skill-performance", "skill-persuasion", "skill-religion", "skill-sleight-of-hand", "skill-stealth", "skill-survival", "alchemists-supplies", "brewers-supplies", "calligraphers-supplies", "carpenters-tools", "cartographers-tools", "cobblers-tools", "cooks-utensils", "glassblowers-tools", "jewelers-tools", "leatherworkers-tools", "masons-tools", "painters-supplies", "potters-tools", "smiths-tools", "tinkers-tools", "weavers-tools", "woodcarvers-tools", "disguise-kit", "forgery-kit", "herbalism-kit", "navigators-tools", "poisoners-kit", "thieves-tools"]}
+      {
+        "type": "skill_or_tool",
+        "label": "Skills or Tools (3)",
+        "count": 3,
+        "options": [
+          "skill-acrobatics",
+          "skill-animal-handling",
+          "skill-arcana",
+          "skill-athletics",
+          "skill-deception",
+          "skill-history",
+          "skill-insight",
+          "skill-intimidation",
+          "skill-investigation",
+          "skill-medicine",
+          "skill-nature",
+          "skill-perception",
+          "skill-performance",
+          "skill-persuasion",
+          "skill-religion",
+          "skill-sleight-of-hand",
+          "skill-stealth",
+          "skill-survival",
+          "alchemists-supplies",
+          "brewers-supplies",
+          "calligraphers-supplies",
+          "carpenters-tools",
+          "cartographers-tools",
+          "cobblers-tools",
+          "cooks-utensils",
+          "glassblowers-tools",
+          "jewelers-tools",
+          "leatherworkers-tools",
+          "masons-tools",
+          "painters-supplies",
+          "potters-tools",
+          "smiths-tools",
+          "tinkers-tools",
+          "weavers-tools",
+          "woodcarvers-tools",
+          "disguise-kit",
+          "forgery-kit",
+          "herbalism-kit",
+          "navigators-tools",
+          "poisoners-kit",
+          "thieves-tools"
+        ]
+      }
     ]
   },
   {
@@ -640,7 +970,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Skulker", "desc": "Hide when lightly obscured. Missing with a ranged attack while hidden doesn't reveal you. Dim light doesn't impose disadvantage on Perception checks."}
+      {
+        "name": "Skulker",
+        "desc": "Hide when lightly obscured. Missing with a ranged attack while hidden doesn't reveal you. Dim light doesn't impose disadvantage on Perception checks."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -657,13 +990,34 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Spell Sniper", "desc": "Double range on attack roll spells. Ranged spell attacks ignore half and three-quarters cover."}
+      {
+        "name": "Spell Sniper",
+        "desc": "Double range on attack roll spells. Ranged spell attacks ignore half and three-quarters cover."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "class", "label": "Spell List", "options": ["bard", "cleric", "druid", "sorcerer", "warlock", "wizard"]},
-      {"type": "spell", "label": "Cantrip (attack roll)", "count": 1, "spell_level": 0, "requires_attack_roll": true, "from_chosen_class": true}
+      {
+        "type": "class",
+        "label": "Spell List",
+        "options": [
+          "bard",
+          "cleric",
+          "druid",
+          "sorcerer",
+          "warlock",
+          "wizard"
+        ]
+      },
+      {
+        "type": "spell",
+        "label": "Cantrip (attack roll)",
+        "count": 1,
+        "spell_level": 0,
+        "requires_attack_roll": true,
+        "from_chosen_class": true
+      }
     ]
   },
   {
@@ -671,18 +1025,38 @@
     "name": "Tavern Brawler",
     "desc": "Accustomed to rough-and-tumble fighting using whatever weapons happen to be at hand, you gain the following benefits:\n- Increase your Strength or Constitution score by 1, to a maximum of 20.\n- You are proficient with improvised weapons.\n- Your unarmed strike uses a d4 for damage.\n- When you hit a creature with an unarmed strike or an improvised weapon on your turn, you can use a bonus action to attempt to grapple the target.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "Tavern Brawler", "desc": "Proficient with improvised weapons. Unarmed strikes deal 1d4 damage. Bonus action grapple after hitting with unarmed strike or improvised weapon."}
+      {
+        "name": "Tavern Brawler",
+        "desc": "Proficient with improvised weapons. Unarmed strikes deal 1d4 damage. Bonus action grapple after hitting with unarmed strike or improvised weapon."
+      }
     ],
-    "proficiencies": [{"index": "improvised-weapons", "name": "Improvised Weapons"}],
+    "proficiencies": [
+      {
+        "index": "improvised-weapons",
+        "name": "Improvised Weapons"
+      }
+    ],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "con"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "con"
+        ]
+      }
     ]
   },
   {
@@ -711,7 +1085,10 @@
     "initiative_bonus": 0,
     "speed_bonus": 0,
     "features": [
-      {"name": "War Caster", "desc": "Advantage on concentration saves. Perform somatic components with weapons/shield in hand. Cast a spell as an opportunity attack (1 action, single target)."}
+      {
+        "name": "War Caster",
+        "desc": "Advantage on concentration saves. Perform somatic components with weapons/shield in hand. Cast a spell as an opportunity attack (1 action, single target)."
+      }
     ],
     "proficiencies": [],
     "granted_spells": [],
@@ -722,7 +1099,12 @@
     "name": "Weapon Master",
     "desc": "You have practiced extensively with a variety of weapons, gaining the following benefits:\n- Increase your Strength or Dexterity score by 1, to a maximum of 20.\n- You gain proficiency with four weapons of your choice. Each one must be a simple or a martial weapon.",
     "prerequisite": "",
-    "asi": [{"ability": "choice", "amount": 1}],
+    "asi": [
+      {
+        "ability": "choice",
+        "amount": 1
+      }
+    ],
     "ac_bonus": 0,
     "hp_per_level": 0,
     "initiative_bonus": 0,
@@ -731,8 +1113,58 @@
     "proficiencies": [],
     "granted_spells": [],
     "choices": [
-      {"type": "ability", "label": "Ability Score", "options": ["str", "dex"]},
-      {"type": "weapon", "label": "Weapon Proficiencies (4)", "count": 4, "options": ["club", "dagger", "greatclub", "handaxe", "javelin", "light-hammer", "mace", "quarterstaff", "sickle", "spear", "crossbow-light", "dart", "shortbow", "sling", "battleaxe", "flail", "glaive", "greataxe", "greatsword", "halberd", "lance", "longsword", "maul", "morningstar", "pike", "rapier", "scimitar", "shortsword", "trident", "war-pick", "warhammer", "whip", "blowgun", "crossbow-hand", "crossbow-heavy", "longbow", "net"]}
+      {
+        "type": "ability",
+        "label": "Ability Score",
+        "options": [
+          "str",
+          "dex"
+        ]
+      },
+      {
+        "type": "weapon",
+        "label": "Weapon Proficiencies (4)",
+        "count": 4,
+        "options": [
+          "club",
+          "dagger",
+          "greatclub",
+          "handaxe",
+          "javelin",
+          "light-hammer",
+          "mace",
+          "quarterstaff",
+          "sickle",
+          "spear",
+          "crossbow-light",
+          "dart",
+          "shortbow",
+          "sling",
+          "battleaxe",
+          "flail",
+          "glaive",
+          "greataxe",
+          "greatsword",
+          "halberd",
+          "lance",
+          "longsword",
+          "maul",
+          "morningstar",
+          "pike",
+          "rapier",
+          "scimitar",
+          "shortsword",
+          "trident",
+          "war-pick",
+          "warhammer",
+          "whip",
+          "blowgun",
+          "crossbow-hand",
+          "crossbow-heavy",
+          "longbow",
+          "net"
+        ]
+      }
     ]
   }
 ]

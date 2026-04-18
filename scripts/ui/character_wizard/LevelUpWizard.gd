@@ -18,21 +18,21 @@ signal character_leveled_up(statblock: StatblockData)
 
 const _CFR := preload("res://scripts/ui/character_wizard/ClassFeatureResolver.gd")
 
-enum Step { CLASS_CHOICE, HP_INCREASE, ASI_FEAT, NEW_SPELLS, CONFIRM }
+enum Step {CLASS_CHOICE, HP_INCREASE, ASI_FEAT, NEW_SPELLS, CONFIRM}
 
 # ── Inputs ────────────────────────────────────────────────────────────────────
 var _statblock: StatblockData = null
 
 # ── Wizard state ──────────────────────────────────────────────────────────────
-var _chosen_class_index: int = 0  ## Index into _statblock.classes
-var _hp_mode: int = 0  ## 0 = average, 1 = roll
+var _chosen_class_index: int = 0 ## Index into _statblock.classes
+var _hp_mode: int = 0 ## 0 = average, 1 = roll
 var _hp_rolled: int = 0
 var _hp_average: int = 0
 var _hit_die: int = 8
-var _asi_choice: Dictionary = {}  ## {type, ability/ability1/ability2/feat_name, feat_choices}
+var _asi_choice: Dictionary = {} ## {type, ability/ability1/ability2/feat_name, feat_choices}
 var _new_spells: Array = []
 var _new_cantrips: Array = []
-var _custom_spells: Array = []  ## [{"name": String, "level": int, "source": String}]
+var _custom_spells: Array = [] ## [{"name": String, "level": int, "source": String}]
 var _new_level: int = 0
 var _chosen_class_name: String = ""
 var _grants_asi: bool = false
@@ -68,7 +68,7 @@ var _asi_ability1_option: OptionButton = null
 var _asi_ability2_option: OptionButton = null
 var _feat_option: OptionButton = null
 var _feat_desc_label: RichTextLabel = null
-var _feat_choice_option: OptionButton = null  ## For feats with "choice" ASI
+var _feat_choice_option: OptionButton = null ## For feats with "choice" ASI
 
 # Step 3: Spells
 var _spell_container: VBoxContainer = null
@@ -160,7 +160,7 @@ func _build_ui() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_theme_constant_override("separation", roundi(8.0 * s))
 	root.offset_left = margin; root.offset_top = margin
-	root.offset_right = -margin; root.offset_bottom = -margin
+	root.offset_right = - margin; root.offset_bottom = - margin
 	add_child(root)
 
 	_step_label = Label.new()
@@ -838,16 +838,16 @@ func _read_asi_choice() -> void:
 		return
 	var t: int = _asi_type_option.selected
 	match t:
-		0:  # +2 single
+		0: # +2 single
 			var idx: int = _asi_ability_option.selected if _asi_ability_option else 0
 			_asi_choice = {"type": "asi_plus2", "ability": WizardConstants.ABILITY_KEYS[idx]}
-		1:  # +1/+1
+		1: # +1/+1
 			var i1: int = _asi_ability1_option.selected if _asi_ability1_option else 0
 			var i2: int = _asi_ability2_option.selected if _asi_ability2_option else 1
 			_asi_choice = {"type": "asi_plus1x2",
 				"ability1": WizardConstants.ABILITY_KEYS[i1],
 				"ability2": WizardConstants.ABILITY_KEYS[i2]}
-		2:  # Feat
+		2: # Feat
 			var fi: int = _feat_option.selected if _feat_option else 0
 			var feat_name: String = ""
 			if fi >= 0 and fi < _feats_raw.size():
@@ -872,7 +872,7 @@ func _read_spell_choices() -> void:
 func _build_new_classes_array() -> Array:
 	var new_classes: Array = _statblock.classes.duplicate(true)
 	if new_classes.is_empty() and not _statblock.class_name_str.is_empty():
-		new_classes = [{"name": _statblock.class_name_str, "level": _statblock.level, "subclass": ""}]
+		new_classes = [ {"name": _statblock.class_name_str, "level": _statblock.level, "subclass": ""}]
 
 	if _chosen_class_index >= 0 and _chosen_class_index < new_classes.size():
 		var entry: Dictionary = (new_classes[_chosen_class_index] as Dictionary).duplicate()
@@ -1189,8 +1189,8 @@ func reapply_theme() -> void:
 		return
 	var scale: float = _get_ui_scale()
 	if registry.ui_theme != null:
-		registry.ui_theme.theme_control_tree(self, scale)
-	_scale_rich_text_recursive(self, scale)
+		registry.ui_theme.theme_control_tree(self , scale)
+	_scale_rich_text_recursive(self , scale)
 
 
 func _scale_rich_text_recursive(node: Node, scale: float) -> void:

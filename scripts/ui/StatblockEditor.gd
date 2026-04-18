@@ -63,7 +63,7 @@ var _abilities_rows: Array = []
 
 # ── Spells tab ────────────────────────────────────────────────────────────
 var _spells_text: TextEdit = null
-var _slot_spins: Dictionary = {}  # {level_int: SpinBox}
+var _slot_spins: Dictionary = {} # {level_int: SpinBox}
 
 # ── Layout ────────────────────────────────────────────────────────────────
 var _tabs: TabContainer = null
@@ -566,7 +566,7 @@ func _on_save() -> void:
 	_data.notes = _notes_edit.text
 
 	# Combat
-	_data.armor_class = [{"type": _ac_type_edit.text.strip_edges(), "value": int(_ac_spin.value)}]
+	_data.armor_class = [ {"type": _ac_type_edit.text.strip_edges(), "value": int(_ac_spin.value)}]
 	_data.hit_points = int(_hp_spin.value)
 	_data.hit_points_roll = _hit_dice_edit.text.strip_edges()
 	_data.hit_dice = _data.hit_points_roll
@@ -656,7 +656,7 @@ func _read_action_rows(rows: Array) -> Array:
 		var dice_str: String = (dice_ctrl as LineEdit).text.strip_edges() if dice_ctrl is LineEdit else ""
 		var type_str: String = (type_ctrl as LineEdit).text.strip_edges() if type_ctrl is LineEdit else ""
 		if not dice_str.is_empty():
-			entry.damage = [{"damage_dice": dice_str, "damage_type": type_str}]
+			entry.damage = [ {"damage_dice": dice_str, "damage_type": type_str}]
 		if entry.name.is_empty() and entry.desc.is_empty():
 			continue
 		out.append(entry)
@@ -723,7 +723,7 @@ func reapply_theme() -> void:
 	if reg == null or reg.ui_theme == null:
 		return
 	var s_val: float = reg.ui_scale.get_scale() if reg.ui_scale != null else 1.0
-	reg.ui_theme.theme_control_tree(self, s_val)
+	reg.ui_theme.theme_control_tree(self , s_val)
 	if reg.ui_scale != null:
 		for child: Node in get_children():
 			if child is Control:

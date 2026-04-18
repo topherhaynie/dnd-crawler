@@ -283,7 +283,7 @@ func _save_session_state_only() -> void:
 		return
 	var save := _model.active_save as GameSaveData
 	if save.save_name.is_empty():
-		return  # Ephemeral session — no disk location yet.
+		return # Ephemeral session — no disk location yet.
 	save.updated_at = Time.get_datetime_string_from_system(true)
 	var bundle_path := "user://data/saves/%s.sav" % save.save_name
 	var abs_bundle := ProjectSettings.globalize_path(bundle_path)

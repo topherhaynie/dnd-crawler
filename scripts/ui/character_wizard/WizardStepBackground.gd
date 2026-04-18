@@ -43,8 +43,8 @@ func _build() -> void:
 	_bg_2024_label = Label.new()
 	_bg_2024_label.text = (
 		"In D&D 2024, backgrounds grant an Ability Score Increase, an Origin Feat, "
-		+ "skill proficiencies, and starting equipment.\n\n"
-		+ "Choose your background during your first session with your DM."
+		+"skill proficiencies, and starting equipment.\n\n"
+		+"Choose your background during your first session with your DM."
 	)
 	_bg_2024_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_bg_2024_label.add_theme_font_size_override("font_size", _wizard.scaled_fs(12.0))

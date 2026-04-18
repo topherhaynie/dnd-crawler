@@ -372,7 +372,7 @@ func apply_overrides(sb: StatblockData) -> void:
 	if _ov_hp_spin != null:
 		sb.hit_points = int(_ov_hp_spin.value)
 	if _ov_ac_spin != null:
-		sb.armor_class = [{"type": "natural", "value": int(_ov_ac_spin.value)}]
+		sb.armor_class = [ {"type": "natural", "value": int(_ov_ac_spin.value)}]
 	if _ov_speed_spin != null:
 		sb.speed = {"walk": "%d ft." % int(_ov_speed_spin.value)}
 	if _ov_prof_spin != null:
