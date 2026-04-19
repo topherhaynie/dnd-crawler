@@ -75,14 +75,21 @@ fi
 # ---------- Bundle ffmpeg & ffprobe ----------
 echo "==> Bundling ffmpeg and ffprobe for Windows"
 FFMPEG_WIN_CACHE="$PROJECT_DIR/.cache/ffmpeg-windows"
-# gyan.dev provides static Windows builds. Pin to release-7.1.1 for reproducibility.
-FFMPEG_WIN_URL="https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip"
+# gyan.dev provides static Windows builds. Use the stable redirect — old pinned
+# versions get removed from the server, so a floating URL is more reliable.
+FFMPEG_WIN_URL="https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 if [[ ! -f "$FFMPEG_WIN_CACHE/ffmpeg.exe" ]] || [[ ! -f "$FFMPEG_WIN_CACHE/ffprobe.exe" ]]; then
     echo "    Downloading static ffmpeg Windows build (one-time cache)…"
     mkdir -p "$FFMPEG_WIN_CACHE"
     curl -# -L -o "$FFMPEG_WIN_CACHE/ffmpeg-win.zip" "$FFMPEG_WIN_URL"
-    # The zip contains a top-level dir like ffmpeg-7.1.1-essentials_build/bin/
+    # Verify we got an actual zip (the server may return HTML on errors).
+    if ! file "$FFMPEG_WIN_CACHE/ffmpeg-win.zip" | grep -q 'Zip archive'; then
+        echo "ERROR: Downloaded file is not a valid zip archive." >&2
+        rm -f "$FFMPEG_WIN_CACHE/ffmpeg-win.zip"
+        exit 1
+    fi
+    # The zip contains a top-level dir like ffmpeg-<version>-essentials_build/bin/
     unzip -o -j -q "$FFMPEG_WIN_CACHE/ffmpeg-win.zip" "*/bin/ffmpeg.exe" "*/bin/ffprobe.exe" -d "$FFMPEG_WIN_CACHE"
 fi
 
