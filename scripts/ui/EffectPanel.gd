@@ -290,7 +290,7 @@ func _build() -> void:
 		custom_minimum_size.x = float(
 			_palette_buttons.size() * pal_btn_w
 			+ maxi(_palette_buttons.size() - 1, 0) * pal_sep
-			+ 2 * margin_side) + 1.0
+			+ (2 * margin_side)) + 1.0
 
 
 func _build_legacy_buttons(s: float) -> void:
