@@ -1554,6 +1554,7 @@ func _on_bestiary_add() -> void:
 		_bestiary_library.hide()
 		_refresh_bestiary_list())
 	_bestiary_library.popup_centered()
+	_bestiary_library.grab_focus()
 
 
 func _on_bestiary_item_selected(idx: int) -> void:
@@ -1773,6 +1774,7 @@ func _open_bestiary_dialog(sb: StatblockData) -> void:
 	if reg != null and reg.ui_theme != null:
 		reg.ui_theme.theme_control_tree(_bestiary_dlg, s)
 	_bestiary_dlg.popup_centered()
+	_bestiary_dlg.grab_focus()
 
 
 func _on_bestiary_dlg_cancel() -> void:
@@ -1899,6 +1901,7 @@ func _on_items_add() -> void:
 		_items_library.hide()
 		_refresh_items_list())
 	_items_library.popup_centered()
+	_items_library.grab_focus()
 
 
 func _on_items_remove() -> void:

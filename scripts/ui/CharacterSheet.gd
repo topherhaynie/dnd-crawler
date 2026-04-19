@@ -2104,6 +2104,7 @@ func _on_add_from_item_library() -> void:
 		reg.ui_theme.theme_control_tree(_inventory_library, _get_ui_scale())
 	_inventory_library.item_picked.connect(_on_library_item_picked)
 	_inventory_library.popup_centered()
+	_inventory_library.grab_focus()
 
 
 func _on_library_item_picked(data: ItemEntry) -> void:

@@ -96,6 +96,7 @@ func popup_fitted(dialog: Window, base_min_w: float = 0.0, base_min_h: float = 0
 			scaled(base_min_h) if base_min_h > 0.0 else 0)
 	dialog.reset_size()
 	dialog.popup_centered()
+	dialog.grab_focus()
 
 
 static func set_font_base(ctrl: Control, base: float) -> void:

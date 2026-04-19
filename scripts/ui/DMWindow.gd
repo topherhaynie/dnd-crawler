@@ -2101,6 +2101,7 @@ func _undock_palette() -> void:
 
 	_palette_window = Window.new()
 	_palette_window.title = "Tools"
+	_palette_window.transient = true
 	_palette_window.popup_window = false
 	_palette_window.exclusive = false
 	add_child(_palette_window)
@@ -2123,6 +2124,7 @@ func _undock_palette() -> void:
 		_pm.popup_fitted(_palette_window, 56.0, 500.0)
 	else:
 		_palette_window.popup_centered()
+		_palette_window.grab_focus()
 
 
 func _dock_palette() -> void:
@@ -2473,6 +2475,7 @@ func _undock_freeze_panel() -> void:
 
 	_freeze_panel_window = Window.new()
 	_freeze_panel_window.title = "Players"
+	_freeze_panel_window.transient = true
 	_freeze_panel_window.popup_window = false
 	_freeze_panel_window.exclusive = false
 	add_child(_freeze_panel_window)
@@ -2501,6 +2504,7 @@ func _undock_freeze_panel() -> void:
 		_fm.popup_fitted(_freeze_panel_window, 220.0, 400.0)
 	else:
 		_freeze_panel_window.popup_centered()
+		_freeze_panel_window.grab_focus()
 
 	_set_view_checked(25, true)
 	_apply_effect_panel_size()
@@ -2703,6 +2707,7 @@ func _undock_effect_panel() -> void:
 
 	_effect_panel_window = Window.new()
 	_effect_panel_window.title = "Effects"
+	_effect_panel_window.transient = true
 	_effect_panel_window.popup_window = false
 	_effect_panel_window.exclusive = false
 	add_child(_effect_panel_window)
@@ -2729,6 +2734,7 @@ func _undock_effect_panel() -> void:
 		_fm.popup_fitted(_effect_panel_window, 200.0, 550.0)
 	else:
 		_effect_panel_window.popup_centered()
+		_effect_panel_window.grab_focus()
 
 	_set_view_checked(29, true)
 
@@ -3214,6 +3220,7 @@ func _on_campaign_panel_add_map_browse() -> void:
 	_bundle_browser.open_as_picker("map")
 	_bundle_browser.populate()
 	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
+	_bundle_browser.call_deferred(&"grab_focus")
 
 
 func _on_campaign_bundle_picked(path: String, bundle_type: String) -> void:
@@ -3260,6 +3267,7 @@ func _on_campaign_panel_add_save_browse() -> void:
 	_bundle_browser.open_as_picker("save")
 	_bundle_browser.populate()
 	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
+	_bundle_browser.call_deferred(&"grab_focus")
 
 
 func _on_campaign_save_bundle_picked(path: String) -> void:
@@ -5196,6 +5204,8 @@ func _toggle_dice_tray() -> void:
 		return
 	if _dice_tray_floating and _dice_tray_window != null:
 		_dice_tray_window.visible = not _dice_tray_window.visible
+		if _dice_tray_window.visible:
+			_dice_tray_window.grab_focus()
 	else:
 		_dice_tray.visible = not _dice_tray.visible
 
@@ -5246,6 +5256,7 @@ func _on_dice_tray_undock() -> void:
 		if reg != null and reg.ui_theme != null:
 			reg.ui_theme.theme_control_tree(_dice_tray_window, _ui_scale())
 		_dice_tray_window.popup_centered()
+		_dice_tray_window.grab_focus()
 
 
 # ---------------------------------------------------------------------------
@@ -5316,6 +5327,8 @@ func _toggle_initiative_panel() -> void:
 		return
 	if _initiative_panel_floating and _initiative_panel_window != null:
 		_initiative_panel_window.visible = not _initiative_panel_window.visible
+		if _initiative_panel_window.visible:
+			_initiative_panel_window.grab_focus()
 	else:
 		_initiative_panel.visible = not _initiative_panel.visible
 		_set_view_checked(34, _initiative_panel.visible)
@@ -5372,6 +5385,7 @@ func _on_initiative_panel_undock() -> void:
 		if reg != null and reg.ui_theme != null:
 			reg.ui_theme.theme_control_tree(_initiative_panel_window, _ui_scale())
 		_initiative_panel_window.popup_centered()
+		_initiative_panel_window.grab_focus()
 
 
 # ---------------------------------------------------------------------------
@@ -5412,6 +5426,8 @@ func _toggle_combat_log_panel() -> void:
 		return
 	if _combat_log_panel_floating and _combat_log_panel_window != null:
 		_combat_log_panel_window.visible = not _combat_log_panel_window.visible
+		if _combat_log_panel_window.visible:
+			_combat_log_panel_window.grab_focus()
 	else:
 		_combat_log_panel.visible = not _combat_log_panel.visible
 		_set_view_checked(35, _combat_log_panel.visible)
@@ -5481,6 +5497,7 @@ func _on_combat_log_panel_undock() -> void:
 		if reg != null and reg.ui_theme != null:
 			reg.ui_theme.theme_control_tree(_combat_log_panel_window, _ui_scale())
 		_combat_log_panel_window.popup_centered()
+		_combat_log_panel_window.grab_focus()
 
 
 func _refresh_initiative_panel() -> void:
@@ -7889,6 +7906,7 @@ func _on_token_statblock_attach() -> void:
 	if not _statblock_library.statblock_picked.is_connected(_on_library_statblock_picked):
 		_statblock_library.statblock_picked.connect(_on_library_statblock_picked)
 	_statblock_library.popup_centered()
+	_statblock_library.grab_focus()
 
 
 func _on_library_statblock_picked(data: StatblockData) -> void:
@@ -7989,6 +8007,7 @@ func _on_token_statblock_view() -> void:
 	if _sv_reg != null and _sv_reg.ui_theme != null:
 		_sv_reg.ui_theme.theme_control_tree(popup, _ui_scale())
 	popup.popup_centered()
+	popup.grab_focus()
 
 
 func _on_token_statblock_edit_overrides() -> void:
@@ -8219,6 +8238,7 @@ func _show_token_statblock_card(td: TokenData, sb_id: String) -> void:
 	if _sc_reg != null and _sc_reg.ui_theme != null:
 		_sc_reg.ui_theme.theme_control_tree(popup, _ui_scale())
 	popup.popup_centered()
+	popup.grab_focus()
 
 
 ## Show a quick HP adjustment dialog for the primary statblock on a token.
@@ -8347,6 +8367,7 @@ func _show_quick_hp_dialog(td: TokenData) -> void:
 	else:
 		popup.reset_size()
 		popup.popup_centered()
+		popup.grab_focus()
 
 
 # ── Token icon image helpers ────────────────────────────────────────────────
@@ -9738,6 +9759,7 @@ func _open_statblock_library() -> void:
 	add_child(_statblock_library)
 	_apply_dialog_themes()
 	_statblock_library.popup_centered()
+	_statblock_library.grab_focus()
 
 
 func _open_item_library() -> void:
@@ -9749,6 +9771,7 @@ func _open_item_library() -> void:
 	add_child(_item_library)
 	_apply_dialog_themes()
 	_item_library.popup_centered()
+	_item_library.grab_focus()
 
 
 # ---------------------------------------------------------------------------
@@ -9760,6 +9783,7 @@ func _open_volume_window() -> void:
 		return
 	_volume_window = Window.new()
 	_volume_window.title = "Background Audio"
+	_volume_window.transient = true
 	_volume_window.popup_window = false
 	_volume_window.exclusive = false
 	_volume_window.close_requested.connect(func() -> void:
@@ -9810,6 +9834,7 @@ func _open_volume_window() -> void:
 		mgr.popup_fitted(_volume_window, 220.0, 160.0)
 	else:
 		_volume_window.popup_centered()
+		_volume_window.grab_focus()
 
 
 func _on_volume_slider_changed(value: float) -> void:
@@ -10042,6 +10067,7 @@ func _undock_measure_panel() -> void:
 
 	_measure_panel_window = Window.new()
 	_measure_panel_window.title = "Measurement Tools"
+	_measure_panel_window.transient = true
 	_measure_panel_window.popup_window = false
 	_measure_panel_window.exclusive = false
 	add_child(_measure_panel_window)
@@ -10067,6 +10093,7 @@ func _undock_measure_panel() -> void:
 		_mm.popup_fitted(_measure_panel_window, 220.0, 420.0)
 	else:
 		_measure_panel_window.popup_centered()
+		_measure_panel_window.grab_focus()
 
 	_set_view_checked(26, true)
 
@@ -10371,6 +10398,7 @@ func _open_save_config_dialog(token_ids: Array[String]) -> void:
 		mgr.popup_fitted(_save_config_dialog, 260.0, 200.0)
 	else:
 		_save_config_dialog.popup_centered()
+		_save_config_dialog.grab_focus()
 
 
 ## Rolls saves for the given tokens and opens the results panel.
@@ -11267,6 +11295,7 @@ func _open_bundle_browser(mode: String) -> void:
 	# being shown — fixes a Windows-specific race where a just-created Window
 	# doesn't appear because it hasn't received its HWND yet.
 	_bundle_browser.call_deferred(&"popup_centered_ratio", 0.85)
+	_bundle_browser.call_deferred(&"grab_focus")
 
 
 func _on_map_bundle_selected(path: String) -> void:

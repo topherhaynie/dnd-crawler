@@ -31,6 +31,11 @@ float noise(vec2 p) {
 
 void fragment() {
 	vec2 uv = (UV - 0.5) * 2.0;
+	// Cone mode: pie-slice — radiance center at the apex (vertex).
+	// No *2 so mouth center lands at dist≈1.0, matching circle-mode edge.
+	if (shape_mode == 1) {
+		uv = UV - vec2(0.5, 0.0);
+	}
 	float dist = length(uv);
 	float angle = atan(uv.y, uv.x);
 
