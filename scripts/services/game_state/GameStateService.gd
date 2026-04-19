@@ -116,6 +116,19 @@ func is_light_off(player_id: Variant) -> bool:
 	return bool(_model.player_light_off.get(player_id, false))
 
 
+func set_darkvision_disabled(disabled: bool) -> void:
+	if _model == null:
+		return
+	_model.darkvision_disabled = disabled
+	emit_signal("darkvision_disabled_changed", disabled)
+
+
+func is_darkvision_disabled() -> bool:
+	if _model == null:
+		return false
+	return _model.darkvision_disabled
+
+
 # ---------------------------------------------------------------------------
 # Session save / load
 # ---------------------------------------------------------------------------

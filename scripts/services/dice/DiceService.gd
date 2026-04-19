@@ -116,8 +116,14 @@ func roll_attack(attack_bonus: int, target_ac: int, advantage: bool, disadvantag
 	return {"result": result, "hit": hit, "critical": critical}
 
 
-func roll_damage(expression: String, critical: bool, crit_rule: String) -> DiceResult:
-	if not critical:
+func roll_damage(expression: String, critical: bool, crit_rule: String,
+		is_weapon_attack: bool = true) -> DiceResult:
+	# 2024 rule: only weapon attacks can critically hit. When Max + Roll is
+	# active and this is NOT a weapon attack, ignore the critical flag.
+	var effective_crit: bool = critical
+	if critical and crit_rule == "max_plus_roll" and not is_weapon_attack:
+		effective_crit = false
+	if not effective_crit:
 		return roll_fast(expression)
 	# Apply critical hit rule
 	match crit_rule:

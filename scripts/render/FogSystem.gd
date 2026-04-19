@@ -510,17 +510,24 @@ func sync_player_revealers(tokens: Array) -> void:
 		var reveal_world := token.get_fog_reveal_position()
 		var reveal_local: Vector2 = reveal_world * _fog_scale
 		var src_energy: float = src.energy if src != null else -1.0
+		var src_tex_scale: float = src.texture_scale if src != null else -1.0
+		var src_tex_rid: RID = src.texture.get_rid() if src != null and src.texture != null else RID()
 		var prev_cfg: Dictionary = _live_light_config_by_token_id.get(token_id, {}) as Dictionary
+		var prev_tex_rid: Variant = prev_cfg.get("tex_rid", null)
 		var cfg_changed: bool = prev_cfg.is_empty() \
 			or light.position.distance_to(reveal_local) > 0.5 \
 			or absf(light.rotation - token.rotation) > 0.001 \
-			or absf(prev_cfg.get("energy", -999.0) as float - src_energy) > 0.001
+			or absf(prev_cfg.get("energy", -999.0) as float - src_energy) > 0.001 \
+			or absf(prev_cfg.get("tex_scale", -999.0) as float - src_tex_scale) > 0.001 \
+			or prev_tex_rid != src_tex_rid
 		if cfg_changed:
 			_configure_vision_light(light, src, token)
 			_live_light_config_by_token_id[token_id] = {
 				"position": reveal_local,
 				"energy": src_energy,
 				"rotation": token.rotation,
+				"tex_scale": src_tex_scale,
+				"tex_rid": src_tex_rid,
 			}
 
 		var radius_px := _estimate_light_radius_px(light, src)

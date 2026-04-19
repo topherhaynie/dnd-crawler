@@ -27,8 +27,9 @@ signal add_save_browse_requested()
 ## Fired when the user wants to open a .map or .sav file from the file system.
 signal open_map_file_requested()
 signal open_save_file_requested()
-## Fired when the user closes the campaign window (X or close button).
-## DMWindow handles this by closing the campaign and returning to the browser.
+## Fired when the user explicitly requests closing the active campaign
+## (e.g. from a Close Campaign button inside the panel, if one exists).
+## Note: the Window X button just hides the hub — it does NOT close the campaign.
 signal campaign_close_requested()
 
 const TAB_OVERVIEW := 0
@@ -50,6 +51,7 @@ var _ov_desc_edit: TextEdit = null
 var _ov_ruleset_opt: OptionButton = null
 var _ov_tie_opt: OptionButton = null
 var _ov_crit_opt: OptionButton = null
+var _ov_exhaustion_opt: OptionButton = null
 ## Stat count labels [maps, saves, chars, notes, images]
 var _ov_stat_labels: Array = []
 
@@ -145,7 +147,7 @@ func _ready() -> void:
 	popup_window = false
 	exclusive = false
 	transient = true
-	close_requested.connect(func() -> void: campaign_close_requested.emit())
+	close_requested.connect(func() -> void: hide())
 	_build_ui()
 
 
@@ -374,6 +376,13 @@ func _build_overview_tab(s: float) -> void:
 	_ov_crit_opt.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	grid.add_child(_ov_crit_opt)
 
+	_add_lbl(grid, "Exhaustion Rule", s)
+	_ov_exhaustion_opt = OptionButton.new()
+	_ov_exhaustion_opt.add_item("2014 (6 Levels)")
+	_ov_exhaustion_opt.add_item("2024 (-2 per Level)")
+	_ov_exhaustion_opt.add_theme_font_size_override("font_size", roundi(13.0 * s))
+	grid.add_child(_ov_exhaustion_opt)
+
 	var desc_lbl := Label.new()
 	desc_lbl.text = "Description"
 	desc_lbl.add_theme_font_size_override("font_size", roundi(13.0 * s))
@@ -422,7 +431,7 @@ func _build_maps_tab(s: float) -> void:
 	scroll.add_child(_maps_grid)
 
 	_maps_empty_lbl = Label.new()
-	_maps_empty_lbl.text = "No maps yet.  Use \u201cNew\u201d to create one or \u201cAdd to Campaign\u201d to link an existing map."
+	_maps_empty_lbl.text = "No maps yet.  Use \u201cNew\u201d to create one or \u201cBrowse\u2026\u201d to link a map from your library."
 	_maps_empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_maps_empty_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_maps_empty_lbl.add_theme_font_size_override("font_size", roundi(14.0 * s))
@@ -444,8 +453,8 @@ func _build_maps_tab(s: float) -> void:
 	var _maps_spacer := Control.new()
 	_maps_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_maps_spacer)
-	_maps_add_btn = _make_btn(row, "Add to Campaign", s, _on_maps_add)
-	_maps_link_btn = _make_btn(row, "Remove from Campaign", s, _on_maps_remove)
+	_maps_add_btn = _make_btn(row, "Browse\u2026", s, _on_maps_add)
+	_maps_link_btn = _make_btn(row, "Unlink", s, _on_maps_remove)
 	_maps_link_btn.disabled = true
 	_maps_open_btn = _make_btn(row, "Open", s, _on_maps_open)
 	_maps_open_btn.disabled = true
@@ -479,7 +488,7 @@ func _build_saves_tab(s: float) -> void:
 	scroll.add_child(_saves_grid)
 
 	_saves_empty_lbl = Label.new()
-	_saves_empty_lbl.text = "No saves yet.  Use \u201cAdd to Campaign\u201d to link an existing save."
+	_saves_empty_lbl.text = "No saves yet.  Use \u201cBrowse\u2026\u201d to link a save from your library."
 	_saves_empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_saves_empty_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_saves_empty_lbl.add_theme_font_size_override("font_size", roundi(14.0 * s))
@@ -501,8 +510,8 @@ func _build_saves_tab(s: float) -> void:
 	var _saves_spacer := Control.new()
 	_saves_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_saves_spacer)
-	_saves_add_btn = _make_btn(row, "Add to Campaign", s, _on_saves_add)
-	_saves_link_btn = _make_btn(row, "Remove from Campaign", s, _on_saves_remove)
+	_saves_add_btn = _make_btn(row, "Browse\u2026", s, _on_saves_add)
+	_saves_link_btn = _make_btn(row, "Unlink", s, _on_saves_remove)
 	_saves_link_btn.disabled = true
 	_saves_open_btn = _make_btn(row, "Open", s, _on_saves_open)
 	_saves_open_btn.disabled = true
@@ -553,7 +562,7 @@ func _build_characters_tab(s: float) -> void:
 	_chars_assign_btn.disabled = true
 	_chars_remove_btn = _make_btn(row, "Remove from Campaign", s, _on_chars_remove_from_campaign)
 	_chars_remove_btn.disabled = true
-	_chars_override_btn = _make_btn(row, "Edit Override\u2026", s, _on_chars_edit_override)
+	_chars_override_btn = _make_btn(row, "Customize\u2026", s, _on_chars_edit_override)
 	_chars_override_btn.disabled = true
 	_chars_delete_btn = _make_btn(row, "Delete", s, _on_chars_delete)
 	_chars_delete_btn.disabled = true
@@ -595,8 +604,8 @@ func _build_bestiary_tab(s: float) -> void:
 
 	_bestiary_card = StatblockCardView.new()
 	_bestiary_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bestiary_card.apply_font_scale(roundi(13.0 * s))
 	card_scroll.add_child(_bestiary_card)
+	_bestiary_card.apply_font_scale(roundi(14.0 * s))
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", roundi(6.0 * s))
@@ -644,7 +653,7 @@ func _build_items_tab(s: float) -> void:
 	_items_card = ItemCardView.new()
 	_items_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card_scroll.add_child(_items_card)
-	_items_card.apply_font_scale(roundi(13.0 * s))
+	_items_card.apply_font_scale(roundi(14.0 * s))
 
 	var item_row := HBoxContainer.new()
 	item_row.add_theme_constant_override("separation", roundi(6.0 * s))
@@ -877,6 +886,8 @@ func _refresh_overview() -> void:
 		_ov_tie_opt.selected = 1 if str(c.settings.get("tie_goes_to", "player")) == "monster" else 0
 	if _ov_crit_opt != null:
 		_ov_crit_opt.selected = 1 if str(c.settings.get("critical_hit_rule", "double_dice")) == "max_plus_roll" else 0
+	if _ov_exhaustion_opt != null:
+		_ov_exhaustion_opt.selected = 1 if str(c.settings.get("exhaustion_rule", "2014")) == "2024" else 0
 	# Update stat tiles
 	var counts: Array = [
 		reg.campaign.get_map_paths().size() if reg.campaign != null else 0,
@@ -1217,6 +1228,8 @@ func _on_overview_save() -> void:
 		new_settings["tie_goes_to"] = "monster" if _ov_tie_opt.selected == 1 else "player"
 	if _ov_crit_opt != null:
 		new_settings["critical_hit_rule"] = "max_plus_roll" if _ov_crit_opt.selected == 1 else "double_dice"
+	if _ov_exhaustion_opt != null:
+		new_settings["exhaustion_rule"] = "2024" if _ov_exhaustion_opt.selected == 1 else "2014"
 	reg.campaign.update_settings(new_settings)
 	reg.campaign.save_campaign()
 	title = "Campaign \u2014 %s" % c.name
@@ -1350,28 +1363,36 @@ func _on_chars_edit_override() -> void:
 	var ch_name: String = sb.name if sb != null else ch_id
 
 	var dlg := AcceptDialog.new()
-	dlg.title = "Campaign Override \u2014 %s" % ch_name
+	dlg.title = "Campaign Customization \u2014 %s" % ch_name
 	dlg.ok_button_text = "Save"
 
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", roundi(8.0 * s))
 	dlg.add_child(root)
 
+	# ── Description ──
+	var desc_lbl := Label.new()
+	desc_lbl.text = "Customize how this character appears in this campaign.\nChanges here only affect this campaign \u2014 the original character is unchanged."
+	desc_lbl.add_theme_font_size_override("font_size", roundi(12.0 * s))
+	desc_lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(desc_lbl)
+
 	# ── Display Name ──
 	var name_lbl := Label.new()
-	name_lbl.text = "Display Name (leave blank = use global name)"
+	name_lbl.text = "Campaign Display Name"
 	name_lbl.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	root.add_child(name_lbl)
 	var name_edit := LineEdit.new()
 	name_edit.text = co.display_name
-	name_edit.placeholder_text = ch_name
+	name_edit.placeholder_text = ch_name + " (from character sheet)"
 	name_edit.custom_minimum_size = Vector2(roundi(360.0 * s), 0)
 	name_edit.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	root.add_child(name_edit)
 
 	# ── Portrait ──
 	var port_lbl := Label.new()
-	port_lbl.text = "Portrait Path (leave blank = use global portrait)"
+	port_lbl.text = "Campaign Portrait"
 	port_lbl.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	root.add_child(port_lbl)
 
@@ -1431,7 +1452,7 @@ func _on_chars_edit_override() -> void:
 
 	# ── Notes ──
 	var notes_lbl := Label.new()
-	notes_lbl.text = "Notes"
+	notes_lbl.text = "Campaign Notes"
 	notes_lbl.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	root.add_child(notes_lbl)
 	var notes_edit := TextEdit.new()
@@ -1442,7 +1463,7 @@ func _on_chars_edit_override() -> void:
 
 	# ── Clear button ──
 	var clear_btn := Button.new()
-	clear_btn.text = "Clear All Overrides"
+	clear_btn.text = "Reset to Defaults"
 	clear_btn.custom_minimum_size = Vector2(roundi(140.0 * s), roundi(28.0 * s))
 	clear_btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
 	root.add_child(clear_btn)
@@ -1541,6 +1562,7 @@ func _on_bestiary_item_selected(idx: int) -> void:
 	var reg := _registry()
 	if reg == null or reg.campaign == null:
 		return
+	var s: float = _scale()
 	for entry: Variant in reg.campaign.get_bestiary():
 		if not entry is StatblockData:
 			continue
@@ -1548,6 +1570,7 @@ func _on_bestiary_item_selected(idx: int) -> void:
 		var key: String = sb.srd_index if (not sb.srd_index.is_empty() and sb.source.begins_with("SRD")) else sb.id
 		if key == bst_key:
 			_bestiary_card.display(sb)
+			_bestiary_card.apply_font_scale(roundi(14.0 * s))
 			return
 
 
@@ -1857,6 +1880,7 @@ func _on_items_item_selected(idx: int) -> void:
 		var ie := entry as ItemEntry
 		if ie.id == item_id:
 			_items_card.display(ie)
+			_items_card.apply_font_scale(roundi(14.0 * _scale()))
 			return
 
 

@@ -64,6 +64,7 @@ func update_statblock(data: StatblockData) -> void:
 			var campaign: CampaignData = registry.campaign.get_active_campaign()
 			if campaign != null and campaign.bestiary.has(data.id):
 				campaign.bestiary[data.id] = data.to_dict()
+				registry.campaign.save_campaign()
 
 	statblock_updated.emit(data)
 

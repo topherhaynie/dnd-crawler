@@ -23,6 +23,7 @@ signal move_to_spawns_requested()
 signal play_mode_toggled(active: bool)
 signal dm_fog_visible_toggled(enabled: bool)
 signal flashlights_only_toggled(enabled: bool)
+signal darkvision_disabled_toggled(disabled: bool)
 signal effect_tool_activated(effect_type: int)
 
 # ── Public references (DMWindow reads these for state queries) ───────────────
@@ -38,6 +39,7 @@ var spawn_profile_option: OptionButton = null
 var spawn_auto_assign_btn: Button = null
 var move_to_spawns_btn: Button = null
 var token_btn: Button = null
+var darkvision_check: CheckBox = null
 var undock_btn: Button = null
 
 # ── Internal ─────────────────────────────────────────────────────────────────
@@ -329,6 +331,18 @@ func _build() -> void:
 		_ui_theme_mgr.apply_check_style(flashlights_check, s)
 	palette_vbox.add_child(flashlights_check)
 
+	darkvision_check = CheckBox.new()
+	darkvision_check.text = "👁"
+	darkvision_check.button_pressed = false
+	darkvision_check.focus_mode = Control.FOCUS_NONE
+	darkvision_check.tooltip_text = "Disable darkvision — all players use normal (30 ft) vision cones"
+	darkvision_check.custom_minimum_size = Vector2(0, roundi(_BTN_SIZE * s))
+	darkvision_check.add_theme_font_size_override("font_size", roundi(_SMALL_FONT * s))
+	darkvision_check.toggled.connect(func(on: bool) -> void: darkvision_disabled_toggled.emit(on))
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.apply_check_style(darkvision_check, s)
+	palette_vbox.add_child(darkvision_check)
+
 	var fog_reset_btn := _make_action_btn("↺", "Reset fog to fully hidden (covers entire map)")
 	fog_reset_btn.pressed.connect(func() -> void: action_fired.emit("fog_reset"))
 	palette_vbox.add_child(fog_reset_btn)
@@ -443,6 +457,9 @@ func show_flyout_for_tool(tool_key: String, anchor: Control) -> void:
 		return
 
 	_flyout_vbox.add_child(ctx)
+	# Theme the reparented context widgets (they are orphans until now)
+	if _ui_theme_mgr != null:
+		_ui_theme_mgr.theme_control_tree(ctx, _s())
 	_flyout.visible = true
 	_position_flyout()
 
@@ -494,9 +511,6 @@ func _build_fog_context() -> void:
 
 	var mode_label := Label.new()
 	mode_label.text = "Mode"
-	mode_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	var _lbl_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
-	mode_label.add_theme_color_override("font_color", _lbl_tint)
 	_fog_context.add_child(mode_label)
 
 	fog_tool_option = OptionButton.new()
@@ -506,16 +520,12 @@ func _build_fog_context() -> void:
 	fog_tool_option.add_item("R▭ Reveal Rect", 3)
 	fog_tool_option.add_item("H▭ Hide Rect", 4)
 	fog_tool_option.custom_minimum_size = Vector2(roundi(120.0 * s), roundi(28.0 * s))
-	fog_tool_option.add_theme_font_size_override("font_size", roundi(_SMALL_FONT * s))
 	fog_tool_option.tooltip_text = "Fog mode: R◯=Reveal brush  H◯=Hide brush  R▭=Reveal rect  H▭=Hide rect"
 	fog_tool_option.item_selected.connect(_on_fog_tool_selected)
 	_fog_context.add_child(fog_tool_option)
 
 	var brush_label := Label.new()
 	brush_label.text = "Brush"
-	brush_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	var _brush_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
-	brush_label.add_theme_color_override("font_color", _brush_tint)
 	_fog_context.add_child(brush_label)
 
 	fog_brush_spin = SpinBox.new()
@@ -525,7 +535,6 @@ func _build_fog_context() -> void:
 	fog_brush_spin.value = 64
 	fog_brush_spin.suffix = " px"
 	fog_brush_spin.custom_minimum_size = Vector2(roundi(100.0 * s), roundi(28.0 * s))
-	fog_brush_spin.add_theme_font_size_override("font_size", roundi(13.0 * s))
 	fog_brush_spin.value_changed.connect(_on_fog_brush_changed)
 	_fog_context.add_child(fog_brush_spin)
 
@@ -537,16 +546,12 @@ func _build_spawn_context() -> void:
 
 	var profile_label := Label.new()
 	profile_label.text = "Profile"
-	profile_label.add_theme_font_size_override("font_size", roundi(_HEADER_FONT * s))
-	var _prof_tint: Color = _ui_theme_mgr.get_label_tint() if _ui_theme_mgr != null else Color(0.7, 0.7, 0.7)
-	profile_label.add_theme_color_override("font_color", _prof_tint)
 	_spawn_context.add_child(profile_label)
 
 	spawn_profile_option = OptionButton.new()
 	spawn_profile_option.focus_mode = Control.FOCUS_NONE
 	spawn_profile_option.tooltip_text = "Assign a player profile to the selected spawn point"
 	spawn_profile_option.custom_minimum_size = Vector2(roundi(120.0 * s), roundi(28.0 * s))
-	spawn_profile_option.add_theme_font_size_override("font_size", roundi(12.0 * s))
 	spawn_profile_option.item_selected.connect(func(idx: int) -> void: spawn_profile_selected.emit(idx))
 	_spawn_context.add_child(spawn_profile_option)
 
@@ -555,7 +560,6 @@ func _build_spawn_context() -> void:
 	spawn_auto_assign_btn.focus_mode = Control.FOCUS_NONE
 	spawn_auto_assign_btn.tooltip_text = "Round-robin assign all profiles to spawn points"
 	spawn_auto_assign_btn.custom_minimum_size = Vector2(roundi(120.0 * s), roundi(26.0 * s))
-	spawn_auto_assign_btn.add_theme_font_size_override("font_size", roundi(12.0 * s))
 	spawn_auto_assign_btn.pressed.connect(func() -> void: spawn_auto_assign_requested.emit())
 	_apply_compact_style(spawn_auto_assign_btn)
 	_spawn_context.add_child(spawn_auto_assign_btn)
@@ -756,6 +760,14 @@ func _activate_effect_tool() -> void:
 	tool_activated.emit("effect")
 	effect_tool_activated.emit(_selected_effect_type)
 	hide_flyout()
+
+
+## Public entry point — activates the FX tool and updates the toggle UI.
+## Called externally (e.g. by DMWindow) when the user picks an effect in the
+## EffectPanel while a different tool is active.
+func activate_effect_tool() -> void:
+	_set_active_toggle_btn(_effect_stack_btn)
+	_activate_effect_tool()
 
 
 func _on_effect_popup_selected(id: int) -> void:

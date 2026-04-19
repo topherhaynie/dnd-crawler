@@ -194,6 +194,7 @@ func build_player_state_payload() -> Array:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	var im: InputManager = registry.input if registry != null and registry.input != null else null
 	var gs_mgr: GameStateManager = _game_state()
+	var dv_disabled: bool = gs_mgr.is_darkvision_disabled() if gs_mgr != null else false
 	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
@@ -206,11 +207,12 @@ func build_player_state_payload() -> Array:
 		var dashing: bool = im.is_dashing(p.id) if im != null else false
 		var locked: bool = gs_mgr.is_locked(p.id)
 		var light_off: bool = gs_mgr.is_light_off(p.id)
+		var eff_vision_type: int = PlayerProfile.VisionType.NORMAL if dv_disabled else p.get_vision_type()
 		players.append({
 			"id": p.id,
 			"name": p.player_name,
 			"base_speed": p.get_speed(),
-			"vision_type": p.get_vision_type(),
+			"vision_type": eff_vision_type,
 			"darkvision_range": p.get_darkvision_range(),
 			"vision_radius_px": _profile_vision_radius_px(p, map),
 			"perception_mod": p.get_passive_perception() - 10,
@@ -370,6 +372,9 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	var im: InputManager = registry.input if registry != null and registry.input != null else null
 	var dashing: bool = im.is_dashing(profile.id) if im != null else false
+	var gs := _game_state()
+	var dv_disabled: bool = gs.is_darkvision_disabled() if gs != null else false
+	var eff_vision_type: int = PlayerProfile.VisionType.NORMAL if dv_disabled else profile.get_vision_type()
 	if _dm_tokens.has(profile.id):
 		var existing: PlayerSprite = _dm_tokens[profile.id] as PlayerSprite
 		if is_instance_valid(existing):
@@ -377,7 +382,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 				"id": profile.id,
 				"name": profile.player_name,
 				"base_speed": profile.get_speed(),
-				"vision_type": profile.get_vision_type(),
+				"vision_type": eff_vision_type,
 				"darkvision_range": profile.get_darkvision_range(),
 				"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 				"perception_mod": profile.get_passive_perception() - 10,
@@ -404,7 +409,7 @@ func _ensure_token(profile: PlayerProfile) -> PlayerSprite:
 		"id": profile.id,
 		"name": profile.player_name,
 		"base_speed": profile.get_speed(),
-		"vision_type": profile.get_vision_type(),
+		"vision_type": eff_vision_type,
 		"darkvision_range": profile.get_darkvision_range(),
 		"vision_radius_px": _profile_vision_radius_px(profile, _map()),
 		"perception_mod": profile.get_passive_perception() - 10,
@@ -443,7 +448,9 @@ func _profile_speed_px_per_second(profile: PlayerProfile, map: MapData) -> float
 
 
 func _profile_vision_radius_px(profile: PlayerProfile, map: MapData) -> float:
-	var eff_vision: int = profile.get_vision_type()
+	var gs := _game_state()
+	var dv_disabled: bool = gs.is_darkvision_disabled() if gs != null else false
+	var eff_vision: int = PlayerProfile.VisionType.NORMAL if dv_disabled else profile.get_vision_type()
 	var eff_dv: float = profile.get_darkvision_range()
 	if map == null:
 		return eff_dv if eff_vision == PlayerProfile.VisionType.DARKVISION else 60.0

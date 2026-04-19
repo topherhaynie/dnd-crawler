@@ -62,6 +62,7 @@ func update_item(data: ItemEntry) -> void:
 			var campaign: CampaignData = registry.campaign.get_active_campaign()
 			if campaign != null and campaign.item_library.has(data.id):
 				campaign.item_library[data.id] = data.to_dict()
+				registry.campaign.save_campaign()
 
 	item_updated.emit(data)
 

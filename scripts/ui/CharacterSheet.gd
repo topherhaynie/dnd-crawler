@@ -70,6 +70,7 @@ var _dirty: bool = false
 ## Header
 var _name_edit: LineEdit = null
 var _race_edit: LineEdit = null
+var _race_label: Label = null
 var _class_header_label: Label = null
 var _classes_container: VBoxContainer = null
 var _add_class_btn: Button = null
@@ -152,6 +153,61 @@ func _ready() -> void:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+func is_dirty() -> bool:
+	return _dirty
+
+
+func get_character_name() -> String:
+	if _statblock != null and _statblock.name != "":
+		return _statblock.name
+	return "character"
+
+
+func save_now() -> void:
+	## Programmatic save — identical to clicking the Save button.
+	_on_save()
+
+
+func prompt_save_or_discard() -> void:
+	## Show save/discard dialog if dirty, then await completion.
+	## When the user chooses Save or Discard the sheet is no longer dirty.
+	## Returns immediately if not dirty.
+	if not _dirty:
+		return
+	var dlg := ConfirmationDialog.new()
+	dlg.title = "Unsaved Changes"
+	dlg.dialog_text = "Save changes to '%s' before continuing?" % (
+			_statblock.name if _statblock != null and _statblock.name != "" else "character")
+	dlg.ok_button_text = "Save"
+	dlg.cancel_button_text = "Discard"
+	dlg.exclusive = true
+	add_child(dlg)
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var s: float = _get_ui_scale()
+	if reg != null and reg.ui_theme != null:
+		reg.ui_theme.prepare_window(dlg, 15.0)
+	dlg.min_size = Vector2i(roundi(300.0 * s), roundi(120.0 * s))
+	dlg.reset_size()
+	dlg.popup_centered()
+	# Block until user picks an option.
+	var chosen: StringName = await _await_dialog_choice(dlg)
+	if chosen == &"confirmed":
+		_on_save()
+	else:
+		_dirty = false
+	dlg.queue_free()
+
+
+func _await_dialog_choice(dlg: ConfirmationDialog) -> StringName:
+	## Helper — returns "confirmed" or "canceled" when the dialog closes.
+	var result: Array = []
+	dlg.confirmed.connect(func() -> void: result.append(&"confirmed"))
+	dlg.canceled.connect(func() -> void: result.append(&"canceled"))
+	await dlg.visibility_changed # fires when dialog hides
+	return result[0] if result.size() > 0 else &"canceled"
+
+
 func load_character(sb: StatblockData) -> void:
 	_statblock = sb
 	_override = null
@@ -168,6 +224,30 @@ func set_override(so: StatblockOverride) -> void:
 func select_inventory_tab() -> void:
 	if _right_tabs != null:
 		_right_tabs.current_tab = _TAB_INVENTORY
+
+
+func _active_ruleset() -> String:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg != null and reg.campaign != null:
+		var camp: CampaignData = reg.campaign.get_active_campaign()
+		if camp != null:
+			return camp.default_ruleset
+	return "2014"
+
+
+func _race_or_species_label() -> String:
+	return "Species" if _active_ruleset() == "2024" else "Race"
+
+
+func _feature_source_label(src_key: String) -> String:
+	if src_key == "race":
+		if _active_ruleset() == "2024":
+			return "Species Traits"
+		return "Racial Traits"
+	for src: Variant in FEATURE_SOURCES:
+		if src is Dictionary and str((src as Dictionary).get("key", "")) == src_key:
+			return str((src as Dictionary).get("label", ""))
+	return ""
 
 
 # ── UI construction ───────────────────────────────────────────────────────────
@@ -236,7 +316,18 @@ func _build_header(parent: Control) -> void:
 	_name_edit = _labeled_line_edit(grid, "Name", "Character name")
 	_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_name_edit.custom_minimum_size.x = roundi(140.0 * s)
-	_race_edit = _labeled_line_edit(grid, "Race", "Race")
+
+	_race_label = Label.new()
+	_race_label.text = _race_or_species_label()
+	_apply_font_base(_race_label, 18.0)
+	grid.add_child(_race_label)
+	_race_edit = LineEdit.new()
+	_race_edit.placeholder_text = _race_or_species_label()
+	_race_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_race_edit.text_changed.connect(_on_text_changed)
+	_apply_font_base(_race_edit, 18.0)
+	grid.add_child(_race_edit)
+
 	_bg_edit = _labeled_line_edit(grid, "Background", "Background")
 
 	## Classes section — multiclass-aware (Step 4.9)
@@ -554,7 +645,7 @@ func _build_features_tab(tabs: TabContainer) -> void:
 		if not (src is Dictionary):
 			continue
 		var src_key: String = str((src as Dictionary).get("key", ""))
-		var src_label: String = str((src as Dictionary).get("label", ""))
+		var src_label: String = _feature_source_label(src_key)
 
 		var section := VBoxContainer.new()
 		section.add_theme_constant_override("separation", roundi(2.0 * s))
@@ -706,11 +797,13 @@ func _build_inventory_tab(tabs: TabContainer) -> void:
 
 	var add_lib_btn := Button.new()
 	add_lib_btn.text = "Add from Library\u2026"
+	add_lib_btn.tooltip_text = "Browse and add items from the SRD or campaign library"
 	add_lib_btn.pressed.connect(_on_add_from_item_library)
 	header.add_child(add_lib_btn)
 
 	var add_item_btn := Button.new()
-	add_item_btn.text = "+ Add Item"
+	add_item_btn.text = "+ Custom Item"
+	add_item_btn.tooltip_text = "Add a blank row for manual item entry"
 	add_item_btn.pressed.connect(_on_add_inventory_item.bind("", 1, "", false, ""))
 	header.add_child(add_item_btn)
 
@@ -1026,15 +1119,20 @@ func _populate_inventory(sb: StatblockData) -> void:
 	_inventory_rows.clear()
 
 	for item: Variant in sb.inventory:
-		if not (item is Dictionary):
-			continue
-		var id: Dictionary = item as Dictionary
-		_on_add_inventory_item(
-			str(id.get("name", "")),
-			int(id.get("quantity", 1)),
-			str(id.get("weight", "")),
-			bool(id.get("equipped", false)),
-			str(id.get("item_id", "")))
+		if item is ItemEntry:
+			var ie: ItemEntry = item as ItemEntry
+			_on_add_inventory_item(
+				ie.name, ie.quantity,
+				str(ie.weight) if ie.weight > 0.0 else "",
+				ie.equipped, ie.id)
+		elif item is Dictionary:
+			var id: Dictionary = item as Dictionary
+			_on_add_inventory_item(
+				str(id.get("name", "")),
+				int(id.get("quantity", 1)),
+				str(id.get("weight", "")),
+				bool(id.get("equipped", false)),
+				str(id.get("item_id", "")))
 
 
 func _populate_proficiency_texts(sb: StatblockData) -> void:
@@ -1574,7 +1672,7 @@ func _show_feat_picker() -> void:
 		_add_feature_row("feat", "", "")
 		_dirty = true
 		return
-	var ruleset: String = "2014"
+	var ruleset: String = _active_ruleset()
 	var feats: Array = reg.srd.get_feats(ruleset)
 	if feats.is_empty():
 		_add_feature_row("feat", "", "")
@@ -2009,6 +2107,18 @@ func _on_add_from_item_library() -> void:
 
 
 func _on_library_item_picked(data: ItemEntry) -> void:
+	if not data.id.is_empty():
+		for rd_var: Variant in _inventory_rows:
+			if not (rd_var is Dictionary):
+				continue
+			var rd: Dictionary = rd_var as Dictionary
+			if str(rd.get("item_id", "")) == data.id:
+				var spin: SpinBox = rd.get("qty_spin") as SpinBox
+				if spin != null:
+					spin.value += 1
+					_dirty = true
+					_refresh_inventory_totals()
+				return
 	var wt: String = str(data.weight) if data.weight > 0.0 else ""
 	_on_add_inventory_item(data.name, 1, wt, false, data.id)
 	_refresh_inventory_totals()
@@ -2282,9 +2392,10 @@ static func _infer_feature_source(fname: String, sb: StatblockData) -> String:
 func _build_spell_lookup() -> Dictionary:
 	## Build a case-insensitive display-name → index map for all SRD spells.
 	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var ruleset: String = _active_ruleset()
 	var lookup: Dictionary = {} # String (lower-name) -> String (index)
 	if reg != null and reg.srd != null:
-		for sd_var: Variant in reg.srd.get_spells("2014"):
+		for sd_var: Variant in reg.srd.get_spells(ruleset):
 			if sd_var is SpellData:
 				var sd: SpellData = sd_var as SpellData
 				lookup[sd.name.to_lower()] = sd.index
@@ -2297,15 +2408,16 @@ func _resolve_spell_entry(entry: String, lookup: Dictionary, reg: ServiceRegistr
 	var idx: String = entry
 	var display: String = entry
 	var lvl: int = -1
+	var ruleset: String = _active_ruleset()
 	if reg != null and reg.srd != null:
 		## Try direct index lookup first.
-		var sd: SpellData = reg.srd.get_spell(idx, "2014")
+		var sd: SpellData = reg.srd.get_spell(idx, ruleset)
 		if sd == null:
 			## Fall back to display-name → index.
 			var mapped: Variant = lookup.get(entry.to_lower(), "")
 			if str(mapped) != "":
 				idx = str(mapped)
-				sd = reg.srd.get_spell(idx, "2014")
+				sd = reg.srd.get_spell(idx, ruleset)
 		if sd != null:
 			if not sd.name.is_empty():
 				display = sd.name
@@ -2363,7 +2475,8 @@ func _on_add_spell_pressed() -> void:
 	if reg == null or reg.srd == null:
 		return
 	var s: float = _get_ui_scale()
-	var all_spells: Array = reg.srd.get_spells("2014")
+	var ruleset: String = _active_ruleset()
+	var all_spells: Array = reg.srd.get_spells(ruleset)
 	if all_spells.is_empty():
 		return
 
@@ -2491,7 +2604,7 @@ func _on_add_spell_pressed() -> void:
 		var sp_idx2: String = str(item_list.get_item_metadata(idx2))
 		if sp_idx2.is_empty():
 			return
-		var sd2: SpellData = reg.srd.get_spell(sp_idx2, "2014")
+		var sd2: SpellData = reg.srd.get_spell(sp_idx2, ruleset)
 		if sd2 != null:
 			_show_spell_detail(sd2))
 	## OK button adds the selected spell.
@@ -2525,7 +2638,7 @@ func _on_spells_text_gui_input(event: InputEvent) -> void:
 	var idx: String = str(info.get("index", ""))
 	if idx.is_empty() or reg == null or reg.srd == null:
 		return
-	var sd: SpellData = reg.srd.get_spell(idx, "2014")
+	var sd: SpellData = reg.srd.get_spell(idx, _active_ruleset())
 	if sd == null:
 		return
 	_show_spell_detail(sd)

@@ -294,7 +294,7 @@ func _update_visuals() -> void:
 		vision_light.texture = _get_or_create_cone_light_texture()
 	var radius_px := vision_radius_px
 	radius_px *= vision_scale
-	update_vision_radius(radius_px)
+	update_vision_radius(radius_px, true)
 	if vision_type == VisionType.NORMAL:
 		rotation = _last_nonzero_dir.angle()
 	if _lock_label != null:
@@ -311,12 +311,15 @@ func set_vision_radius_px(radius_px: float) -> void:
 	update_vision_radius(vision_radius_px * vision_scale)
 
 
-func update_vision_radius(radius: float) -> void:
+func update_vision_radius(radius: float, instant: bool = false) -> void:
 	var safe_radius := maxf(radius, 8.0)
 	var base_radius := _vision_texture_base_radius_px()
 	var target_scale := maxf(safe_radius / base_radius, 0.05)
 	if _vision_radius_tween and _vision_radius_tween.is_running():
 		_vision_radius_tween.kill()
+	if instant:
+		vision_light.texture_scale = target_scale
+		return
 	_vision_radius_tween = create_tween()
 	_vision_radius_tween.set_trans(Tween.TRANS_SINE)
 	_vision_radius_tween.set_ease(Tween.EASE_OUT)

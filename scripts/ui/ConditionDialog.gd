@@ -12,7 +12,7 @@ class_name ConditionDialog
 ## current_conditions: Array of condition name strings (from StatblockOverride.conditions)
 
 signal condition_confirmed(token_id: String, condition_name: String,
-	source: String, duration_rounds: int)
+	source: String, duration_rounds: int, exhaustion_level: int)
 signal condition_removed_requested(token_id: String, condition_name: String)
 
 var _token_id: String = ""
@@ -25,6 +25,9 @@ var _active_section: VBoxContainer = null
 var _condition_option: OptionButton = null
 var _source_edit: LineEdit = null
 var _duration_spin: SpinBox = null
+var _duration_row: HBoxContainer = null
+var _exhaustion_row: HBoxContainer = null
+var _exhaustion_spin: SpinBox = null
 var _apply_btn: Button = null
 
 
@@ -116,6 +119,7 @@ func _build_ui() -> void:
 		_condition_option.add_item(ConditionRules.get_label(key))
 		_condition_option.set_item_metadata(
 			_condition_option.item_count - 1, key)
+	_condition_option.item_selected.connect(_on_condition_selected)
 	cond_row.add_child(_condition_option)
 
 	# Source field.
@@ -133,13 +137,13 @@ func _build_ui() -> void:
 	src_row.add_child(_source_edit)
 
 	# Duration spinner.
-	var dur_row := HBoxContainer.new()
-	dur_row.add_theme_constant_override("separation", 6)
-	_root.add_child(dur_row)
+	_duration_row = HBoxContainer.new()
+	_duration_row.add_theme_constant_override("separation", 6)
+	_root.add_child(_duration_row)
 
 	var dur_lbl := Label.new()
 	dur_lbl.text = "Duration:"
-	dur_row.add_child(dur_lbl)
+	_duration_row.add_child(dur_lbl)
 
 	_duration_spin = SpinBox.new()
 	_duration_spin.min_value = -1.0
@@ -150,7 +154,27 @@ func _build_ui() -> void:
 	_duration_spin.allow_lesser = false
 	_duration_spin.allow_greater = false
 	_duration_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dur_row.add_child(_duration_spin)
+	_duration_row.add_child(_duration_spin)
+
+	# Exhaustion level spinner (shown only when Exhaustion is selected).
+	_exhaustion_row = HBoxContainer.new()
+	_exhaustion_row.add_theme_constant_override("separation", 6)
+	_exhaustion_row.visible = false
+	_root.add_child(_exhaustion_row)
+
+	var exh_lbl := Label.new()
+	exh_lbl.text = "Level:"
+	_exhaustion_row.add_child(exh_lbl)
+
+	_exhaustion_spin = SpinBox.new()
+	_exhaustion_spin.min_value = 1.0
+	_exhaustion_spin.max_value = 10.0
+	_exhaustion_spin.step = 1.0
+	_exhaustion_spin.value = 1.0
+	_exhaustion_spin.allow_lesser = false
+	_exhaustion_spin.allow_greater = false
+	_exhaustion_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_exhaustion_row.add_child(_exhaustion_spin)
 
 	# Buttons.
 	var btn_row := HBoxContainer.new()
@@ -253,12 +277,31 @@ func _on_apply_pressed() -> void:
 	var cname: String = str(_condition_option.get_item_metadata(idx))
 	var source: String = _source_edit.text.strip_edges() if _source_edit != null else ""
 	var duration: int = int(_duration_spin.value) if _duration_spin != null else -1
-	condition_confirmed.emit(_token_id, cname, source, duration)
+	var exh_level: int = 0
+	if cname == "exhaustion" and _exhaustion_spin != null:
+		exh_level = int(_exhaustion_spin.value)
+		# Exhaustion is always indefinite (managed by level, not rounds).
+		duration = -1
+	condition_confirmed.emit(_token_id, cname, source, duration, exh_level)
 	# Clear form for next entry.
 	if _source_edit != null:
 		_source_edit.text = ""
 	if _duration_spin != null:
 		_duration_spin.value = -1.0
+	if _exhaustion_spin != null:
+		_exhaustion_spin.value = 1.0
+
+
+func _on_condition_selected(_index: int) -> void:
+	var is_exhaustion: bool = false
+	if _condition_option != null and _condition_option.selected >= 0:
+		var cname: String = str(_condition_option.get_item_metadata(_condition_option.selected))
+		is_exhaustion = (cname == "exhaustion")
+	if _exhaustion_row != null:
+		_exhaustion_row.visible = is_exhaustion
+	if _duration_row != null:
+		_duration_row.visible = not is_exhaustion
+	reset_size()
 
 
 func _on_close() -> void:

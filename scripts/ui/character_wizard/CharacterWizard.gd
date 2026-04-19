@@ -50,6 +50,15 @@ var classes_raw: Array = []
 var spells_raw: Array = []
 var feats_raw: Array = []
 
+
+func _campaign_default_ruleset() -> String:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.campaign != null:
+		var camp: CampaignData = registry.campaign.get_active_campaign()
+		if camp != null:
+			return camp.default_ruleset
+	return "2014"
+
 ## Class features step state
 var selected_subclass: String = ""
 var chosen_cantrips: Array = []
@@ -139,7 +148,7 @@ func open_wizard() -> void:
 	ability_mode = 0
 	background = 0
 	link_profile_id = ""
-	ruleset = "2014"
+	ruleset = _campaign_default_ruleset()
 	selected_subclass = ""
 	chosen_cantrips.clear()
 	chosen_spells.clear()

@@ -12,6 +12,10 @@ const _GameSaveDataClass = preload("res://scripts/services/game_state/models/Gam
 var player_locked: Dictionary = {}
 var player_light_off: Dictionary = {}
 var player_positions: Dictionary = {}
+
+## When true, all players are treated as having normal vision regardless of
+## their profile's vision type.  Controlled by the DM toggle.
+var darkvision_disabled: bool = false
 var windows: Array = []
 
 ## The currently-loaded game save (null when no save is active).

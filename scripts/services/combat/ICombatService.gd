@@ -227,10 +227,39 @@ func get_conditions(_token_id: String) -> Array:
 ## roll_type: "attack_made" | "attack_rcvd" | "save" | "check"
 ## ability: save/check ability key (e.g. "str", "dex") — ignored for attack rolls
 ## Returns {advantage: bool, disadvantage: bool, auto_fail: bool}
+## May also include d20_penalty: int for 2024 exhaustion.
 func check_condition_modifiers(_token_id: String, _roll_type: String,
 		_ability: String) -> Dictionary:
 	push_error("ICombatService.check_condition_modifiers: not implemented")
 	return {"advantage": false, "disadvantage": false, "auto_fail": false}
+
+
+## Set the exhaustion level for a token. Level 0 removes exhaustion.
+func set_exhaustion_level(_token_id: String, _level: int) -> void:
+	push_error("ICombatService.set_exhaustion_level: not implemented")
+
+
+## Return the current exhaustion level for a token (0 = none).
+func get_exhaustion_level(_token_id: String) -> int:
+	push_error("ICombatService.get_exhaustion_level: not implemented")
+	return 0
+
+
+## Attempt to grapple a target. Returns result dict with contest details.
+## 2014: contested Athletics vs Athletics/Acrobatics.
+## 2024: target makes STR or DEX save vs attacker's unarmed DC.
+func attempt_grapple(_attacker_id: String, _target_id: String) -> Dictionary:
+	push_error("ICombatService.attempt_grapple: not implemented")
+	return {}
+
+
+## Attempt to shove a target (push or knock prone). Returns result dict.
+## 2014: contested Athletics vs Athletics/Acrobatics.
+## 2024: target makes STR or DEX save vs attacker's unarmed DC.
+func attempt_shove(_attacker_id: String, _target_id: String,
+		_knock_prone: bool) -> Dictionary:
+	push_error("ICombatService.attempt_shove: not implemented")
+	return {}
 
 
 # ---------------------------------------------------------------------------

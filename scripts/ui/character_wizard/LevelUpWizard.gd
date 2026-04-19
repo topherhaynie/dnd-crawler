@@ -747,8 +747,9 @@ func _populate_confirm_step() -> void:
 	# Spell slots
 	var old_classes: Array = _statblock.classes.duplicate(true)
 	var new_classes: Array = _build_new_classes_array()
-	var old_slots: Dictionary = WizardConstants.compute_spell_slots(old_classes)
-	var new_slots: Dictionary = WizardConstants.compute_spell_slots(new_classes)
+	var rs: String = _statblock.ruleset if not _statblock.ruleset.is_empty() else "2014"
+	var old_slots: Dictionary = WizardConstants.compute_spell_slots(old_classes, rs)
+	var new_slots: Dictionary = WizardConstants.compute_spell_slots(new_classes, rs)
 	if new_slots != old_slots:
 		var slot_parts: Array = []
 		for lv: int in range(1, 10):
@@ -965,7 +966,8 @@ func _apply_level_up() -> void:
 		sb.features.append({"name": "Custom Spell", "desc": desc})
 
 	# 7. Spell slots
-	sb.spell_slots = WizardConstants.compute_spell_slots(sb.classes)
+	var lvl_rs: String = sb.ruleset if not sb.ruleset.is_empty() else "2014"
+	sb.spell_slots = WizardConstants.compute_spell_slots(sb.classes, lvl_rs)
 
 	# 8. Recalculate passive perception in senses
 	var wis_mod: int = sb.get_modifier("wis")

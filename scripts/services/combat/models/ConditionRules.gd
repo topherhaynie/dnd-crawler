@@ -69,15 +69,16 @@ const CONDITIONS: Dictionary = {
 		"abbrev": "EXH",
 		"color": Color(0.55, 0.40, 0.12, 1.0),
 		"attack_made_adv": false,
-		"attack_made_disadv": true,
+		"attack_made_disadv": false,
 		"attack_rcvd_adv": false,
 		"attack_rcvd_disadv": false,
 		"save_auto_fail": [],
-		"save_disadv": ["str", "dex", "con", "int", "wis", "cha"],
-		"check_disadv": true,
-		"speed_mult": 0.5,
+		"save_disadv": [],
+		"check_disadv": false,
+		"speed_mult": 1.0,
 		"incapacitated": false,
-		"description": "Disadvantage on ability checks/saves; speed halved (simplified level 1-3).",
+		"description": "Level-based condition. Effects vary by level and ruleset.",
+		"level_based": true,
 	},
 	"frightened": {
 		"label": "Frightened",
@@ -330,3 +331,77 @@ static func compute_modifiers(conditions: Array, roll_type: String, ability: Str
 					disadv = true
 
 	return {"advantage": adv, "disadvantage": disadv, "auto_fail": auto_fail}
+
+
+## Compute exhaustion modifiers for a given level and ruleset.
+##
+## 2014 exhaustion (6 levels):
+##   1: disadvantage on ability checks
+##   2: speed halved
+##   3: disadvantage on attacks and saves
+##   4: HP maximum halved
+##   5: speed reduced to 0
+##   6: death
+##
+## 2024 exhaustion (10 levels):
+##   Each level imposes a cumulative -2 penalty to d20 rolls (checks, saves, attacks).
+##   At level 10, the creature dies. Speed reduced by 5 ft per level.
+##
+## Returns {attack_disadv: bool, check_disadv: bool, save_disadv: bool,
+##          speed_mult: float, hp_max_halved: bool, speed_reduced_to_zero: bool,
+##          dead: bool, d20_penalty: int, description: String}
+static func compute_exhaustion_modifiers(level: int, ruleset: String) -> Dictionary:
+	if level <= 0:
+		return {
+			"attack_disadv": false, "check_disadv": false, "save_disadv": false,
+			"speed_mult": 1.0, "hp_max_halved": false, "speed_reduced_to_zero": false,
+			"dead": false, "d20_penalty": 0, "description": "",
+		}
+	if ruleset == "2024":
+		var clamped: int = clampi(level, 0, 10)
+		var penalty: int = clamped * -2
+		var dead: bool = clamped >= 10
+		var desc: String = "Exhaustion %d: %d penalty to d20 rolls" % [clamped, penalty]
+		if dead:
+			desc = "Exhaustion 10: dead"
+		return {
+			"attack_disadv": false, "check_disadv": false, "save_disadv": false,
+			"speed_mult": 1.0, "hp_max_halved": false, "speed_reduced_to_zero": false,
+			"dead": dead, "d20_penalty": penalty,
+			"description": desc,
+		}
+	# 2014 rules (default)
+	var clamped_14: int = clampi(level, 0, 6)
+	var atk_dis: bool = clamped_14 >= 3
+	var chk_dis: bool = clamped_14 >= 1
+	var sav_dis: bool = clamped_14 >= 3
+	var spd_mult: float = 0.5 if clamped_14 >= 2 else 1.0
+	var spd_zero: bool = clamped_14 >= 5
+	var hp_halved: bool = clamped_14 >= 4
+	var dead_14: bool = clamped_14 >= 6
+	var parts: Array[String] = []
+	if chk_dis:
+		parts.append("disadvantage on ability checks")
+	if spd_mult < 1.0 and not spd_zero:
+		parts.append("speed halved")
+	if atk_dis:
+		parts.append("disadvantage on attacks and saves")
+	if hp_halved:
+		parts.append("HP max halved")
+	if spd_zero:
+		parts.append("speed 0")
+	if dead_14:
+		parts.append("dead")
+	var desc_14: String = "Exhaustion %d: %s" % [clamped_14, ", ".join(parts)] if not parts.is_empty() else ""
+	return {
+		"attack_disadv": atk_dis, "check_disadv": chk_dis, "save_disadv": sav_dis,
+		"speed_mult": 0.0 if spd_zero else spd_mult, "hp_max_halved": hp_halved,
+		"speed_reduced_to_zero": spd_zero,
+		"dead": dead_14, "d20_penalty": 0,
+		"description": desc_14,
+	}
+
+
+## Return the maximum exhaustion level for a given ruleset.
+static func max_exhaustion_level(ruleset: String) -> int:
+	return 10 if ruleset == "2024" else 6

@@ -2305,12 +2305,15 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 	if sp_idx >= 0:
 		return SelectableHit.make(ISelectionService.SelectionLayer.SPAWN, sp_idx)
 
-	# --- INDICATOR (handles only; body drag is handled post-match) ---
+	# --- INDICATOR (handles first, then body — both above walls) ---
 	if _viewport_indicator != Rect2() and _indicator_overlay != null:
 		var ind_handle: int = _indicator_overlay.get_handle_at(world_pos)
 		if ind_handle >= 0:
 			return SelectableHit.make(
 					ISelectionService.SelectionLayer.INDICATOR, null, ind_handle)
+		if _indicator_has_point(world_pos):
+			return SelectableHit.make(
+					ISelectionService.SelectionLayer.INDICATOR, null, -1)
 
 	# --- WALL (lowest priority) ---
 	# Check already-selected wall handle before looking for a new wall.
@@ -2351,6 +2354,8 @@ func _update_cursor(world_pos: Vector2) -> void:
 			shape = DisplayServer.CURSOR_DRAG
 		elif _indicator_overlay != null and _indicator_overlay.get_handle_at(world_pos) >= 0:
 			shape = DisplayServer.CURSOR_DRAG
+		elif _indicator_has_point(world_pos):
+			shape = DisplayServer.CURSOR_MOVE
 		# Track hover to show/hide handles on TokenSprite nodes (DM only).
 		if is_dm_view and _rotating_token_id == null and _resizing_token_id == null and _dragging_token_node == null and _trigger_radius_dragging_id == null:
 			var new_hover: Variant = handle_result.get("token_id", null) if not handle_result.is_empty() else token_hit
@@ -2845,6 +2850,18 @@ func _unhandled_input(event: InputEvent) -> void:
 									_resize_start_rect = _viewport_indicator
 									var corners := _indicator_corners()
 									_resize_anchor_world = corners[(eff_hit.handle + 2) % 4]
+								else:
+									# Body click — clear selections first (same as empty-space click).
+									if active_tool == Tool.SELECT:
+										_selected_effect_id = ""
+										if _selected_meas_id != "":
+											_selected_meas_id = ""
+											if measurement_overlay != null:
+												measurement_overlay.set_selected("")
+										var smgr_ind: SelectionManager = _selection_mgr()
+										if smgr_ind != null:
+											smgr_ind.clear_selection()
+									_dragging_indicator = true
 								get_viewport().set_input_as_handled()
 								return
 							ISelectionService.SelectionLayer.WALL:
@@ -2872,10 +2889,6 @@ func _unhandled_input(event: InputEvent) -> void:
 									var smgr_c: SelectionManager = _selection_mgr()
 									if smgr_c != null:
 										smgr_c.clear_selection()
-									# Start indicator body drag if click is inside the
-									# viewport indicator (lower priority than deselect).
-									if _indicator_has_point(world_pos):
-										_dragging_indicator = true
 									get_viewport().set_input_as_handled()
 									return
 								elif active_tool == Tool.PLACE_TOKEN:

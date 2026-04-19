@@ -106,6 +106,7 @@ var _volume_label: Label = null
 var _volume_vbox: VBoxContainer = null
 
 var _status_label: Label = null
+var _status_bar: PanelContainer = null
 var _ui_root: VBoxContainer = null
 
 # Player profile form fields
@@ -368,7 +369,8 @@ var _freeze_light_buttons: Dictionary = {} ## {player_id: Button}
 var _autopause_locked_ids: Dictionary = {} ## {player_id: true} — tracks which locks came from autopause
 var _prev_player_positions: Dictionary = {} ## {player_id: Vector2} — previous frame positions for swept-path
 var _detected_token_ids: Array = [] ## token IDs currently in detection state
-var _ui_layer: CanvasLayer = null ## CanvasLayer that owns _ui_root; freeze panel anchors here directly
+var _ui_layer: CanvasLayer = null ## CanvasLayer that owns the UI tree
+var _ui_content_area: Control = null ## viewport-filling region above the status bar; all overlays live here
 var _bg_chrome_layer: CanvasLayer = null ## background chrome behind MapView
 
 # ── Effect panel ─────────────────────────────────────────────────────────────
@@ -462,6 +464,8 @@ func _ready() -> void:
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	# Defer history bindings so HistoryService is registered by bootstrap.
 	call_deferred("_ensure_history_bindings")
+	# Defer campaign bindings so CampaignService is registered by bootstrap.
+	call_deferred("_ensure_campaign_bindings")
 	# Release all undo/redo closures when this node is freed to avoid dangling refs.
 	tree_exiting.connect(func():
 		var _r := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -548,6 +552,40 @@ func _ensure_history_bindings() -> void:
 		svc.history_changed.connect(_update_profile_undo_btn)
 	_refresh_history_menu()
 	_update_profile_undo_btn()
+
+
+func _ensure_campaign_bindings() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.campaign == null or registry.campaign.service == null:
+		call_deferred("_ensure_campaign_bindings")
+		return
+	# Signal subscription: ICampaignService extends Node; signals live on the
+	# Node instance. RefCounted manager cannot re-emit — approved exception.
+	var svc: ICampaignService = registry.campaign.service
+	if not svc.is_connected("campaign_loaded", Callable(self , "_on_campaign_indicator_loaded")):
+		svc.campaign_loaded.connect(_on_campaign_indicator_loaded)
+	if not svc.is_connected("campaign_closed", Callable(self , "_on_campaign_indicator_closed")):
+		svc.campaign_closed.connect(_on_campaign_indicator_closed)
+	_update_campaign_indicator()
+
+
+func _on_campaign_indicator_loaded(_campaign: CampaignData) -> void:
+	_update_campaign_indicator()
+
+
+func _on_campaign_indicator_closed() -> void:
+	_update_campaign_indicator()
+
+
+func _update_campaign_indicator() -> void:
+	var base_title: String = "The Vault"
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.campaign != null:
+		var campaign: CampaignData = registry.campaign.get_active_campaign()
+		if campaign != null and not campaign.name.is_empty():
+			get_window().title = "%s \u2014 %s" % [base_title, campaign.name]
+			return
+	get_window().title = base_title
 
 
 func _refresh_history_menu() -> void:
@@ -922,12 +960,24 @@ func _build_ui() -> void:
 	_ui_layer.layer = 10
 	add_child(_ui_layer)
 
-	# Root VBox fills the entire viewport
+	# Content area fills the viewport above the status bar. All overlays and
+	# _ui_root live inside this node so their anchor_bottom = 1.0 resolves to
+	# the top of the status bar rather than the viewport bottom.
+	_ui_content_area = Control.new()
+	_ui_content_area.name = "UIContentArea"
+	_ui_content_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_content_area.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ui_layer.add_child(_ui_content_area)
+
+	# Root VBox fills the content area.  PASS lets pointer events propagate
+	# past _ui_root so they reach MapView._unhandled_input instead of being
+	# consumed by the default STOP filter on this full-rect container.
 	_ui_root = VBoxContainer.new()
 	_ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ui_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	_ui_root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ui_root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_ui_layer.add_child(_ui_root)
+	_ui_content_area.add_child(_ui_root)
 
 	# ── Menu bar ─────────────────────────────────────────────────────────────
 	_menu_bar = MenuBar.new()
@@ -959,7 +1009,6 @@ func _build_ui() -> void:
 	file_menu.add_item("New Campaign…", 40)
 	file_menu.add_item("Open Campaign…", 41)
 	file_menu.add_item("Save Campaign", 42)
-	file_menu.add_item("Campaign Settings…", 43)
 	file_menu.add_item("Close Campaign", 44)
 	file_menu.add_separator()
 	file_menu.add_item("Export Statblocks as JSON\u2026", 47)
@@ -1089,6 +1138,7 @@ func _build_ui() -> void:
 		_sync_theme_submenu_checks(current_preset)
 
 	_view_menu.add_separator()
+	_view_menu.add_item("Campaign Hub…", 37)
 	_view_menu.add_item("▶ Launch Player Window", 23)
 	_view_menu.id_pressed.connect(_on_view_menu_id)
 	menu_bar.add_child(_view_menu)
@@ -1132,7 +1182,7 @@ func _build_ui() -> void:
 	if _sr != null:
 		_tm_ref = _sr.ui_theme
 	_palette.setup(_get_ui_scale_mgr(), _tm_ref)
-	_ui_layer.add_child(_palette)
+	_ui_content_area.add_child(_palette)
 	_apply_palette_size()
 
 	# Wire palette signals
@@ -1146,11 +1196,12 @@ func _build_ui() -> void:
 	_palette.play_mode_toggled.connect(_on_palette_play_mode_toggled)
 	_palette.dm_fog_visible_toggled.connect(_on_dm_fog_visible_toggled)
 	_palette.flashlights_only_toggled.connect(_on_flashlights_only_toggled)
+	_palette.darkvision_disabled_toggled.connect(_on_darkvision_disabled_toggled)
 	_palette.effect_tool_activated.connect(_on_palette_effect_tool_activated)
 	_palette.undock_btn.pressed.connect(_on_undock_btn_pressed)
 
-	# Add flyout panel to ui layer (not ui_root) for HiDPI stability
-	_ui_layer.add_child(_palette.get_flyout())
+	# Add flyout panel to content area (not ui_root) for HiDPI stability
+	_ui_content_area.add_child(_palette.get_flyout())
 
 	# ── Map area spacer (passes mouse through to the map) ────────────────────
 	var map_spacer := Control.new()
@@ -1161,7 +1212,7 @@ func _build_ui() -> void:
 	content_row.add_child(map_spacer)
 
 	# ── Player freeze panel (vertical side panel, right side) ─────────────────
-	# Added directly to _ui_layer (not _ui_root) so _ui_root.scale does not
+	# Added directly to _ui_content_area (not _ui_root) so _ui_root.scale does not
 	# push it off-screen on HiDPI / Retina displays.
 	_build_freeze_panel()
 	_build_effect_panel()
@@ -1199,7 +1250,7 @@ func _build_ui() -> void:
 			tm.service.theme_changed.connect(_on_ui_theme_changed)
 		# Theme all existing buttons/panels in the UI tree in one pass
 		tm.theme_control_tree(_ui_root, _ui_scale())
-		# Overlay panels live on _ui_layer (not _ui_root) — theme them too
+		# Overlay panels live on _ui_content_area (not _ui_root) — theme them too
 		if _palette != null:
 			tm.theme_control_tree(_palette, _ui_scale())
 		# Flyout is on _ui_layer (not a child of palette) — theme it separately
@@ -1221,10 +1272,32 @@ func _build_ui() -> void:
 		if _multi_select_bar != null:
 			tm.theme_control_tree(_multi_select_bar, _ui_scale())
 
+	# Status bar lives on _ui_layer (not _ui_root) so _ui_root.scale does not
+	# push it off-screen. Anchored to the bottom edge, full width.
+	_status_bar = PanelContainer.new()
+	_status_bar.name = "StatusBar"
+	_status_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_status_bar.anchor_left = 0.0
+	_status_bar.anchor_right = 1.0
+	_status_bar.anchor_top = 1.0
+	_status_bar.anchor_bottom = 1.0
+	_status_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var s: float = _ui_scale()
+	_apply_status_bar_size()
+	var status_bg := StyleBoxFlat.new()
+	status_bg.bg_color = Color(0.12, 0.12, 0.14, 0.9)
+	status_bg.content_margin_left = roundi(8.0 * s)
+	status_bg.content_margin_right = roundi(8.0 * s)
+	status_bg.content_margin_top = roundi(4.0 * s)
+	status_bg.content_margin_bottom = roundi(4.0 * s)
+	_status_bar.add_theme_stylebox_override("panel", status_bg)
 	_status_label = Label.new()
 	_status_label.text = "No map loaded"
 	_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_ui_root.add_child(_status_label)
+	_status_label.add_theme_font_size_override("font_size", roundi(13.0 * s))
+	_status_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+	_status_bar.add_child(_status_label)
+	_ui_layer.add_child(_status_bar)
 
 	# ── FileDialog (image selection for New Map) ─────────────────────────────
 	_file_dialog = FileDialog.new()
@@ -2060,13 +2133,13 @@ func _dock_palette() -> void:
 	if _palette_window:
 		_palette_window.remove_child(_palette)
 
-	# Re-anchor to left edge of _ui_layer.
+	# Re-anchor to left edge of content area.
 	_palette.anchor_left = 0.0
 	_palette.anchor_right = 0.0
 	_palette.anchor_top = 0.0
 	_palette.anchor_bottom = 1.0
 	_palette.grow_horizontal = Control.GROW_DIRECTION_END
-	_ui_layer.add_child(_palette)
+	_ui_content_area.add_child(_palette)
 	_apply_palette_size()
 
 	if _palette_window:
@@ -2086,7 +2159,7 @@ func _close_floating_palette() -> void:
 # ---------------------------------------------------------------------------
 
 func _build_freeze_panel() -> void:
-	# The panel lives directly in _ui_layer (screen coordinates), NOT inside
+	# The panel lives directly in _ui_content_area (screen coordinates), NOT inside
 	# _ui_root. This keeps it immune to _ui_root.scale on HiDPI displays.
 	_freeze_panel = PanelContainer.new()
 	_freeze_panel.name = "FreezePanel"
@@ -2099,7 +2172,7 @@ func _build_freeze_panel() -> void:
 	# offset_left is set (negative panel width in screen px) by _apply_ui_scale()
 	_freeze_panel.offset_left = -200.0
 	_freeze_panel.offset_right = 0.0
-	_ui_layer.add_child(_freeze_panel)
+	_ui_content_area.add_child(_freeze_panel)
 
 	var fp_margin := MarginContainer.new()
 	fp_margin.add_theme_constant_override("margin_left", 4)
@@ -2448,8 +2521,8 @@ func _dock_freeze_panel() -> void:
 	_freeze_panel.anchor_bottom = 1.0
 	_freeze_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 
-	if _ui_layer != null:
-		_ui_layer.add_child(_freeze_panel)
+	if _ui_content_area != null:
+		_ui_content_area.add_child(_freeze_panel)
 		_apply_freeze_panel_size()
 
 	# Restore title visibility now we're docked again
@@ -2489,7 +2562,7 @@ func _build_effect_panel() -> void:
 	_effect_panel.anchor_top = 0.0
 	_effect_panel.anchor_bottom = 1.0
 	_effect_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_ui_layer.add_child(_effect_panel)
+	_ui_content_area.add_child(_effect_panel)
 	_apply_effect_panel_size()
 
 	# Wire signals
@@ -2523,7 +2596,18 @@ func _apply_effect_panel_size() -> void:
 	_apply_measure_panel_size()
 
 
+## If the FX tool is not already active, switch to it so the user can
+## immediately place effects after picking one in the EffectPanel.
+func _ensure_effect_tool_active() -> void:
+	if _palette == null or _map_view == null:
+		return
+	if (_palette as ToolPalette).get_active_tool() == "effect":
+		return
+	(_palette as ToolPalette).activate_effect_tool()
+
+
 func _on_effect_panel_type_selected(effect_type: int) -> void:
+	_ensure_effect_tool_active()
 	if _map_view != null:
 		_map_view.effect_place_type = effect_type
 	var label: String = EffectData.EFFECT_LABELS[effect_type] if effect_type < EffectData.EFFECT_LABELS.size() else "FX"
@@ -2575,6 +2659,7 @@ func _load_effect_manifest() -> void:
 
 
 func _on_effect_panel_definition_id_selected(effect_id: String) -> void:
+	_ensure_effect_tool_active()
 	if _map_view != null:
 		_map_view.effect_place_definition_id = effect_id
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -2662,8 +2747,8 @@ func _dock_effect_panel() -> void:
 	_effect_panel.anchor_bottom = 1.0
 	_effect_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 
-	if _ui_layer != null:
-		_ui_layer.add_child(_effect_panel)
+	if _ui_content_area != null:
+		_ui_content_area.add_child(_effect_panel)
 		_apply_effect_panel_size()
 
 	if _effect_panel_window:
@@ -2698,7 +2783,6 @@ func _on_file_menu_id(id: int) -> void:
 		40: _on_new_campaign()
 		41: _on_open_campaign()
 		42: _on_save_campaign()
-		43: _on_campaign_settings()
 		44: _on_close_campaign()
 		45: _on_close_map()
 		46: _on_close_save()
@@ -2803,12 +2887,18 @@ func _on_new_campaign() -> void:
 
 
 func _on_open_campaign() -> void:
-	## Use a native folder-picker to browse to a .campaign directory.
-	## Campaigns are directory bundles (like .map/.sav), so FILE_MODE_OPEN_DIR
-	## with use_native_dialog=true gives a native OS folder picker on all platforms.
+	## Show the campaign browser (same UI as startup / post-close).
+	_open_campaign_browser()
+
+
+func _on_open_campaign_folder() -> void:
+	## Use a native folder-picker to import a .campaign directory from a
+	## non-standard location.  Campaigns are directory bundles, so
+	## FILE_MODE_OPEN_DIR with use_native_dialog=true gives a native OS
+	## folder picker on all platforms.
 	var fd := FileDialog.new()
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-	fd.title = "Open Campaign"
+	fd.title = "Open Campaign Folder"
 	fd.use_native_dialog = true
 	fd.access = FileDialog.ACCESS_FILESYSTEM
 	var campaigns_abs: String = ProjectSettings.globalize_path("user://data/campaigns/")
@@ -2883,6 +2973,78 @@ func _on_close_map() -> void:
 		_open_campaign_hub()
 
 
+# ---------------------------------------------------------------------------
+# Quit-time unsaved-changes prompt
+# ---------------------------------------------------------------------------
+
+func has_unsaved_changes() -> bool:
+	## Returns true when any subsystem has data that would be lost on quit.
+	if _char_sheet != null and _char_sheet.is_dirty():
+		return true
+	if not _active_save_bundle_path.is_empty():
+		return true
+	return false
+
+
+func prompt_save_before_quit() -> void:
+	## Show a themed quit-confirmation dialog when unsaved work exists.
+	## Saves campaign, character sheet, and optionally the game save, then quits.
+	## If the user cancels, the quit is aborted.
+	var char_dirty: bool = _char_sheet != null and _char_sheet.is_dirty()
+	var save_active: bool = not _active_save_bundle_path.is_empty()
+
+	# Build description of what is unsaved.
+	var parts: PackedStringArray = PackedStringArray()
+	if char_dirty:
+		var ch_name: String = _char_sheet.get_character_name() if _char_sheet != null else "character"
+		parts.append("character sheet (%s)" % ch_name)
+	if save_active:
+		parts.append("game save")
+	var detail: String = ", ".join(parts)
+
+	var s: float = _ui_scale()
+	var dlg := ConfirmationDialog.new()
+	dlg.title = "Quit — Unsaved Changes"
+	dlg.dialog_text = "You have unsaved changes: %s.\n\nSave before quitting?" % detail
+	dlg.ok_button_text = "Save & Quit"
+	dlg.cancel_button_text = "Cancel"
+	dlg.add_button("Quit Without Saving", false, "nosave")
+	dlg.exclusive = true
+	add_child(dlg)
+	var _q_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if _q_reg != null and _q_reg.ui_theme != null:
+		_q_reg.ui_theme.prepare_window(dlg, 15.0)
+	dlg.min_size = Vector2i(roundi(380.0 * s), roundi(140.0 * s))
+	dlg.reset_size()
+	dlg.popup_centered()
+
+	var result: Array = []
+	dlg.confirmed.connect(func() -> void: result.append(&"save"))
+	dlg.custom_action.connect(func(action: StringName) -> void:
+		if action == &"nosave":
+			result.append(&"nosave")
+			dlg.hide())
+	dlg.canceled.connect(func() -> void: result.append(&"cancel"))
+	await dlg.visibility_changed
+	dlg.queue_free()
+
+	var choice: StringName = result[0] if result.size() > 0 else &"cancel"
+	if choice == &"cancel":
+		return # abort quit
+
+	if choice == &"save":
+		# Save dirty character sheet.
+		if char_dirty and _char_sheet != null:
+			_char_sheet.save_now()
+		# Save the active game session.
+		if save_active:
+			await _on_save_game_pressed()
+		# Save the campaign (always safe to call).
+		_on_save_campaign()
+
+	get_tree().quit()
+
+
 func _on_close_save() -> void:
 	## Prompt to save, then unload map + save and return to the campaign hub.
 	if _active_save_bundle_path.is_empty():
@@ -2938,8 +3100,8 @@ func _on_campaign_settings() -> void:
 
 func _open_campaign_hub(tab_index: int = CampaignPanel.TAB_OVERVIEW) -> void:
 	## Show the CampaignPanel hub. This is the central screen when a campaign is
-	## active but no map/save is loaded. The panel is non-dismissable by X — the
-	## campaign_close_requested signal routes to _on_close_campaign().
+	## active but no map/save is loaded. The X button simply hides the hub —
+	## only File → Close Campaign actually closes the campaign.
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.campaign == null:
 		return
@@ -2963,7 +3125,7 @@ func _open_campaign_hub(tab_index: int = CampaignPanel.TAB_OVERVIEW) -> void:
 		_campaign_panel.add_save_browse_requested.connect(_on_campaign_panel_add_save_browse)
 		_campaign_panel.open_map_file_requested.connect(_on_open_map_pressed)
 		_campaign_panel.open_save_file_requested.connect(_on_load_game_pressed)
-		_campaign_panel.campaign_close_requested.connect(_on_close_campaign)
+		_campaign_panel.visibility_changed.connect(_update_campaign_indicator)
 		_apply_dialog_themes()
 	_campaign_panel.open_to_tab(tab_index)
 	_apply_ui_scale()
@@ -2983,7 +3145,7 @@ func _open_campaign_browser() -> void:
 		add_child(_campaign_browser)
 		_campaign_browser.campaign_selected.connect(_on_campaign_browser_selected)
 		_campaign_browser.create_new_requested.connect(_on_new_campaign)
-		_campaign_browser.open_folder_requested.connect(_on_open_campaign)
+		_campaign_browser.open_folder_requested.connect(_on_open_campaign_folder)
 	var _cb_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if _cb_reg != null and _cb_reg.ui_theme != null:
 		_cb_reg.ui_theme.theme_control_tree(_campaign_browser, _ui_scale())
@@ -3217,6 +3379,8 @@ func _on_view_menu_id(id: int) -> void:
 			_toggle_initiative_panel()
 		35: # Toggle combat log panel
 			_toggle_combat_log_panel()
+		37: # Open campaign hub
+			_on_campaign_settings()
 		23: # Launch player display process
 			_launch_player_process()
 
@@ -3376,6 +3540,14 @@ func _on_flashlights_only_toggled(enabled: bool) -> void:
 		return
 	_map_view.set_flashlights_only(enabled)
 	_nm_broadcast_to_displays({"msg": "flashlights_only_toggle", "enabled": enabled})
+
+
+func _on_darkvision_disabled_toggled(disabled: bool) -> void:
+	var gs := _game_state()
+	if gs == null:
+		return
+	gs.set_darkvision_disabled(disabled)
+	_broadcast_player_state()
 
 
 func _on_wall_rect_toggled(enabled: bool) -> void:
@@ -4765,7 +4937,13 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 				data.roam_path = shifted
 			registry_drag.token.update_token(data)
 			if _map_view != null:
+				_map_view.update_token_sprite(data)
 				_map_view.apply_token_passthrough_state(data)
+			# Re-snap roam animation progress so a running roam resumes
+			# from the drop position instead of the pre-drag progress.
+			if _roaming_tokens.has(id) and data.roam_path.size() >= 2:
+				var rs: Dictionary = _roaming_tokens[id] as Dictionary
+				rs["progress"] = _roam_snap_progress(data.roam_path, new_world_pos, data.roam_loop)
 			# Push undo command capturing before/after world positions + roam path.
 			if registry_drag.history != null and old_pos != new_world_pos:
 				var mv := _map_view
@@ -4939,7 +5117,7 @@ func _build_dice_tray() -> void:
 	_dice_tray.anchor_bottom = 1.0
 	_dice_tray.grow_horizontal = Control.GROW_DIRECTION_END
 	_dice_tray.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_ui_layer.add_child(_dice_tray)
+	_ui_content_area.add_child(_dice_tray)
 	_apply_dice_tray_size()
 
 	# Undock wire
@@ -4957,11 +5135,25 @@ func _build_dice_tray() -> void:
 	_dice_renderer.grow_vertical = Control.GROW_DIRECTION_BOTH
 	_dice_renderer.visible = false
 	_dice_renderer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ui_layer.add_child(_dice_renderer)
+	_ui_content_area.add_child(_dice_renderer)
 	_apply_dice_renderer_size()
 	# Wire renderer to dice service
 	if dm != null:
 		dm.set_renderer(_dice_renderer)
+
+
+func _apply_status_bar_size() -> void:
+	if _status_bar == null:
+		return
+	var s: float = _ui_scale()
+	var bar_h: int = roundi(26.0 * s)
+	_status_bar.offset_left = 0.0
+	_status_bar.offset_right = 0.0
+	_status_bar.offset_top = float(-bar_h)
+	_status_bar.offset_bottom = 0.0
+	# Shrink content area so overlays never extend behind the status bar.
+	if _ui_content_area != null:
+		_ui_content_area.offset_bottom = float(-bar_h)
 
 
 func _apply_dice_tray_size() -> void:
@@ -5018,12 +5210,12 @@ func _on_dice_tray_undock() -> void:
 		_dice_tray.anchor_bottom = 1.0
 		_dice_tray.grow_horizontal = Control.GROW_DIRECTION_END
 		_dice_tray.grow_vertical = Control.GROW_DIRECTION_BEGIN
-		_ui_layer.add_child(_dice_tray)
+		_ui_content_area.add_child(_dice_tray)
 		_dice_tray.visible = true
 		_apply_dice_tray_size()
 	else:
 		# Undock into floating window
-		_ui_layer.remove_child(_dice_tray)
+		_ui_content_area.remove_child(_dice_tray)
 		_dice_tray_floating = true
 		var s: float = _ui_scale()
 		_dice_tray_window = Window.new()
@@ -5062,7 +5254,7 @@ func _build_initiative_panel() -> void:
 	_initiative_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_initiative_panel.grow_vertical = Control.GROW_DIRECTION_END
 	_initiative_panel.visible = false
-	_ui_layer.add_child(_initiative_panel)
+	_ui_content_area.add_child(_initiative_panel)
 	_apply_initiative_panel_size()
 	_initiative_panel.apply_scale(_ui_scale())
 	_initiative_panel.damage_requested.connect(_on_initiative_damage_requested)
@@ -5140,14 +5332,14 @@ func _on_initiative_panel_undock() -> void:
 		_initiative_panel.anchor_bottom = 1.0
 		_initiative_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 		_initiative_panel.grow_vertical = Control.GROW_DIRECTION_END
-		_ui_layer.add_child(_initiative_panel)
+		_ui_content_area.add_child(_initiative_panel)
 		_initiative_panel.visible = true
 		_apply_initiative_panel_size()
 		if _initiative_panel._undock_btn != null:
 			_initiative_panel._undock_btn.text = "\u21f2"
 	else:
 		# Undock into floating window.
-		_ui_layer.remove_child(_initiative_panel)
+		_ui_content_area.remove_child(_initiative_panel)
 		_initiative_panel_floating = true
 		var s: float = _ui_scale()
 		_initiative_panel_window = Window.new()
@@ -5189,7 +5381,7 @@ func _build_combat_log_panel() -> void:
 	_combat_log_panel.anchor_bottom = 1.0
 	_combat_log_panel.grow_horizontal = Control.GROW_DIRECTION_END
 	_combat_log_panel.grow_vertical = Control.GROW_DIRECTION_END
-	_ui_layer.add_child(_combat_log_panel)
+	_ui_content_area.add_child(_combat_log_panel)
 	_apply_combat_log_panel_size()
 	_combat_log_panel.apply_scale(_ui_scale())
 	_combat_log_panel.undock_requested.connect(_on_combat_log_panel_undock)
@@ -5249,14 +5441,14 @@ func _on_combat_log_panel_undock() -> void:
 		_combat_log_panel.anchor_bottom = 1.0
 		_combat_log_panel.grow_horizontal = Control.GROW_DIRECTION_END
 		_combat_log_panel.grow_vertical = Control.GROW_DIRECTION_END
-		_ui_layer.add_child(_combat_log_panel)
+		_ui_content_area.add_child(_combat_log_panel)
 		_combat_log_panel.visible = true
 		_apply_combat_log_panel_size()
 		if _combat_log_panel._undock_btn != null:
 			_combat_log_panel._undock_btn.text = "\u21f2"
 	else:
 		# Undock into floating window.
-		_ui_layer.remove_child(_combat_log_panel)
+		_ui_content_area.remove_child(_combat_log_panel)
 		_combat_log_panel_floating = true
 		var s: float = _ui_scale()
 		_combat_log_panel_window = Window.new()
@@ -5572,11 +5764,14 @@ func _open_condition_dialog(token_id: String) -> void:
 
 
 func _on_condition_confirmed(token_id: String, condition_name: String,
-		source: String, duration_rounds: int) -> void:
+		source: String, duration_rounds: int, exhaustion_level: int) -> void:
 	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if reg == null or reg.combat == null:
 		return
-	reg.combat.apply_condition(token_id, condition_name, source, duration_rounds)
+	if condition_name == "exhaustion" and exhaustion_level > 0:
+		reg.combat.set_exhaustion_level(token_id, exhaustion_level)
+	else:
+		reg.combat.apply_condition(token_id, condition_name, source, duration_rounds)
 	# Refresh the dialog's active list immediately.
 	_open_condition_dialog(token_id)
 
@@ -5647,8 +5842,9 @@ func _on_quick_damage_applied(token_id: String, amount: int, damage_type: String
 # ---------------------------------------------------------------------------
 
 func _build_passage_panel() -> void:
-	# Anchored directly in _ui_layer (same as _freeze_panel) so _ui_root.scale
+	# Anchored directly in _ui_content_area (same as _freeze_panel) so _ui_root.scale
 	# does not push it off-screen on HiDPI / Retina displays.
+	var s := _ui_scale()
 	_passage_panel = PanelContainer.new()
 	_passage_panel.name = "PassagePanel"
 	_passage_panel.visible = false
@@ -5660,17 +5856,17 @@ func _build_passage_panel() -> void:
 	_passage_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_passage_panel.offset_left = 0.0
 	_passage_panel.offset_right = 0.0
-	_passage_panel.offset_top = -44.0
+	_passage_panel.offset_top = roundi(-44.0 * s)
 	_passage_panel.offset_bottom = 0.0
-	_ui_layer.add_child(_passage_panel)
+	_ui_content_area.add_child(_passage_panel)
 
 	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 8)
+	hbox.add_theme_constant_override("separation", roundi(8.0 * s))
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 6)
-	margin.add_theme_constant_override("margin_right", 6)
-	margin.add_theme_constant_override("margin_top", 4)
-	margin.add_theme_constant_override("margin_bottom", 4)
+	margin.add_theme_constant_override("margin_left", roundi(6.0 * s))
+	margin.add_theme_constant_override("margin_right", roundi(6.0 * s))
+	margin.add_theme_constant_override("margin_top", roundi(4.0 * s))
+	margin.add_theme_constant_override("margin_bottom", roundi(4.0 * s))
 	margin.add_child(hbox)
 	_passage_panel.add_child(margin)
 
@@ -5706,7 +5902,7 @@ func _build_passage_panel() -> void:
 	_passage_brush_slider.max_value = 192.0
 	_passage_brush_slider.step = 4.0
 	_passage_brush_slider.value = 48.0
-	_passage_brush_slider.custom_minimum_size = Vector2(120.0, 0.0)
+	_passage_brush_slider.custom_minimum_size = Vector2(roundi(120.0 * s), 0.0)
 	_passage_brush_slider.focus_mode = Control.FOCUS_NONE
 	_passage_brush_slider.value_changed.connect(_on_passage_brush_changed)
 	hbox.add_child(_passage_brush_slider)
@@ -5728,6 +5924,7 @@ func _build_passage_panel() -> void:
 
 func _build_roam_panel() -> void:
 	# Bottom-bar panel for roam-path editing, parallel to `_build_passage_panel`.
+	var s := _ui_scale()
 	_roam_panel = PanelContainer.new()
 	_roam_panel.name = "RoamPanel"
 	_roam_panel.visible = false
@@ -5738,17 +5935,17 @@ func _build_roam_panel() -> void:
 	_roam_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_roam_panel.offset_left = 0.0
 	_roam_panel.offset_right = 0.0
-	_roam_panel.offset_top = -44.0
+	_roam_panel.offset_top = roundi(-44.0 * s)
 	_roam_panel.offset_bottom = 0.0
-	_ui_layer.add_child(_roam_panel)
+	_ui_content_area.add_child(_roam_panel)
 
 	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 8)
+	hbox.add_theme_constant_override("separation", roundi(8.0 * s))
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 6)
-	margin.add_theme_constant_override("margin_right", 6)
-	margin.add_theme_constant_override("margin_top", 4)
-	margin.add_theme_constant_override("margin_bottom", 4)
+	margin.add_theme_constant_override("margin_left", roundi(6.0 * s))
+	margin.add_theme_constant_override("margin_right", roundi(6.0 * s))
+	margin.add_theme_constant_override("margin_top", roundi(4.0 * s))
+	margin.add_theme_constant_override("margin_bottom", roundi(4.0 * s))
 	margin.add_child(hbox)
 	_roam_panel.add_child(margin)
 
@@ -5791,14 +5988,14 @@ func _build_roam_panel() -> void:
 	_roam_speed_slider.max_value = 120.0
 	_roam_speed_slider.step = 5.0
 	_roam_speed_slider.value = 30.0
-	_roam_speed_slider.custom_minimum_size = Vector2(100.0, 0.0)
+	_roam_speed_slider.custom_minimum_size = Vector2(roundi(100.0 * s), 0.0)
 	_roam_speed_slider.focus_mode = Control.FOCUS_NONE
 	_roam_speed_slider.value_changed.connect(_on_roam_speed_changed)
 	hbox.add_child(_roam_speed_slider)
 
 	_roam_speed_value_label = Label.new()
 	_roam_speed_value_label.text = "30 ft/rd"
-	_roam_speed_value_label.custom_minimum_size = Vector2(60.0, 0.0)
+	_roam_speed_value_label.custom_minimum_size = Vector2(roundi(60.0 * s), 0.0)
 	hbox.add_child(_roam_speed_value_label)
 
 	_roam_smooth_btn = Button.new()
@@ -5838,6 +6035,7 @@ func _build_roam_panel() -> void:
 
 
 func _build_multi_select_bar() -> void:
+	var s := _ui_scale()
 	_multi_select_bar = PanelContainer.new()
 	_multi_select_bar.name = "MultiSelectBar"
 	_multi_select_bar.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -5848,32 +6046,24 @@ func _build_multi_select_bar() -> void:
 	_multi_select_bar.anchor_bottom = 1.0
 	_multi_select_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_multi_select_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_multi_select_bar.offset_top = -50.0
-	_multi_select_bar.offset_bottom = -8.0
+	_multi_select_bar.offset_top = roundi(-50.0 * s)
+	_multi_select_bar.offset_bottom = roundi(-8.0 * s)
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.12, 0.12, 0.14, 0.92)
-	bg.corner_radius_top_left = 8
-	bg.corner_radius_top_right = 8
-	bg.corner_radius_bottom_left = 8
-	bg.corner_radius_bottom_right = 8
-	bg.content_margin_left = 12.0
-	bg.content_margin_right = 12.0
-	bg.content_margin_top = 6.0
-	bg.content_margin_bottom = 6.0
-	bg.border_width_top = 1
-	bg.border_width_bottom = 1
-	bg.border_width_left = 1
-	bg.border_width_right = 1
+	bg.set_corner_radius_all(roundi(8.0 * s))
+	bg.content_margin_left = roundi(12.0 * s)
+	bg.content_margin_right = roundi(12.0 * s)
+	bg.content_margin_top = roundi(6.0 * s)
+	bg.content_margin_bottom = roundi(6.0 * s)
+	bg.set_border_width_all(1)
 	bg.border_color = Color(0.35, 0.55, 1.0, 0.5)
 	_multi_select_bar.add_theme_stylebox_override("panel", bg)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", roundi(10.0 * s))
 	_multi_select_bar.add_child(row)
 
 	_multi_select_label = Label.new()
-	_multi_select_label.add_theme_font_size_override("font_size", 14)
-	_multi_select_label.add_theme_color_override("font_color", Color(0.8, 0.85, 1.0))
 	row.add_child(_multi_select_label)
 
 	var combat_btn := Button.new()
@@ -5890,7 +6080,7 @@ func _build_multi_select_bar() -> void:
 	row.add_child(clear_btn)
 
 	_multi_select_bar.visible = false
-	_ui_layer.add_child(_multi_select_bar)
+	_ui_content_area.add_child(_multi_select_bar)
 
 
 func _update_multi_select_bar(selected_ids: Array) -> void:
@@ -6468,6 +6658,49 @@ func _is_roam_playing(token_id: String) -> bool:
 	return state.get("playing", false) as bool
 
 
+func _snap_token_to_roam_path(token_id: String) -> void:
+	## Move the token to the nearest point on its roam path.
+	var tm := _token_manager()
+	if tm == null:
+		return
+	var data: TokenData = tm.get_token_by_id(token_id)
+	if data == null or data.roam_path.size() < 2:
+		return
+	var old_pos: Vector2 = data.world_pos
+	var snap_progress: float = _roam_snap_progress(data.roam_path, old_pos, data.roam_loop)
+	var snap_pos: Vector2 = _roam_position_at_progress(data.roam_path, snap_progress, data.roam_loop)
+	if old_pos.distance_squared_to(snap_pos) < 0.5:
+		return
+	tm.move_token(token_id, snap_pos)
+	if _map_view != null:
+		_map_view.update_token_sprite(data)
+	# Update roam animation progress to match the snapped position.
+	if _roaming_tokens.has(token_id):
+		var rs: Dictionary = _roaming_tokens[token_id] as Dictionary
+		rs["progress"] = snap_progress
+	# Undo support.
+	var registry_snap := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_snap != null and registry_snap.history != null:
+		var mv := _map_view
+		registry_snap.history.push_command(HistoryCommand.create("Snap to path",
+			func() -> void:
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				tm.move_token(token_id, old_pos)
+				if mv != null: mv.update_token_sprite(td),
+			func() -> void:
+				var td: TokenData = tm.get_token_by_id(token_id)
+				if td == null: return
+				tm.move_token(token_id, snap_pos)
+				if mv != null: mv.update_token_sprite(td)))
+	_nm_broadcast_to_displays({
+		"msg": "token_moved",
+		"token_id": token_id,
+		"world_pos": {"x": snap_pos.x, "y": snap_pos.y},
+	})
+	_player_state_dirty = true
+
+
 # ---------------------------------------------------------------------------
 # Token clipboard — copy / cut / paste
 # ---------------------------------------------------------------------------
@@ -6903,6 +7136,7 @@ func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
 		else:
 			_token_context_menu.add_item("Play Roam", 10)
 		_token_context_menu.add_item("Reset Roam", 11)
+		_token_context_menu.add_item("Snap to Path", 12)
 	# Show statblock shortcuts for MONSTER/NPC with attached statblocks.
 	if td != null and td.statblock_refs.size() > 0:
 		_token_context_menu.add_separator()
@@ -6962,6 +7196,8 @@ func _on_token_context_menu_id(id: int) -> void:
 				_start_roam(_token_context_id)
 		11: # Reset Roam
 			_reset_roam(_token_context_id)
+		12: # Snap to Path
+			_snap_token_to_roam_path(_token_context_id)
 		20: # View Statblock (primary)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null and data.statblock_refs.size() > 0:
@@ -7511,7 +7747,6 @@ func _build_token_editor_dialog() -> void:
 	_token_statblock_visibility_option.add_item("Name Only", 1)
 	_token_statblock_visibility_option.add_item("Partial (name/AC/HP)", 2)
 	_token_statblock_visibility_option.add_item("Full", 3)
-	sv_row.add_child(sv_label)
 	sv_row.add_child(_token_statblock_visibility_option)
 	_token_statblocks_section.add_child(sv_row)
 
@@ -9649,7 +9884,7 @@ func _build_measure_panel() -> void:
 	_measure_panel.anchor_top = 0.0
 	_measure_panel.anchor_bottom = 1.0
 	_measure_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_ui_layer.add_child(_measure_panel)
+	_ui_content_area.add_child(_measure_panel)
 
 	var mp_margin := MarginContainer.new()
 	mp_margin.add_theme_constant_override("margin_left", 4)
@@ -9686,12 +9921,11 @@ func _build_measure_panel() -> void:
 	# Tool buttons
 	var title_lbl := Label.new()
 	title_lbl.text = "Draw Tool"
-	title_lbl.add_theme_font_size_override("font_size", roundi(13.0 * scale))
 	_measure_vbox.add_child(title_lbl)
 
 	_measure_tool_group = ButtonGroup.new()
 	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 4)
+	btn_row.add_theme_constant_override("separation", roundi(4.0 * scale))
 	_measure_vbox.add_child(btn_row)
 
 	const TOOL_DEFS: Array = [
@@ -9722,7 +9956,6 @@ func _build_measure_panel() -> void:
 	# Active shapes list
 	var shapes_lbl := Label.new()
 	shapes_lbl.text = "Active shapes"
-	shapes_lbl.add_theme_font_size_override("font_size", roundi(13.0 * scale))
 	_measure_vbox.add_child(shapes_lbl)
 
 	_measure_shape_list = ItemList.new()
@@ -9735,14 +9968,13 @@ func _build_measure_panel() -> void:
 
 	# Action buttons row
 	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 6)
+	action_row.add_theme_constant_override("separation", roundi(6.0 * scale))
 	_measure_vbox.add_child(action_row)
 
 	var del_btn := Button.new()
 	del_btn.text = "Delete"
 	del_btn.focus_mode = Control.FOCUS_NONE
 	del_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
-	del_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
 	del_btn.pressed.connect(_on_measure_delete_selected_pressed)
 	action_row.add_child(del_btn)
 
@@ -9750,7 +9982,6 @@ func _build_measure_panel() -> void:
 	clear_btn.text = "Clear All"
 	clear_btn.focus_mode = Control.FOCUS_NONE
 	clear_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
-	clear_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
 	clear_btn.pressed.connect(_on_measure_clear_all_pressed)
 	action_row.add_child(clear_btn)
 
@@ -9761,7 +9992,6 @@ func _build_measure_panel() -> void:
 	save_btn.text = "Call for Save"
 	save_btn.focus_mode = Control.FOCUS_NONE
 	save_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
-	save_btn.add_theme_font_size_override("font_size", roundi(12.0 * scale))
 	save_btn.pressed.connect(_on_measure_call_for_save_pressed)
 	_measure_vbox.add_child(save_btn)
 
@@ -9851,8 +10081,8 @@ func _dock_measure_panel() -> void:
 	_measure_panel.anchor_bottom = 1.0
 	_measure_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 
-	if _ui_layer != null:
-		_ui_layer.add_child(_measure_panel)
+	if _ui_content_area != null:
+		_ui_content_area.add_child(_measure_panel)
 		_apply_measure_panel_size()
 
 	if _measure_panel_title != null:
@@ -10631,7 +10861,7 @@ func _on_campaign_import_path_selected(path: String) -> void:
 # File — SRD Update Check
 # ---------------------------------------------------------------------------
 
-const SRD_VERSION_URL: String = "https://raw.githubusercontent.com/5e-bits/5e-database/main/src/5e-SRD-version.json"
+const SRD_VERSION_URL: String = "https://raw.githubusercontent.com/5e-bits/5e-database/main/package.json"
 
 func _on_check_srd_updates() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -12018,7 +12248,7 @@ func _apply_freeze_panel_size() -> void:
 
 func _apply_passage_panel_size() -> void:
 	## Reposition and rescale the passage panel at the screen bottom.
-	## The panel lives directly in _ui_layer, so it is NOT affected by _ui_root.scale.
+	## The panel lives directly in _ui_content_area, so it is NOT affected by _ui_root.scale.
 	## Widget sizes/fonts are explicitly scaled here to match the rest of the UI.
 	if _passage_panel == null:
 		return
@@ -12052,7 +12282,7 @@ func _apply_passage_panel_size() -> void:
 func _apply_roam_panel_size() -> void:
 	## Reposition and rescale the roam panel at the screen bottom.
 	## Same pattern as _apply_passage_panel_size — explicit scaling because
-	## the panel lives in _ui_layer, outside _ui_root.scale.
+	## the panel lives in _ui_content_area, outside _ui_root.scale.
 	if _roam_panel == null:
 		return
 	var scale := _ui_scale()
@@ -12116,28 +12346,28 @@ func _apply_ui_scale() -> void:
 	var scale := _ui_scale()
 	if _palette:
 		_palette.custom_minimum_size = Vector2(roundi(34.0 * scale), 0)
-	if _palette and _palette.get_parent() == _ui_layer:
+	if _palette and _palette.get_parent() == _ui_content_area:
 		_apply_palette_size()
 	if _ui_root:
 		_ui_root.scale = Vector2(scale, scale)
-	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
+	if _freeze_panel and _freeze_panel.get_parent() == _ui_content_area:
 		_apply_freeze_panel_size()
-	if _effect_panel and _effect_panel.get_parent() == _ui_layer:
+	if _effect_panel and _effect_panel.get_parent() == _ui_content_area:
 		_apply_effect_panel_size()
-	if _measure_panel and _measure_panel.get_parent() == _ui_layer:
+	if _measure_panel and _measure_panel.get_parent() == _ui_content_area:
 		_apply_measure_panel_size()
-	if _passage_panel and _passage_panel.get_parent() == _ui_layer:
+	if _passage_panel and _passage_panel.get_parent() == _ui_content_area:
 		_apply_passage_panel_size()
-	if _roam_panel and _roam_panel.get_parent() == _ui_layer:
+	if _roam_panel and _roam_panel.get_parent() == _ui_content_area:
 		_apply_roam_panel_size()
-	if _dice_tray and _dice_tray.get_parent() == _ui_layer:
+	if _dice_tray and _dice_tray.get_parent() == _ui_content_area:
 		_apply_dice_tray_size()
-	if _initiative_panel and _initiative_panel.get_parent() == _ui_layer:
+	if _initiative_panel and _initiative_panel.get_parent() == _ui_content_area:
 		_apply_initiative_panel_size()
 	# Scale initiative panel child content (works both docked and floating).
 	if _initiative_panel:
 		_initiative_panel.apply_scale(scale)
-	if _combat_log_panel and _combat_log_panel.get_parent() == _ui_layer:
+	if _combat_log_panel and _combat_log_panel.get_parent() == _ui_content_area:
 		_apply_combat_log_panel_size()
 	if _combat_log_panel:
 		_combat_log_panel.apply_scale(scale)
@@ -12160,7 +12390,7 @@ func _apply_ui_scale() -> void:
 	if _measure_panel_title:
 		_measure_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * scale))
 	# Only reposition freeze panel when docked — floating window manages its own layout.
-	if _freeze_panel and _freeze_panel.get_parent() == _ui_layer:
+	if _freeze_panel and _freeze_panel.get_parent() == _ui_content_area:
 		_apply_freeze_panel_size()
 
 	if mgr == null:
@@ -12302,6 +12532,17 @@ func _apply_ui_scale() -> void:
 		var lu_root: Control = _first_control_child(_level_up_wizard)
 		if lu_root != null:
 			mgr.scale_control_fonts(lu_root)
+
+	# ── Status bar ──
+	if _status_bar != null:
+		_apply_status_bar_size()
+		_status_label.add_theme_font_size_override("font_size", roundi(13.0 * scale))
+		var sb_bg: StyleBoxFlat = _status_bar.get_theme_stylebox("panel") as StyleBoxFlat
+		if sb_bg != null:
+			sb_bg.content_margin_left = roundi(8.0 * scale)
+			sb_bg.content_margin_right = roundi(8.0 * scale)
+			sb_bg.content_margin_top = roundi(4.0 * scale)
+			sb_bg.content_margin_bottom = roundi(4.0 * scale)
 
 	# ── Multi-selection bar ──
 	if _multi_select_bar != null:
@@ -12477,7 +12718,6 @@ func _build_native_menus() -> void:
 	nm.call(&"AddItem", "File", "New Campaign…", 40)
 	nm.call(&"AddItem", "File", "Open Campaign…", 41)
 	nm.call(&"AddItem", "File", "Save Campaign", 42)
-	nm.call(&"AddItem", "File", "Campaign Settings…", 43)
 	nm.call(&"AddItem", "File", "Close Campaign", 44)
 	nm.call(&"AddSeparator", "File")
 	nm.call(&"AddItem", "File", "Close Map", 45)
@@ -12540,6 +12780,7 @@ func _build_native_menus() -> void:
 	nm.call(&"AddSubmenu", "View", "UITheme", "UI Theme")
 
 	nm.call(&"AddSeparator", "View")
+	nm.call(&"AddItem", "View", "Campaign Hub…", 37)
 	nm.call(&"AddItem", "View", "▶ Launch Player Window", 23)
 
 	# Session
@@ -12843,6 +13084,10 @@ func _open_char_sheet_for(sb: StatblockData) -> void:
 		add_child(_char_sheet)
 		_char_sheet.character_saved.connect(_on_char_sheet_saved)
 		_char_sheet.level_up_requested.connect(_on_char_sheet_level_up)
+	# Prompt to save/discard if the sheet already has unsaved edits for a
+	# different character.
+	if _char_sheet.is_dirty():
+		await _char_sheet.prompt_save_or_discard()
 	_char_sheet.load_character(sb)
 	_char_sheet.reapply_theme()
 	if not _char_sheet.is_visible():

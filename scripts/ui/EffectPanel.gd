@@ -281,6 +281,17 @@ func _build() -> void:
 	_burst_check.visible = not _manifest_mode
 	_vbox.add_child(_burst_check)
 
+	# Lock minimum width to the palette row (widest element) so toggling
+	# palette visibility doesn't cause the panel to resize.
+	if not _palette_buttons.is_empty():
+		var pal_btn_w: int = roundi(28.0 * s)
+		var pal_sep: int = roundi(2.0 * s)
+		var margin_side: int = roundi(4.0 * s)
+		custom_minimum_size.x = float(
+			_palette_buttons.size() * pal_btn_w
+			+ maxi(_palette_buttons.size() - 1, 0) * pal_sep
+			+ 2 * margin_side) + 1.0
+
 
 func _build_legacy_buttons(s: float) -> void:
 	var icons: Array[String] = ["🔥", "🔥○", "🔥▬", "🔥│", "🔥↓", "⚡", "⚡⚡", "⚡●", "❄", "❄❄", "☁", "✦", "✧"]

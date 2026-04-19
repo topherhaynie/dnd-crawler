@@ -191,6 +191,30 @@ func check_condition_modifiers(token_id: String, roll_type: String,
 	return service.check_condition_modifiers(token_id, roll_type, ability)
 
 
+func set_exhaustion_level(token_id: String, level: int) -> void:
+	if service != null:
+		service.set_exhaustion_level(token_id, level)
+
+
+func get_exhaustion_level(token_id: String) -> int:
+	if service == null:
+		return 0
+	return service.get_exhaustion_level(token_id)
+
+
+func attempt_grapple(attacker_id: String, target_id: String) -> Dictionary:
+	if service == null:
+		return {}
+	return service.attempt_grapple(attacker_id, target_id)
+
+
+func attempt_shove(attacker_id: String, target_id: String,
+		knock_prone: bool) -> Dictionary:
+	if service == null:
+		return {}
+	return service.attempt_shove(attacker_id, target_id, knock_prone)
+
+
 func get_combat_log() -> Array:
 	if service == null:
 		return []

@@ -1,6 +1,6 @@
 {
-    "version": "2.3.0",
+    "version": "4.6.3",
     "fetched": "2026-04-05T20:33:13Z",
     "source": "https://github.com/5e-bits/5e-database",
-    "notes": "2024 subset: no Monsters, Spells, or Classes yet in upstream repo"
+    "notes": "Aligned to package.json version scheme after upstream removed 5e-SRD-version.json"
 }

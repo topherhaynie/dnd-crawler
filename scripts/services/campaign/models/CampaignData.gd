@@ -53,6 +53,7 @@ var active_profile_ids: Array = []
 var settings: Dictionary = {
 	"tie_goes_to": "player",
 	"critical_hit_rule": "double_dice",
+	"exhaustion_rule": "2014",
 	"dice_visibility": "shared",
 	"advancement_mode": "milestone", ## "milestone" or "xp"
 }
@@ -157,6 +158,7 @@ static func from_dict(d: Dictionary) -> CampaignData:
 		var merged: Dictionary = {
 			"tie_goes_to": "player",
 			"critical_hit_rule": "double_dice",
+			"exhaustion_rule": "2014",
 			"dice_visibility": "shared",
 			"advancement_mode": "milestone",
 		}

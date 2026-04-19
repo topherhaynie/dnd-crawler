@@ -395,7 +395,7 @@ static func build(w: CharacterWizard) -> StatblockData:
 		sb.features = all_features
 
 	## ── Spell slots (supports multiclass computation) ────────────────────
-	sb.spell_slots = WizardConstants.compute_spell_slots(sb.classes)
+	sb.spell_slots = WizardConstants.compute_spell_slots(sb.classes, w.ruleset)
 
 	return sb
 

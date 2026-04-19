@@ -13,6 +13,7 @@ const _GameSaveDataClass = preload("res://scripts/services/game_state/models/Gam
 
 signal player_lock_changed(player_id: Variant, is_locked: bool)
 signal player_light_off_changed(player_id: Variant, is_off: bool)
+signal darkvision_disabled_changed(is_disabled: bool)
 signal player_positions_changed()
 @warning_ignore("unused_signal")
 signal profiles_changed()
@@ -106,6 +107,21 @@ func is_light_off(player_id: Variant) -> bool:
 	if model == null:
 		return false
 	return bool(model.player_light_off.get(player_id, false))
+
+
+func set_darkvision_disabled(disabled: bool) -> void:
+	if model == null:
+		return
+	model.darkvision_disabled = disabled
+	darkvision_disabled_changed.emit(disabled)
+	if service != null:
+		service.emit_signal("darkvision_disabled_changed", disabled)
+
+
+func is_darkvision_disabled() -> bool:
+	if model == null:
+		return false
+	return model.darkvision_disabled
 
 
 func get_position(player_id: Variant) -> Vector2:

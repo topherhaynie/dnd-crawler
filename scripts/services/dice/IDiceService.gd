@@ -62,7 +62,8 @@ func roll_attack(_attack_bonus: int, _target_ac: int, _advantage: bool, _disadva
 	return {}
 
 
-func roll_damage(_expression: String, _critical: bool, _crit_rule: String) -> DiceResult:
+func roll_damage(_expression: String, _critical: bool, _crit_rule: String,
+		_is_weapon_attack: bool = true) -> DiceResult:
 	push_error("IDiceService.roll_damage: not implemented")
 	return DiceResult.new()
 

@@ -122,6 +122,13 @@ func _build_ui() -> void:
 	_source_btn.add_item("Global", 4)
 	_source_btn.add_theme_font_size_override("font_size", s.call(13.0))
 	_source_btn.item_selected.connect(_on_filter_changed)
+	## Default to the campaign's ruleset when available.
+	if _registry != null and _registry.campaign != null:
+		var camp: CampaignData = _registry.campaign.get_active_campaign()
+		if camp != null and camp.default_ruleset == "2024":
+			_source_btn.selected = 2
+		else:
+			_source_btn.selected = 1
 	toolbar.add_child(_source_btn)
 
 	_new_btn = Button.new()

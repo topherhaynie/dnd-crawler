@@ -14,6 +14,8 @@ signal player_lock_changed(player_id: Variant, is_locked: bool)
 @warning_ignore("unused_signal")
 signal player_light_off_changed(player_id: Variant, is_off: bool)
 @warning_ignore("unused_signal")
+signal darkvision_disabled_changed(is_disabled: bool)
+@warning_ignore("unused_signal")
 signal session_saved(save_name: String)
 @warning_ignore("unused_signal")
 signal session_loaded(save_name: String)
@@ -50,6 +52,13 @@ func set_light_off(_player_id: Variant, _off: bool) -> void:
 
 func is_light_off(_player_id: Variant) -> bool:
 	push_error("IGameStateService.is_light_off: not implemented")
+	return false
+
+func set_darkvision_disabled(_disabled: bool) -> void:
+	push_error("IGameStateService.set_darkvision_disabled: not implemented")
+
+func is_darkvision_disabled() -> bool:
+	push_error("IGameStateService.is_darkvision_disabled: not implemented")
 	return false
 
 # --- Session save/load ------------------------------------------------------

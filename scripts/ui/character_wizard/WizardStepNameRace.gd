@@ -105,7 +105,7 @@ func populate_race_option() -> void:
 
 func reset_ruleset() -> void:
 	if _ruleset_option != null:
-		_ruleset_option.select(0)
+		_ruleset_option.select(1 if _wizard.ruleset == "2024" else 0)
 
 
 func validate() -> bool:

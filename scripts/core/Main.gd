@@ -36,6 +36,9 @@ func _network_manager() -> INetworkService:
 
 
 func _ready() -> void:
+	# Prevent Godot from auto-quitting so we can show an unsaved-changes
+	# prompt in the DM process before the window closes.
+	get_tree().auto_accept_quit = false
 	if _is_player_mode():
 		_start_player_mode()
 	else:
@@ -116,6 +119,27 @@ func _start_player_mode() -> void:
 # Shutdown
 # ---------------------------------------------------------------------------
 
+var _quit_pending: bool = false
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		get_tree().quit()
+		if _quit_pending:
+			return
+		if _is_player_mode():
+			get_tree().quit()
+			return
+		# DM mode — check for unsaved work before quitting.
+		var dm_window: Node = get_node_or_null("DMWindow")
+		if dm_window != null and dm_window.has_method("has_unsaved_changes") and dm_window.has_unsaved_changes():
+			_quit_pending = true
+			# prompt_save_before_quit is async; it either calls quit() when the
+			# user confirms or returns silently on cancel.
+			_begin_quit_prompt(dm_window)
+		else:
+			get_tree().quit()
+
+
+func _begin_quit_prompt(dm_window: Node) -> void:
+	await dm_window.prompt_save_before_quit()
+	# If we reach here the user canceled — allow future quit attempts.
+	_quit_pending = false

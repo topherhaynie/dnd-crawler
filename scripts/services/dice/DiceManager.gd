@@ -71,10 +71,11 @@ func roll_attack(attack_bonus: int, target_ac: int, advantage: bool, disadvantag
 	return service.roll_attack(attack_bonus, target_ac, advantage, disadvantage)
 
 
-func roll_damage(expression: String, critical: bool, crit_rule: String) -> DiceResult:
+func roll_damage(expression: String, critical: bool, crit_rule: String,
+		is_weapon_attack: bool = true) -> DiceResult:
 	if service == null:
 		return DiceResult.new()
-	return service.roll_damage(expression, critical, crit_rule)
+	return service.roll_damage(expression, critical, crit_rule, is_weapon_attack)
 
 
 func get_roll_history() -> Array:

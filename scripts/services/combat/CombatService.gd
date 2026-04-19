@@ -13,6 +13,7 @@ var _aoes: Dictionary = {} ## id -> AoEData
 var _combat_log: Array = [] ## Array of entry Dictionaries
 var _used_label_max: Dictionary = {} ## base_name -> highest number ever assigned this combat
 var _player_overrides: Dictionary = {} ## profile_id -> StatblockOverride.to_dict()
+var _exhaustion_levels: Dictionary = {} ## token_id -> int (exhaustion level)
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +55,7 @@ func end_combat() -> void:
 	_state.conditions.clear()
 	_used_label_max.clear()
 	_player_overrides.clear()
+	_exhaustion_levels.clear()
 	combat_ended.emit()
 
 
@@ -529,6 +531,7 @@ func serialize_state() -> Dictionary:
 	for aoe: AoEData in _aoes.values():
 		aoe_arr.append(aoe.to_dict())
 	d["aoes"] = aoe_arr
+	d["exhaustion_levels"] = _exhaustion_levels.duplicate()
 	return d
 
 
@@ -542,6 +545,11 @@ func deserialize_state(data: Dictionary) -> void:
 				var a: AoEData = AoEData.from_dict(raw as Dictionary)
 				if not a.id.is_empty():
 					_aoes[a.id] = a
+	_exhaustion_levels.clear()
+	var raw_exh: Variant = data.get("exhaustion_levels", {})
+	if raw_exh is Dictionary:
+		for k: Variant in (raw_exh as Dictionary).keys():
+			_exhaustion_levels[str(k)] = int((raw_exh as Dictionary)[k])
 	if _state.is_active:
 		combat_started.emit()
 		initiative_changed.emit(_state.initiative_order.duplicate(true))
@@ -605,7 +613,59 @@ func get_conditions(token_id: String) -> Array:
 func check_condition_modifiers(token_id: String, roll_type: String,
 		ability: String) -> Dictionary:
 	var conds: Array = get_conditions(token_id)
-	return ConditionRules.compute_modifiers(conds, roll_type, ability)
+	var base: Dictionary = ConditionRules.compute_modifiers(conds, roll_type, ability)
+	# Layer exhaustion modifiers on top.
+	var exh_level: int = get_exhaustion_level(token_id)
+	if exh_level > 0:
+		var ruleset: String = _get_exhaustion_ruleset()
+		var exh: Dictionary = ConditionRules.compute_exhaustion_modifiers(exh_level, ruleset)
+		if ruleset == "2024":
+			# 2024: d20_penalty is applied externally by callers
+			base["d20_penalty"] = int(exh.get("d20_penalty", 0))
+		else:
+			# 2014: level-based advantage/disadvantage
+			if roll_type == "check" and bool(exh.get("check_disadv", false)):
+				base["disadvantage"] = true
+			if roll_type == "save" and bool(exh.get("save_disadv", false)):
+				base["disadvantage"] = true
+			if roll_type == "attack_made" and bool(exh.get("attack_disadv", false)):
+				base["disadvantage"] = true
+	return base
+
+
+## Set the exhaustion level for a token. Level 0 removes exhaustion.
+func set_exhaustion_level(token_id: String, level: int) -> void:
+	var ruleset: String = _get_exhaustion_ruleset()
+	var max_lv: int = ConditionRules.max_exhaustion_level(ruleset)
+	var clamped: int = clampi(level, 0, max_lv)
+	if clamped <= 0:
+		_exhaustion_levels.erase(token_id)
+		# Also remove the exhaustion condition entry.
+		remove_condition(token_id, "exhaustion")
+		_log({"type": "exhaustion_changed", "token_id": token_id,
+			"token_name": _get_name(token_id), "level": 0})
+		return
+	_exhaustion_levels[token_id] = clamped
+	# Ensure exhaustion condition entry exists for UI display.
+	apply_condition(token_id, "exhaustion", "Exhaustion %d" % clamped, -1)
+	_log({"type": "exhaustion_changed", "token_id": token_id,
+		"token_name": _get_name(token_id), "level": clamped})
+
+
+## Return the current exhaustion level for a token (0 = none).
+func get_exhaustion_level(token_id: String) -> int:
+	return int(_exhaustion_levels.get(token_id, 0))
+
+
+## Return the exhaustion ruleset from the active campaign settings.
+func _get_exhaustion_ruleset() -> String:
+	var reg: ServiceRegistry = _get_registry()
+	if reg == null or reg.campaign == null:
+		return "2014"
+	var c: CampaignData = reg.campaign.get_active_campaign()
+	if c == null:
+		return "2014"
+	return str(c.settings.get("exhaustion_rule", "2014"))
 
 
 ## Sync condition name strings to the token's StatblockOverride for persistence and UI.
@@ -643,6 +703,123 @@ func _process_condition_expiry(token_id: String) -> void:
 	if conds.is_empty():
 		_state.conditions.erase(token_id)
 	_sync_conditions_to_override(token_id)
+
+
+# ---------------------------------------------------------------------------
+# Grapple / Shove
+# ---------------------------------------------------------------------------
+
+## Attempt to grapple a target.
+## 2014: contested check — attacker Athletics vs target Athletics or Acrobatics (target's choice).
+## 2024: target makes STR or DEX saving throw vs attacker's unarmed strike DC
+##        (8 + proficiency + STR modifier).
+## Returns {success: bool, attacker_roll: int, target_roll: int, detail: String}
+func attempt_grapple(attacker_id: String, target_id: String) -> Dictionary:
+	var ruleset: String = _get_grapple_ruleset()
+	var dice_svc: IDiceService = _get_dice_service()
+	if dice_svc == null:
+		return {"success": false, "attacker_roll": 0, "target_roll": 0, "detail": "no dice service"}
+	var atk_base: StatblockData = _get_base_statblock(attacker_id)
+	var tgt_base: StatblockData = _get_base_statblock(target_id)
+	if atk_base == null or tgt_base == null:
+		return {"success": false, "attacker_roll": 0, "target_roll": 0, "detail": "missing statblock"}
+	var result: Dictionary = {}
+	if ruleset == "2024":
+		result = _grapple_shove_2024(attacker_id, target_id, atk_base, tgt_base, dice_svc, "grapple")
+	else:
+		result = _grapple_shove_2014(attacker_id, target_id, atk_base, tgt_base, dice_svc, "grapple")
+	if bool(result.get("success", false)):
+		apply_condition(target_id, "grappled", _get_name(attacker_id), -1)
+	_log({"type": "grapple_attempt", "attacker_id": attacker_id,
+		"attacker_name": _get_name(attacker_id), "target_id": target_id,
+		"target_name": _get_name(target_id), "success": bool(result.get("success", false)),
+		"detail": str(result.get("detail", ""))})
+	return result
+
+
+## Attempt to shove a target (push 5 ft or knock prone).
+## Same contest/save logic as grapple but on success applies push or prone.
+func attempt_shove(attacker_id: String, target_id: String,
+		knock_prone: bool) -> Dictionary:
+	var ruleset: String = _get_grapple_ruleset()
+	var dice_svc: IDiceService = _get_dice_service()
+	if dice_svc == null:
+		return {"success": false, "attacker_roll": 0, "target_roll": 0, "detail": "no dice service"}
+	var atk_base: StatblockData = _get_base_statblock(attacker_id)
+	var tgt_base: StatblockData = _get_base_statblock(target_id)
+	if atk_base == null or tgt_base == null:
+		return {"success": false, "attacker_roll": 0, "target_roll": 0, "detail": "missing statblock"}
+	var result: Dictionary = {}
+	if ruleset == "2024":
+		result = _grapple_shove_2024(attacker_id, target_id, atk_base, tgt_base, dice_svc, "shove")
+	else:
+		result = _grapple_shove_2014(attacker_id, target_id, atk_base, tgt_base, dice_svc, "shove")
+	if bool(result.get("success", false)) and knock_prone:
+		apply_condition(target_id, "prone", _get_name(attacker_id), -1)
+	_log({"type": "shove_attempt", "attacker_id": attacker_id,
+		"attacker_name": _get_name(attacker_id), "target_id": target_id,
+		"target_name": _get_name(target_id), "success": bool(result.get("success", false)),
+		"knock_prone": knock_prone, "detail": str(result.get("detail", ""))})
+	return result
+
+
+## 2014 contested check: attacker Athletics vs target Athletics or Acrobatics (higher).
+func _grapple_shove_2014(attacker_id: String, target_id: String,
+		atk_base: StatblockData, tgt_base: StatblockData,
+		dice_svc: IDiceService, _action: String) -> Dictionary:
+	var atk_mod: int = atk_base.get_modifier("str")
+	var tgt_str_mod: int = tgt_base.get_modifier("str")
+	var tgt_dex_mod: int = tgt_base.get_modifier("dex")
+	var tgt_mod: int = maxi(tgt_str_mod, tgt_dex_mod)
+	# Check condition modifiers on attacker.
+	var atk_mods: Dictionary = check_condition_modifiers(attacker_id, "check", "str")
+	var atk_adv: bool = bool(atk_mods.get("advantage", false))
+	var atk_disadv: bool = bool(atk_mods.get("disadvantage", false))
+	var atk_result: DiceResult = dice_svc.roll_ability_check(atk_mod, atk_adv, atk_disadv)
+	# Target uses best of STR or DEX for their check.
+	var tgt_ability: String = "str" if tgt_str_mod >= tgt_dex_mod else "dex"
+	var tgt_mods: Dictionary = check_condition_modifiers(target_id, "check", tgt_ability)
+	var tgt_adv: bool = bool(tgt_mods.get("advantage", false))
+	var tgt_disadv: bool = bool(tgt_mods.get("disadvantage", false))
+	var tgt_result: DiceResult = dice_svc.roll_ability_check(tgt_mod, tgt_adv, tgt_disadv)
+	var success: bool = atk_result.total >= tgt_result.total
+	var detail: String = "Attacker %d vs Target %d (contested check)" % [atk_result.total, tgt_result.total]
+	return {"success": success, "attacker_roll": atk_result.total,
+		"target_roll": tgt_result.total, "detail": detail}
+
+
+## 2024 save-based: target makes STR or DEX save vs attacker DC (8 + proficiency + STR mod).
+func _grapple_shove_2024(_attacker_id: String, target_id: String,
+		atk_base: StatblockData, _tgt_base: StatblockData,
+		dice_svc: IDiceService, _action: String) -> Dictionary:
+	var dc: int = 8 + atk_base.proficiency_bonus + atk_base.get_modifier("str")
+	# Target chooses STR or DEX save (use whichever modifier is higher).
+	var tgt_str_save: int = get_save_modifier(target_id, "str")
+	var tgt_dex_save: int = get_save_modifier(target_id, "dex")
+	var tgt_ability: String = "str" if tgt_str_save >= tgt_dex_save else "dex"
+	var tgt_mod: int = maxi(tgt_str_save, tgt_dex_save)
+	var tgt_mods: Dictionary = check_condition_modifiers(target_id, "save", tgt_ability)
+	var tgt_adv: bool = bool(tgt_mods.get("advantage", false))
+	var tgt_disadv: bool = bool(tgt_mods.get("disadvantage", false))
+	var save_result: Dictionary = dice_svc.roll_saving_throw(tgt_mod, dc, tgt_adv, tgt_disadv)
+	var passed: bool = bool(save_result.get("passed", false))
+	var dice_r: DiceResult = save_result.get("result", null) as DiceResult
+	var roll_total: int = dice_r.total if dice_r != null else 0
+	var success: bool = not passed
+	var detail: String = "Target save %d vs DC %d (%s)" % [roll_total, dc, "saved" if passed else "failed"]
+	return {"success": success, "attacker_roll": dc,
+		"target_roll": roll_total, "detail": detail}
+
+
+## Get the grapple/shove ruleset from the active campaign.
+func _get_grapple_ruleset() -> String:
+	var reg: ServiceRegistry = _get_registry()
+	if reg == null or reg.campaign == null:
+		return "2014"
+	var c: CampaignData = reg.campaign.get_active_campaign()
+	if c == null:
+		return "2014"
+	return c.default_ruleset
 
 
 # ---------------------------------------------------------------------------

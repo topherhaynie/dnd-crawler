@@ -563,6 +563,32 @@ const SPELL_SLOT_TABLE: Array = [
 	[4, 3, 3, 3, 3, 2, 2, 1, 1], # 20
 ]
 
+## 2024 revised spell slot table.  Identical to 2014 through level 16;
+## levels 17-20 grant additional higher-level slots sooner.
+const SPELL_SLOT_TABLE_2024: Array = [
+	[0, 0, 0, 0, 0, 0, 0, 0, 0], # caster level 0
+	[2, 0, 0, 0, 0, 0, 0, 0, 0], # 1
+	[3, 0, 0, 0, 0, 0, 0, 0, 0], # 2
+	[4, 2, 0, 0, 0, 0, 0, 0, 0], # 3
+	[4, 3, 0, 0, 0, 0, 0, 0, 0], # 4
+	[4, 3, 2, 0, 0, 0, 0, 0, 0], # 5
+	[4, 3, 3, 0, 0, 0, 0, 0, 0], # 6
+	[4, 3, 3, 1, 0, 0, 0, 0, 0], # 7
+	[4, 3, 3, 2, 0, 0, 0, 0, 0], # 8
+	[4, 3, 3, 3, 1, 0, 0, 0, 0], # 9
+	[4, 3, 3, 3, 2, 0, 0, 0, 0], # 10
+	[4, 3, 3, 3, 2, 1, 0, 0, 0], # 11
+	[4, 3, 3, 3, 2, 1, 0, 0, 0], # 12
+	[4, 3, 3, 3, 2, 1, 1, 0, 0], # 13
+	[4, 3, 3, 3, 2, 1, 1, 0, 0], # 14
+	[4, 3, 3, 3, 2, 1, 1, 1, 0], # 15
+	[4, 3, 3, 3, 2, 1, 1, 1, 0], # 16
+	[4, 3, 3, 3, 2, 2, 1, 1, 1], # 17
+	[4, 3, 3, 3, 3, 2, 1, 1, 1], # 18
+	[4, 3, 3, 3, 3, 2, 2, 1, 1], # 19
+	[4, 3, 3, 3, 3, 2, 2, 2, 1], # 20
+]
+
 ## Warlock pact magic slots by warlock level.
 ## Entry format: [slot_count, slot_level].
 const WARLOCK_PACT_SLOTS: Array = [
@@ -591,10 +617,11 @@ const WARLOCK_PACT_SLOTS: Array = [
 
 
 ## Compute spell slots for a classes array [{name, level, subclass}].
+## ruleset: "2014" or "2024" — selects which spell slot table to use.
 ## Returns a Dictionary: { 1: count, 2: count, ... 9: count } with
 ## only non-zero entries.  Warlock pact magic appears as "pact_slots"
 ## and "pact_slot_level" keys.
-static func compute_spell_slots(classes: Array) -> Dictionary:
+static func compute_spell_slots(classes: Array, ruleset: String = "2014") -> Dictionary:
 	var combined_caster_level: float = 0.0
 	var warlock_level: int = 0
 	for entry_var: Variant in classes:
@@ -610,9 +637,10 @@ static func compute_spell_slots(classes: Array) -> Dictionary:
 			combined_caster_level += lv * w
 	var caster_level: int = int(combined_caster_level)
 	caster_level = clampi(caster_level, 0, 20)
+	var table: Array = SPELL_SLOT_TABLE_2024 if ruleset == "2024" else SPELL_SLOT_TABLE
 	var result: Dictionary = {}
 	if caster_level > 0:
-		var row: Variant = SPELL_SLOT_TABLE[caster_level]
+		var row: Variant = table[caster_level]
 		if row is Array:
 			for i: int in range((row as Array).size()):
 				var count: int = int((row as Array)[i])
