@@ -80,12 +80,12 @@ vec3 fire_palette(float t) {
 		col = mix(col, vec3(1.0, 1.0, 0.4), smoothstep(0.6, 0.8, t));
 		col = mix(col, vec3(1.0, 1.0, 0.9), smoothstep(0.8, 1.0, t));
 	} else if (palette_index == 6) {
-		// Black — dark gray → gray ember → dark core with glowing edges
-		col = mix(col, vec3(0.15, 0.08, 0.05), smoothstep(0.0, 0.2, t));
-		col = mix(col, vec3(0.25, 0.12, 0.08), smoothstep(0.2, 0.4, t));
-		col = mix(col, vec3(0.35, 0.15, 0.1), smoothstep(0.4, 0.6, t));
-		col = mix(col, vec3(0.2, 0.1, 0.08), smoothstep(0.6, 0.8, t));
-		col = mix(col, vec3(0.5, 0.2, 0.1), smoothstep(0.8, 1.0, t));
+		// Black — dark shadowflame with bright edge definition
+		col = mix(col, vec3(0.02, 0.02, 0.03), smoothstep(0.0, 0.2, t));
+		col = mix(col, vec3(0.05, 0.05, 0.06), smoothstep(0.2, 0.4, t));
+		col = mix(col, vec3(0.10, 0.10, 0.12), smoothstep(0.4, 0.6, t));
+		col = mix(col, vec3(0.25, 0.25, 0.28), smoothstep(0.6, 0.8, t));
+		col = mix(col, vec3(0.40, 0.38, 0.44), smoothstep(0.8, 1.0, t));
 	} else {
 		// Orange (default) — black → deep red → red → orange → yellow → white
 		col = mix(col, vec3(0.5, 0.0, 0.0), smoothstep(0.0, 0.2, t));
@@ -120,6 +120,8 @@ void fragment() {
 	vec3 col = fire_palette(flame) * color_tint.rgb;
 
 	float alpha = flame * mask * progress * color_tint.a;
+	// Black fire: boost opacity so dark body is visible as thick shadow
+	if (palette_index == 6) { alpha = min(alpha * 2.5, 1.0); }
 
 	// Cone mask: apex at UV (0.5, 0.0), full width at UV.y = 1.0
 	if (shape_mode == 1) {

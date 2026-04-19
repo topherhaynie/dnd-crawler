@@ -67,11 +67,11 @@ vec3 _pf_fire_palette(float t) {
 		col = mix(col, vec3(1.0, 1.0, 0.4), smoothstep(0.6, 0.8, t));
 		col = mix(col, vec3(1.0, 1.0, 0.9), smoothstep(0.8, 1.0, t));
 	} else if (palette_index == 6) {
-		col = mix(col, vec3(0.15, 0.08, 0.05), smoothstep(0.0, 0.2, t));
-		col = mix(col, vec3(0.25, 0.12, 0.08), smoothstep(0.2, 0.4, t));
-		col = mix(col, vec3(0.35, 0.15, 0.1), smoothstep(0.4, 0.6, t));
-		col = mix(col, vec3(0.2, 0.1, 0.08), smoothstep(0.6, 0.8, t));
-		col = mix(col, vec3(0.5, 0.2, 0.1), smoothstep(0.8, 1.0, t));
+		col = mix(col, vec3(0.02, 0.02, 0.03), smoothstep(0.0, 0.2, t));
+		col = mix(col, vec3(0.05, 0.05, 0.06), smoothstep(0.2, 0.4, t));
+		col = mix(col, vec3(0.10, 0.10, 0.12), smoothstep(0.4, 0.6, t));
+		col = mix(col, vec3(0.25, 0.25, 0.28), smoothstep(0.6, 0.8, t));
+		col = mix(col, vec3(0.40, 0.38, 0.44), smoothstep(0.8, 1.0, t));
 	} else {
 		col = mix(col, vec3(0.5, 0.0, 0.0), smoothstep(0.0, 0.2, t));
 		col = mix(col, vec3(0.9, 0.15, 0.0), smoothstep(0.2, 0.4, t));

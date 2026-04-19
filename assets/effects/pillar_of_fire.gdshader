@@ -37,6 +37,7 @@ void fragment() {
 
 	vec3 col = _pf_fire_palette(flame) * color_tint.rgb;
 	float alpha = flame * pillar_mask * progress * color_tint.a;
+	if (palette_index == 6) { alpha = min(alpha * 2.5, 1.0); }
 
 	COLOR = vec4(col, alpha);
 }

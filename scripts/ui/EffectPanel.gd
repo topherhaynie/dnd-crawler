@@ -197,7 +197,7 @@ func _build() -> void:
 		Color(0.2, 0.4, 1.0), # Blue
 		Color(0.7, 0.15, 0.85), # Violet
 		Color(1.0, 0.9, 0.0), # Yellow
-		Color(0.2, 0.1, 0.08), # Black
+		Color(0.08, 0.08, 0.09), # Black
 	]
 	for pidx in EffectData.PALETTE_LABELS.size():
 		var pbtn := Button.new()
@@ -290,7 +290,7 @@ func _build() -> void:
 		custom_minimum_size.x = float(
 			_palette_buttons.size() * pal_btn_w
 			+ maxi(_palette_buttons.size() - 1, 0) * pal_sep
-			+ 2 * margin_side) + 1.0
+			+2 * margin_side) + 1.0
 
 
 func _build_legacy_buttons(s: float) -> void:

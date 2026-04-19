@@ -27,10 +27,6 @@ signal add_save_browse_requested()
 ## Fired when the user wants to open a .map or .sav file from the file system.
 signal open_map_file_requested()
 signal open_save_file_requested()
-## Fired when the user explicitly requests closing the active campaign
-## (e.g. from a Close Campaign button inside the panel, if one exists).
-## Note: the Window X button just hides the hub — it does NOT close the campaign.
-signal campaign_close_requested()
 
 const TAB_OVERVIEW := 0
 const TAB_MAPS := 1
@@ -143,7 +139,12 @@ var _tree_edit_action: String = "" ## "new_folder" | "rename"
 func _ready() -> void:
 	title = "Campaign"
 	min_size = Vector2i(920, 640)
-	wrap_controls = true
+	# Disable wrap_controls so we own the window size entirely via
+	# _show_window_centered().  wrap_controls computes content minimums only
+	# after a real draw pass, which on Windows causes a very large initial
+	# layout for the Maps tab (GridContainer height leaks through
+	# ScrollContainer before the first render pass settles).
+	wrap_controls = false
 	popup_window = false
 	exclusive = false
 	transient = true

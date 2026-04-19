@@ -101,6 +101,7 @@ void fragment() {
 	col *= color_tint.rgb;
 
 	float alpha = clamp(total_flame, 0.0, 1.0) * boundary * progress * color_tint.a;
+	if (palette_index == 6) { alpha = min(alpha * 2.5, 1.0); }
 
 	COLOR = vec4(col, alpha);
 }

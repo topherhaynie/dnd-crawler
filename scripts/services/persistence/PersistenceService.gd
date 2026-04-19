@@ -2,6 +2,7 @@ extends IPersistenceService
 class_name PersistenceService
 
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
+const BundleIOScript = preload("res://scripts/utils/BundleIO.gd")
 
 func _init() -> void:
 	# Ensure save directory exists
@@ -153,30 +154,45 @@ var _ffmpeg_available_cached: int = -1 # -1 = unchecked, 0 = no, 1 = yes
 
 func save_game_bundle(bundle_path: String, state: RefCounted, fog_image: Image, map_bundle_path: String) -> bool:
 	var abs_bundle := _abs(bundle_path)
-	DirAccess.make_dir_recursive_absolute(abs_bundle)
+	# Work in a cache directory, then pack to ZIP.
+	var work_dir: String = BundleIOScript.open_bundle(abs_bundle) if BundleIOScript.bundle_exists(abs_bundle) else ""
+	if work_dir.is_empty():
+		# New bundle — create a fresh work directory in the cache.
+		work_dir = BundleIOScript._cache_dir_for(abs_bundle)
+	DirAccess.make_dir_recursive_absolute(work_dir)
 
-	# 1. Copy the entire .map bundle into the .sav bundle as map.map/
-	var embedded_map_dir := abs_bundle.path_join("map.map")
-	if not _copy_dir_recursive(map_bundle_path, embedded_map_dir):
+	# 1. Copy the entire .map bundle into the work dir as map.map/
+	var embedded_map_dir := work_dir.path_join("map.map")
+	# Resolve the source map — it may itself be a ZIP or cache dir.
+	var src_map_dir: String = BundleIOScript.open_bundle(map_bundle_path)
+	if src_map_dir.is_empty():
+		src_map_dir = _abs(map_bundle_path)
+	if not _copy_dir_recursive(src_map_dir, embedded_map_dir):
 		push_error("PersistenceService: failed to embed .map into .sav at '%s'" % embedded_map_dir)
 		return false
 
 	# 2. Write fog.png (L8 image)
 	if fog_image != null and not fog_image.is_empty():
-		var fog_path := abs_bundle.path_join("fog.png")
+		var fog_path := work_dir.path_join("fog.png")
 		var err := fog_image.save_png(fog_path)
 		if err != OK:
 			push_error("PersistenceService: failed to save fog.png (err %d)" % err)
 			return false
 
 	# 3. Write state.json
-	var state_path := abs_bundle.path_join("state.json")
+	var state_path := work_dir.path_join("state.json")
 	var fa := FileAccess.open(state_path, FileAccess.WRITE)
 	if fa == null:
 		push_error("PersistenceService: cannot write state.json at '%s'" % state_path)
 		return false
 	fa.store_string(JSON.stringify(state.to_dict(), "\t"))
 	fa.close()
+
+	# 4. Pack work directory to ZIP at the canonical bundle path.
+	var pack_err: Error = BundleIOScript.save_bundle(work_dir, abs_bundle)
+	if pack_err != OK:
+		push_error("PersistenceService: failed to pack .sav ZIP at '%s' (err %d)" % [abs_bundle, pack_err])
+		return false
 
 	emit_signal("persistence_changed", state.save_name)
 	return true
@@ -187,10 +203,16 @@ func load_game_bundle(bundle_path: String) -> Dictionary:
 	## or empty dict on failure.
 	var abs_bundle := _abs(bundle_path)
 
+	# Transparently handle ZIP or directory bundles.
+	var work_dir: String = BundleIOScript.open_bundle(abs_bundle)
+	if work_dir.is_empty():
+		push_error("PersistenceService: cannot open bundle '%s'" % abs_bundle)
+		return {}
+
 	# 1. Read state.json
-	var state_path := abs_bundle.path_join("state.json")
+	var state_path := work_dir.path_join("state.json")
 	if not FileAccess.file_exists(state_path):
-		push_error("PersistenceService: state.json not found in '%s'" % abs_bundle)
+		push_error("PersistenceService: state.json not found in '%s'" % work_dir)
 		return {}
 	var fa := FileAccess.open(state_path, FileAccess.READ)
 	if fa == null:
@@ -199,13 +221,13 @@ func load_game_bundle(bundle_path: String) -> Dictionary:
 	fa.close()
 	var parsed: Variant = JsonUtilsScript.parse_json_text(text)
 	if not (parsed is Dictionary):
-		push_error("PersistenceService: invalid state.json in '%s'" % abs_bundle)
+		push_error("PersistenceService: invalid state.json in '%s'" % work_dir)
 		return {}
 	var state := _GameSaveDataClass.from_dict(parsed as Dictionary)
 
 	# 2. Load fog.png
 	var fog_image: Image = null
-	var fog_path := abs_bundle.path_join(state.fog_image_path)
+	var fog_path := work_dir.path_join(state.fog_image_path)
 	if FileAccess.file_exists(fog_path):
 		fog_image = Image.new()
 		var img_err := fog_image.load(fog_path)
@@ -213,10 +235,10 @@ func load_game_bundle(bundle_path: String) -> Dictionary:
 			push_error("PersistenceService: failed to load fog.png (err %d)" % img_err)
 			fog_image = null
 
-	# 3. Resolve embedded map.map/ path
-	var embedded_map := abs_bundle.path_join("map.map")
+	# 3. Resolve embedded map.map/ path (inside the work directory)
+	var embedded_map := work_dir.path_join("map.map")
 	if not DirAccess.dir_exists_absolute(embedded_map):
-		push_error("PersistenceService: embedded map.map not found in '%s'" % abs_bundle)
+		push_error("PersistenceService: embedded map.map not found in '%s'" % work_dir)
 		return {}
 
 	return {
@@ -228,27 +250,17 @@ func load_game_bundle(bundle_path: String) -> Dictionary:
 
 func list_save_bundles() -> Array:
 	var out: Array = []
-	var abs_dir := _abs(_SAVES_DIR)
-	if not DirAccess.dir_exists_absolute(abs_dir):
-		return out
-	var dir := DirAccess.open(abs_dir)
-	if dir == null:
-		return out
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if dir.current_is_dir() and fname.ends_with(".sav"):
-			out.append(fname.get_basename())
-		fname = dir.get_next()
-	dir.list_dir_end()
+	var names: PackedStringArray = BundleIOScript.list_bundles(_SAVES_DIR, "sav")
+	for n: String in names:
+		out.append(n)
 	return out
 
 
 func delete_save_bundle(save_name: String) -> bool:
 	var abs_path := _abs(_SAVES_DIR).path_join(save_name + ".sav")
-	if not DirAccess.dir_exists_absolute(abs_path):
+	if not BundleIOScript.bundle_exists(abs_path):
 		return false
-	if not _remove_dir_recursive(abs_path):
+	if not BundleIOScript.delete_bundle(abs_path):
 		return false
 	emit_signal("persistence_changed", save_name)
 	return true
@@ -260,24 +272,15 @@ func delete_save_bundle(save_name: String) -> bool:
 
 func list_map_bundles() -> Array:
 	var out: Array = []
-	var abs_dir := _abs(_MAPS_DIR)
-	if not DirAccess.dir_exists_absolute(abs_dir):
-		return out
-	var dir := DirAccess.open(abs_dir)
-	if dir == null:
-		return out
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if dir.current_is_dir() and fname.ends_with(".map"):
-			out.append(fname.get_basename())
-		fname = dir.get_next()
-	dir.list_dir_end()
+	var names: PackedStringArray = BundleIOScript.list_bundles(_MAPS_DIR, "map")
+	for n: String in names:
+		out.append(n)
 	return out
 
 
 func load_bundle_metadata(bundle_path: String) -> Dictionary:
 	## Returns {name, modified_time, thumbnail_path, bundle_path} for a .map or .sav bundle.
+	## Works with both ZIP archives and legacy directory bundles.
 	var abs_bundle := _abs(bundle_path)
 	var result: Dictionary = {
 		"name": abs_bundle.get_file().get_basename(),
@@ -286,33 +289,49 @@ func load_bundle_metadata(bundle_path: String) -> Dictionary:
 		"bundle_path": abs_bundle,
 	}
 
-	# Resolve modified time from the bundle directory
-	var json_path: String = ""
-	if abs_bundle.ends_with(".map"):
-		json_path = abs_bundle.path_join("map.json")
-	elif abs_bundle.ends_with(".sav"):
-		json_path = abs_bundle.path_join("state.json")
-	if not json_path.is_empty() and FileAccess.file_exists(json_path):
-		result["modified_time"] = FileAccess.get_modified_time(json_path)
+	var is_zip: bool = BundleIOScript.is_zip(abs_bundle)
 
-	# Read name from JSON metadata
-	if not json_path.is_empty() and FileAccess.file_exists(json_path):
-		var fa := FileAccess.open(json_path, FileAccess.READ)
-		if fa != null:
-			var text := fa.get_as_text()
-			fa.close()
-			var parsed: Variant = JsonUtilsScript.parse_json_text(text)
-			if parsed is Dictionary:
-				var d: Dictionary = parsed as Dictionary
-				if d.has("map_name") and d["map_name"] is String:
-					result["name"] = d["map_name"] as String
-				elif d.has("save_name") and d["save_name"] is String:
-					result["name"] = d["save_name"] as String
+	# Modified time — use the ZIP file mtime or inner JSON mtime.
+	if is_zip:
+		result["modified_time"] = FileAccess.get_modified_time(abs_bundle)
+	else:
+		var json_path: String = ""
+		if abs_bundle.ends_with(".map"):
+			json_path = abs_bundle.path_join("map.json")
+		elif abs_bundle.ends_with(".sav"):
+			json_path = abs_bundle.path_join("state.json")
+		if not json_path.is_empty() and FileAccess.file_exists(json_path):
+			result["modified_time"] = FileAccess.get_modified_time(json_path)
 
-	# Thumbnail path
-	var thumb := abs_bundle.path_join("thumbnail.png")
-	if FileAccess.file_exists(thumb):
-		result["thumbnail_path"] = thumb
+	# Read name from JSON metadata (works for both ZIP and dir via BundleIO).
+	var inner_json: String = "map.json" if abs_bundle.ends_with(".map") else "state.json"
+	var text: String = BundleIOScript.read_text(abs_bundle, inner_json)
+	if not text.is_empty():
+		var parsed: Variant = JsonUtilsScript.parse_json_text(text)
+		if parsed is Dictionary:
+			var d: Dictionary = parsed as Dictionary
+			if d.has("map_name") and d["map_name"] is String:
+				result["name"] = d["map_name"] as String
+			elif d.has("save_name") and d["save_name"] is String:
+				result["name"] = d["save_name"] as String
+
+	# Thumbnail — for ZIPs, extract to cache so the UI can load via path.
+	if is_zip:
+		var thumb_data: PackedByteArray = BundleIOScript.read_bytes(abs_bundle, "thumbnail.png")
+		if not thumb_data.is_empty():
+			var cache_thumb: String = BundleIOScript._cache_dir_for(abs_bundle).path_join("thumbnail.png")
+			var parent: String = cache_thumb.get_base_dir()
+			if not DirAccess.dir_exists_absolute(parent):
+				DirAccess.make_dir_recursive_absolute(parent)
+			var fa := FileAccess.open(cache_thumb, FileAccess.WRITE)
+			if fa != null:
+				fa.store_buffer(thumb_data)
+				fa.close()
+				result["thumbnail_path"] = cache_thumb
+	else:
+		var thumb := abs_bundle.path_join("thumbnail.png")
+		if FileAccess.file_exists(thumb):
+			result["thumbnail_path"] = thumb
 
 	return result
 

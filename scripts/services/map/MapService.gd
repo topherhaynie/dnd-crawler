@@ -2,6 +2,7 @@ extends IMapService
 class_name MapService
 
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
+const BundleIOScript = preload("res://scripts/utils/BundleIO.gd")
 
 @onready var _current_map: Object = null
 
@@ -9,7 +10,12 @@ func _ready() -> void:
 	pass
 
 func load_map_from_bundle(bundle_path: String) -> Object:
-	var json_path := bundle_path.path_join("map.json")
+	# Transparently handle ZIP or directory bundles.
+	var work_dir: String = BundleIOScript.open_bundle(bundle_path)
+	if work_dir.is_empty():
+		push_error("MapService: cannot open bundle '%s'" % bundle_path)
+		return null
+	var json_path := work_dir.path_join("map.json")
 	var fa := FileAccess.open(json_path, FileAccess.READ)
 	if fa == null:
 		push_error("MapService: cannot read '%s'" % json_path)
@@ -24,7 +30,7 @@ func load_map_from_bundle(bundle_path: String) -> Object:
 	if d.has("image_path"):
 		var img_ref: String = d["image_path"]
 		if not img_ref.is_absolute_path() and not img_ref.begins_with("user://"):
-			d["image_path"] = bundle_path.path_join(img_ref)
+			d["image_path"] = work_dir.path_join(img_ref)
 	# Resolve relative token icon paths to absolute so the renderer can load them.
 	var token_arr: Variant = d.get("tokens", [])
 	if token_arr is Array:
@@ -35,7 +41,7 @@ func load_map_from_bundle(bundle_path: String) -> Object:
 				if icon_ref is String and not (icon_ref as String).is_empty():
 					var icon_str: String = icon_ref as String
 					if not icon_str.is_absolute_path() and not icon_str.begins_with("user://"):
-						td["icon_image_path"] = bundle_path.path_join(icon_str)
+						td["icon_image_path"] = work_dir.path_join(icon_str)
 	var map := MapData.from_dict(d)
 	load_map(map)
 	return map
@@ -71,6 +77,8 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 	_flush_measurements_to_map(_current_map)
 	# Flush current effect state back into the map model before serialising.
 	_flush_effects_to_map(_current_map)
+	# bundle_path is expected to be a working directory (cache or legacy dir).
+	# ZIP packing is handled by the caller (DMWindow / PersistenceService).
 	var json_path := bundle_path.path_join("map.json")
 	var fa := FileAccess.open(json_path, FileAccess.WRITE)
 	if fa == null:

@@ -183,6 +183,7 @@ func seed_gpu_history_from_image(history_viewports: Array, history_merge_rects: 
         mat.set_shader_parameter("prev_history_tex", seed_texture)
         mat.set_shader_parameter("live_lights_tex", _get_or_create_fallback_black_texture())
         mat.set_shader_parameter("los_bake_gain", los_bake_gain)
+        mat.set_shader_parameter("has_paint_tex", false)
         vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
     var history_texture: Texture2D = null

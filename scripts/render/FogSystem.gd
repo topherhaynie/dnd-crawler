@@ -136,6 +136,14 @@ func _on_fog_model_changed() -> void:
 	var model := _fog_model()
 	if model == null or model.history_image == null or model.history_image.is_empty():
 		return
+	# Clear stale paint pipeline state before seeding fresh GPU history.
+	# Without this, a pending paint merge can composite old VRAM data
+	# (e.g. a revealed circle) on top of the freshly-seeded black history.
+	_paint_merge_pending = false
+	_paint_clear_pending = false
+	_paint_bake_deferred = false
+	if _paint_canvas != null:
+		_paint_canvas.clear_strokes()
 	_prev_los_data = PackedByteArray()
 	_prev_los_width = 0
 	_prev_los_height = 0

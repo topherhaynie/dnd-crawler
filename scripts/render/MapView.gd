@@ -61,7 +61,7 @@ const PAN_GESTURE_SCALE_WINDOWS: float = 3.0
 const WALL_HANDLE_HIT_RADIUS_PX: float = 12.0
 const WALL_HANDLE_SIZE_WORLD: float = 6.0
 const ROTATION_STEP: int = 90 ## degrees per rotate click
-const HANDLE_HIT_RADIUS_SCREEN_PX: float = 6.0 ## screen-space hit radius for each token bounding-box handle
+const HANDLE_HIT_RADIUS_SCREEN_PX: float = 12.0 ## screen-space hit radius for each token bounding-box handle
 const ROT_HANDLE_DIST_PX: float = 22.0 ## distance above bounding box top for the rotation handle
 
 @onready var camera: Camera2D = $Camera2D
@@ -327,6 +327,7 @@ var _resize_effect_start_size: float = 96.0
 ## Burst mode: temporary effect that plays while mouse is held
 var _burst_effect_node: EffectNode = null
 var _burst_active: bool = false
+var _burst_position_offset: Vector2 = Vector2.ZERO
 ## External configuration — set by DMWindow from EffectPanel state
 var effect_burst_mode: bool = false
 var effect_place_type: int = 0
@@ -1166,6 +1167,7 @@ func _burst_start(world_pos: Vector2) -> void:
 	_burst_effect_node.name = "BurstEffect"
 	effect_layer.add_child(_burst_effect_node)
 	_burst_effect_node.apply_from_data(data)
+	_burst_position_offset = _burst_effect_node.position - world_pos
 	_burst_active = true
 	effect_burst_started.emit(effect_place_type, world_pos, effect_place_size)
 
@@ -1175,6 +1177,7 @@ func _burst_stop() -> void:
 	if _burst_effect_node != null and is_instance_valid(_burst_effect_node):
 		_burst_effect_node.queue_free()
 	_burst_effect_node = null
+	_burst_position_offset = Vector2.ZERO
 	if _burst_active:
 		_burst_active = false
 		effect_burst_ended.emit()
@@ -2420,7 +2423,7 @@ func _cancel_token_resize() -> void:
 func _clear_token_hover() -> void:
 	if _hovered_token_id != null:
 		var old_ts := _draggable_tokens.get(_hovered_token_id, null) as TokenSprite
-		if old_ts != null and is_instance_valid(old_ts):
+		if old_ts != null and is_instance_valid(old_ts) and not old_ts._is_selected:
 			old_ts.set_show_handles(false)
 		_hovered_token_id = null
 
@@ -2694,27 +2697,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		var btn_event := event as InputEventMouseButton
 		match btn_event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				if _selected_effect_id != "" and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT):
-					var sel_node: EffectNode = _get_effect_node(_selected_effect_id)
-					if sel_node != null and sel_node._sprite != null:
-						var cur: float = sel_node._sprite.scale.x
-						var new_size: float = clampf(cur + 16.0, 24.0, 1024.0)
-						sel_node._sprite.scale = Vector2(new_size, new_size)
-						effect_resize_completed.emit(_selected_effect_id, new_size)
-						get_viewport().set_input_as_handled()
-						return
 				_zoom_camera_multiply(ZOOM_FACTOR, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_WHEEL_DOWN:
-				if _selected_effect_id != "" and (active_tool == Tool.SELECT or active_tool == Tool.PLACE_EFFECT):
-					var sel_node: EffectNode = _get_effect_node(_selected_effect_id)
-					if sel_node != null and sel_node._sprite != null:
-						var cur: float = sel_node._sprite.scale.x
-						var new_size: float = clampf(cur - 16.0, 24.0, 1024.0)
-						sel_node._sprite.scale = Vector2(new_size, new_size)
-						effect_resize_completed.emit(_selected_effect_id, new_size)
-						get_viewport().set_input_as_handled()
-						return
 				_zoom_camera_multiply(1.0 / ZOOM_FACTOR, btn_event.position)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_MIDDLE:
@@ -3023,8 +3008,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if _burst_active and _burst_effect_node != null:
-			_burst_effect_node.position = motion_world_pos
-			effect_burst_moved.emit(motion_world_pos)
+			_burst_effect_node.position = motion_world_pos + _burst_position_offset
+			effect_burst_moved.emit(motion_world_pos + _burst_position_offset)
 			get_viewport().set_input_as_handled()
 			return
 		if _trigger_radius_dragging_id != null and _trigger_radius_drag_node != null:
@@ -4682,6 +4667,12 @@ func _on_selection_changed(selected_ids: Array) -> void:
 		var ts: TokenSprite = node as TokenSprite
 		if ts != null:
 			ts.set_selected(is_sel)
+			# Keep resize handles visible while the token is selected (DM only).
+			if is_dm_view:
+				if is_sel:
+					ts.set_show_handles(true)
+				elif tid != _hovered_token_id:
+					ts.set_show_handles(false)
 			continue
 		var ps: PlayerSprite = node as PlayerSprite
 		if ps != null:

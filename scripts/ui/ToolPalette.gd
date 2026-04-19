@@ -228,6 +228,7 @@ func _build() -> void:
 
 	# Tool toggle group (Select / Pan / Fog / Wall / Spawn / Token)
 	_tool_group = ButtonGroup.new()
+	_tool_group.allow_unpress = true
 
 	# Long-press timer
 	_long_press_timer = Timer.new()
@@ -241,12 +242,22 @@ func _build() -> void:
 
 	select_btn = _make_toggle_btn("↖", "Select tool", _tool_group)
 	select_btn.button_pressed = true
-	select_btn.pressed.connect(func() -> void: _activate_tool("select"))
+	select_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if not toggled_on:
+			select_btn.set_pressed_no_signal(true)
+			return
+		_activate_tool("select")
+	)
 	select_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(select_btn)
 
 	pan_btn = _make_toggle_btn("✋", "Pan tool — left-drag to pan", _tool_group)
-	pan_btn.pressed.connect(func() -> void: _activate_tool("pan"))
+	pan_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_tool("pan")
+		else:
+			_revert_to_select()
+	)
 	pan_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(pan_btn)
 
@@ -303,7 +314,12 @@ func _build() -> void:
 	_add_section_header(palette_vbox, "TOOLS")
 
 	fog_btn = _make_toggle_btn("☁", "Fog tool (activate to paint fog)", _tool_group)
-	fog_btn.pressed.connect(func() -> void: _activate_tool("fog"))
+	fog_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_tool("fog")
+		else:
+			_revert_to_select()
+	)
 	fog_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(fog_btn)
 
@@ -349,7 +365,12 @@ func _build() -> void:
 
 	# Wall (stacked — right-click/hold selects Rect or Poly)
 	_wall_stack_btn = _make_toggle_btn("▭", "Wall tool — Rectangle", _tool_group)
-	_wall_stack_btn.pressed.connect(func() -> void: _activate_wall_tool())
+	_wall_stack_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_wall_tool()
+		else:
+			_revert_to_select()
+	)
 	_wall_stack_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(_wall_stack_btn)
 
@@ -367,18 +388,33 @@ func _build() -> void:
 		_handle_stack_input(ev, _wall_stack_btn, _wall_popup))
 
 	var spawn_btn := _make_toggle_btn("⚑", "Spawn point tool — click to place, drag to move, right-click to remove", _tool_group)
-	spawn_btn.pressed.connect(func() -> void: _activate_tool("spawn_point"))
+	spawn_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_tool("spawn_point")
+		else:
+			_revert_to_select()
+	)
 	spawn_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(spawn_btn)
 
 	token_btn = _make_toggle_btn("✦", "Token tool — click to place, drag to move, hold Shift to snap to grid", _tool_group)
-	token_btn.pressed.connect(func() -> void: _activate_tool("token"))
+	token_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_tool("token")
+		else:
+			_revert_to_select()
+	)
 	token_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(token_btn)
 
 	# Effect (stacked — right-click/hold selects effect type)
 	_effect_stack_btn = _make_toggle_btn("FX", "Magic effect tool — %s" % EffectData.EFFECT_LABELS[0], _tool_group)
-	_effect_stack_btn.pressed.connect(func() -> void: _activate_effect_tool())
+	_effect_stack_btn.toggled.connect(func(toggled_on: bool) -> void:
+		if toggled_on:
+			_activate_effect_tool()
+		else:
+			_revert_to_select()
+	)
 	_effect_stack_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
 	palette_vbox.add_child(_effect_stack_btn)
 
@@ -600,6 +636,12 @@ func _activate_tool(tool_key: String) -> void:
 		hide_flyout()
 
 
+func _revert_to_select() -> void:
+	## Deselect the current tool and fall back to the Select tool.
+	_set_active_toggle_btn(select_btn)
+	_activate_tool("select")
+
+
 func _get_anchor_for_tool(tool_key: String) -> Control:
 	match tool_key:
 		"fog":
@@ -744,11 +786,17 @@ func _fire_stack_quick_action(btn: Button) -> void:
 	## Called on quick-click release of any stack button when the press was
 	## consumed to prevent DRAW_PRESSED from getting stuck.
 	if btn == _wall_stack_btn:
-		_set_active_toggle_btn(btn)
-		_activate_wall_tool()
+		if _active_tool_key == "wall":
+			_revert_to_select()
+		else:
+			_set_active_toggle_btn(btn)
+			_activate_wall_tool()
 	elif btn == _effect_stack_btn:
-		_set_active_toggle_btn(btn)
-		_activate_effect_tool()
+		if _active_tool_key == "effect":
+			_revert_to_select()
+		else:
+			_set_active_toggle_btn(btn)
+			_activate_effect_tool()
 	elif btn == _dm_cam_stack_btn:
 		action_fired.emit(_dm_cam_action_keys[_dm_cam_current])
 	elif btn == _player_view_stack_btn:

@@ -22,6 +22,7 @@ extends Node
 const MapViewScene: PackedScene = preload("res://scenes/MapView.tscn")
 const BackendRuntimeScript: Script = preload("res://scripts/core/BackendRuntime.gd")
 const JsonUtilsScript = preload("res://scripts/utils/JsonUtils.gd")
+const BundleIOScript = preload("res://scripts/utils/BundleIO.gd")
 const GameSaveDataScript = preload("res://scripts/services/game_state/models/GameSaveData.gd")
 const ToolPaletteScript = preload("res://scripts/ui/ToolPalette.gd")
 const BundleBrowserScript = preload("res://scripts/ui/BundleBrowser.gd")
@@ -73,8 +74,10 @@ var _save_game_dialog: FileDialog = null ## Save Game As dialog
 var _load_game_dialog: FileDialog = null ## Load Game dialog
 var _pending_image_path: String = "" ## holds image path while native save dialog is open
 var _map_name_mode: String = "new" ## "new" or "save_as"
-var _active_map_bundle_path: String = "" ## absolute path to the current .map bundle directory
-var _active_save_bundle_path: String = "" ## absolute path to the current .sav bundle
+var _active_map_bundle_path: String = "" ## absolute path to the current .map working directory
+var _active_save_bundle_path: String = "" ## absolute path to the current .sav working directory
+var _active_map_zip_path: String = "" ## ZIP path when working from a ZIP bundle (empty for legacy dirs)
+var _active_save_zip_path: String = "" ## ZIP path for .sav bundles
 
 ## Bundle browser window (lazy-created, shared for maps and saves)
 var _bundle_browser: Node = null
@@ -108,6 +111,7 @@ var _volume_vbox: VBoxContainer = null
 var _status_label: Label = null
 var _status_bar: PanelContainer = null
 var _ui_root: VBoxContainer = null
+var _map_spacer: Control = null ## map-area catchall; forwards gui_input to MapView
 
 # Player profile form fields
 var _profile_orientation_spin: SpinBox = null
@@ -783,6 +787,15 @@ func _notification(what: int) -> void:
 		call_deferred("_apply_ui_scale")
 
 
+func _on_map_gui_input(event: InputEvent) -> void:
+	## Forward map-area pointer events from the GUI system to MapView so that
+	## tool interactions work without routing through _unhandled_input.
+	if _map_view == null or _map_spacer == null:
+		return
+	var xf: Transform2D = _map_spacer.get_global_transform_with_canvas()
+	_map_view._unhandled_input(event.xformed_by(xf))
+
+
 func _shortcut_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
@@ -963,18 +976,16 @@ func _build_ui() -> void:
 	# Content area fills the viewport above the status bar. All overlays and
 	# _ui_root live inside this node so their anchor_bottom = 1.0 resolves to
 	# the top of the status bar rather than the viewport bottom.
+	# Default STOP filter keeps the GUI event pipeline from spilling into
+	# _unhandled_input, which would break embedded sub-window interaction.
 	_ui_content_area = Control.new()
 	_ui_content_area.name = "UIContentArea"
-	_ui_content_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_content_area.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui_layer.add_child(_ui_content_area)
 
-	# Root VBox fills the content area.  PASS lets pointer events propagate
-	# past _ui_root so they reach MapView._unhandled_input instead of being
-	# consumed by the default STOP filter on this full-rect container.
+	# Root VBox fills the content area.
 	_ui_root = VBoxContainer.new()
 	_ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_ui_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	_ui_root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ui_root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_ui_content_area.add_child(_ui_root)
@@ -1203,13 +1214,18 @@ func _build_ui() -> void:
 	# Add flyout panel to content area (not ui_root) for HiDPI stability
 	_ui_content_area.add_child(_palette.get_flyout())
 
-	# ── Map area spacer (passes mouse through to the map) ────────────────────
-	var map_spacer := Control.new()
-	map_spacer.name = "MapSpacer"
-	map_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	map_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	map_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content_row.add_child(map_spacer)
+	# ── Map area spacer (catches mouse events and forwards to MapView) ────────
+	# STOP intercepts pointer events in the map region; the gui_input
+	# callback transforms them back to viewport coordinates and calls
+	# MapView._unhandled_input directly.  This avoids the normal
+	# _unhandled_input pipeline which interferes with sub-window dragging.
+	_map_spacer = Control.new()
+	_map_spacer.name = "MapSpacer"
+	_map_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_map_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_map_spacer.mouse_filter = Control.MOUSE_FILTER_STOP
+	content_row.add_child(_map_spacer)
+	_map_spacer.gui_input.connect(_on_map_gui_input)
 
 	# ── Player freeze panel (vertical side panel, right side) ─────────────────
 	# Added directly to _ui_content_area (not _ui_root) so _ui_root.scale does not
@@ -1417,21 +1433,15 @@ func _build_ui() -> void:
 	_manual_scale_dialog.confirmed.connect(_on_manual_scale_confirmed)
 	add_child(_manual_scale_dialog)
 
-	# ── Open Map dialog — select a .map bundle (directory package) ──────────────
-	# macOS standalone: Info.plist UTType declares com.apple.package so .map dirs
-	#   appear as opaque files → OPEN_FILE works.
-	# Windows standalone: .map dirs are plain directories; OPEN_FILE cannot select
-	#   them (Windows IFileOpenDialog navigates into dirs in file mode) → OPEN_DIR.
-	# Dev: OPEN_ANY so .map dirs are selectable as folders in Godot's built-in dialog.
+	# ── Open Map dialog — select a .map bundle (ZIP archive or legacy directory) ────
+	# Bundles are stored as ZIP files so OPEN_FILE works on all platforms.
+	# Legacy directory bundles are supported via OPEN_ANY in dev mode.
 	_open_map_dialog = FileDialog.new()
 	_open_map_dialog.use_native_dialog = true
 	_open_map_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_open_map_dialog.title = "Open Map Bundle"
 	if OS.has_feature("standalone"):
-		if OS.get_name() == "Windows":
-			_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-		else:
-			_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	else:
 		_open_map_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_open_map_dialog.add_filter("*.map ; The Vault Map")
@@ -1459,21 +1469,14 @@ func _build_ui() -> void:
 	_save_game_dialog.file_selected.connect(_on_save_game_path_selected)
 	add_child(_save_game_dialog)
 
-	# ── Load Game dialog — select a .sav bundle ────────────────────────────────
-	# macOS standalone: Info.plist UTType declares com.apple.package so .sav dirs
-	#   appear as opaque files → OPEN_FILE works.
-	# Windows standalone: .sav dirs are plain directories; OPEN_FILE cannot select
-	#   them → OPEN_DIR so the native folder-picker lets the user select them.
-	# Dev: OPEN_ANY + *.sav filter → .sav dirs are selectable as folders.
+	# ── Load Game dialog — select a .sav bundle (ZIP archive or legacy directory) ──
+	# Same approach as Open Map: OPEN_FILE for standalone, OPEN_ANY for dev.
 	_load_game_dialog = FileDialog.new()
 	_load_game_dialog.use_native_dialog = true
 	_load_game_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_load_game_dialog.title = "Load Game"
 	if OS.has_feature("standalone"):
-		if OS.get_name() == "Windows":
-			_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-		else:
-			_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	else:
 		_load_game_dialog.file_mode = FileDialog.FILE_MODE_OPEN_ANY
 	_load_game_dialog.add_filter("*.sav ; The Vault Save")
@@ -2960,7 +2963,9 @@ func _on_close_map() -> void:
 		_map_view.save_camera_to_map()
 		_save_map_data(map)
 	_active_map_bundle_path = ""
+	_active_map_zip_path = ""
 	_active_save_bundle_path = ""
+	_active_save_zip_path = ""
 	# Reset map state in services.
 	var ms := _map_service()
 	if ms != null:
@@ -3078,10 +3083,12 @@ func _on_close_save() -> void:
 func _do_close_save() -> void:
 	## Unload both the current save session and map, then return to the campaign hub.
 	_active_save_bundle_path = ""
+	_active_save_zip_path = ""
 	var gs := _game_state()
 	if gs != null:
 		gs.reset_session()
 	_active_map_bundle_path = ""
+	_active_map_zip_path = ""
 	var ms := _map_service()
 	if ms != null:
 		ms.load(MapData.new())
@@ -10928,12 +10935,20 @@ func _on_image_selected(path: String) -> void:
 
 func _on_save_as_path_selected(path: String) -> void:
 	## Normalise the chosen path to a .map bundle path and proceed.
+	## New bundles are always ZIP-backed: the working directory is a cache folder
+	## and the canonical .map path is a ZIP file.
 	var bundle_path := _normalise_bundle_path(path)
 	var map_name: String = bundle_path.get_file().get_basename().strip_edges()
 	if map_name.is_empty():
 		_set_status("Invalid map name — please try again.")
 		return
 	map_name = map_name.replace("/", "_").replace("\\", "_")
+
+	# Prepare a working directory in the cache for the new bundle.
+	var work_dir: String = BundleIOScript._cache_dir_for(bundle_path)
+	DirAccess.make_dir_recursive_absolute(work_dir)
+	_active_map_zip_path = bundle_path
+	_active_map_bundle_path = work_dir
 
 	match _map_name_mode:
 		"new":
@@ -10943,7 +10958,9 @@ func _on_save_as_path_selected(path: String) -> void:
 
 
 func _create_map_from_image(src_path: String, bundle_path: String) -> void:
-	_ensure_bundle_dir(bundle_path)
+	# bundle_path is the canonical ZIP path. Use the working directory for file ops.
+	var work_dir: String = _active_map_bundle_path if not _active_map_bundle_path.is_empty() else bundle_path
+	_ensure_bundle_dir(work_dir)
 	var ext: String = src_path.get_extension().to_lower()
 	var is_video: bool = ext in SUPPORTED_VIDEO_EXTENSIONS
 
@@ -10952,7 +10969,7 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 		return
 
 	# ── Static image path (unchanged) ──────────────────────────────────────
-	var img_dest_abs: String = _image_dest_path_abs(bundle_path, ext)
+	var img_dest_abs: String = _image_dest_path_abs(work_dir, ext)
 
 	var copy_err := _copy_file(src_path, img_dest_abs)
 	var new_map_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
@@ -10969,7 +10986,9 @@ func _create_map_from_image(src_path: String, bundle_path: String) -> void:
 func _create_map_from_video(src_path: String, bundle_path: String, ext: String) -> void:
 	## Handle video-format map imports. OGV files are copied directly; all
 	## other formats are converted to OGV via the system ``ffmpeg`` CLI.
-	var dest_ogv: String = bundle_path.path_join("video.ogv")
+	# bundle_path is the canonical ZIP path; use the work directory for file ops.
+	var work_dir: String = _active_map_bundle_path if not _active_map_bundle_path.is_empty() else bundle_path
+	var dest_ogv: String = work_dir.path_join("video.ogv")
 
 	if ext == "ogv":
 		# OGV — copy directly, no conversion needed.
@@ -11195,10 +11214,12 @@ func _on_video_conversion_finished() -> void:
 func _finish_map_creation(bundle_path: String, media_path: String) -> void:
 	## Shared tail for both image and video map creation: build MapData, save,
 	## load via service, broadcast, and generate thumbnail.
+	## _active_map_bundle_path (work dir) and _active_map_zip_path are already set
+	## by _on_save_as_path_selected before we reach here.
 	var map := MapData.new()
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = media_path
-	_active_map_bundle_path = bundle_path
+	# _active_map_bundle_path is the work directory (set by caller).
 	# Clear all tokens from any previous session BEFORE saving the new bundle.
 	# _save_map_data calls save_to_bundle → _flush_tokens_to_map, which would
 	# otherwise write stale TokenService state into the brand-new map.json.
@@ -11213,7 +11234,7 @@ func _finish_map_creation(bundle_path: String, media_path: String) -> void:
 		ms.load(map)
 	_apply_map(map)
 	_nm_broadcast_map(map)
-	_generate_thumbnail(bundle_path, media_path)
+	_generate_thumbnail(_active_map_bundle_path, media_path)
 	_set_status("New map: %s" % map.map_name)
 
 
@@ -11256,20 +11277,28 @@ func _on_map_bundle_selected(path: String) -> void:
 	if bundle_path.is_empty():
 		_set_status("Failed to load map: selected path is not a valid .map bundle.")
 		return
+	# Transparently handle ZIP or directory bundles.
+	var work_dir: String = BundleIOScript.open_bundle(bundle_path)
+	if work_dir.is_empty():
+		_set_status("Failed to open map bundle: %s" % bundle_path.get_file())
+		return
+	var is_zip: bool = (work_dir != bundle_path)
 	var map: MapData = null
 	var ms := _map_service()
 	# load_from_bundle calls MapService.load_map → _sync_tokens_from_map, so
 	# TokenService is populated before _apply_map reads it for sprite creation.
+	# Pass the work directory so MapService resolves relative paths correctly.
 	if ms != null and ms.service != null:
-		map = ms.load_from_bundle(bundle_path)
+		map = ms.load_from_bundle(work_dir)
 	else:
-		map = _load_map_from_bundle(bundle_path)
+		map = _load_map_from_bundle(work_dir)
 		if map != null and ms != null:
 			ms.load(map)
 	if map == null:
 		_set_status("Failed to load map from: %s" % bundle_path.get_file())
 		return
-	_active_map_bundle_path = bundle_path
+	_active_map_bundle_path = work_dir
+	_active_map_zip_path = bundle_path if is_zip else ""
 	_apply_map(map)
 	_nm_broadcast_map(map)
 	_set_status("Opened: %s" % map.map_name)
@@ -11299,7 +11328,7 @@ func _on_save_map_as_pressed() -> void:
 		return
 	_map_name_mode = "save_as"
 	_save_as_dialog.current_file = map.map_name + ".map"
-	_save_as_dialog.current_dir = _active_map_bundle_path.get_base_dir() if not _active_map_bundle_path.is_empty() else _maps_dir_abs()
+	_save_as_dialog.current_dir = _active_map_zip_path.get_base_dir() if not _active_map_zip_path.is_empty() else _maps_dir_abs()
 	_save_as_dialog.popup_centered(Vector2i(900, 600))
 
 
@@ -11368,19 +11397,29 @@ func _save_game_to_bundle(save_name: String) -> void:
 	# token state.  This keeps the original .map untouched — only Save Map
 	# should write there.
 	var ms := _map_service()
+	var sav_zip_path: String = _saves_dir_abs().path_join(save_name + ".sav")
 	if gs != null:
 		var ok := gs.save_session(save_name, fog_image, _active_map_bundle_path)
 		if ok:
-			_active_save_bundle_path = _saves_dir_abs().path_join(save_name + ".sav")
+			# The .sav ZIP is the canonical path; get its work dir for embedded ops.
+			var sav_work_dir: String = BundleIOScript.open_bundle(sav_zip_path)
+			if sav_work_dir.is_empty():
+				sav_work_dir = BundleIOScript._cache_dir_for(sav_zip_path)
+			_active_save_bundle_path = sav_work_dir
+			_active_save_zip_path = sav_zip_path
 			# Flush current token state into the EMBEDDED map.json inside the
 			# .sav bundle (not the original .map).
 			if ms != null:
-				var embedded_map_path: String = _active_save_bundle_path.path_join("map.map")
+				var embedded_map_path: String = sav_work_dir.path_join("map.map")
 				ms.save_to_bundle(embedded_map_path)
 			# Generate thumbnail for the .sav bundle from the embedded map image
-			var sav_img := _find_bundle_media(_active_save_bundle_path.path_join("map.map"))
+			var sav_img := _find_bundle_media(sav_work_dir.path_join("map.map"))
 			if not sav_img.is_empty():
-				_generate_thumbnail(_active_save_bundle_path, sav_img)
+				_generate_thumbnail(sav_work_dir, sav_img)
+			# Re-pack the .sav ZIP with updated embedded map.json + thumbnail.
+			var pack_err: Error = BundleIOScript.save_bundle(sav_work_dir, sav_zip_path)
+			if pack_err != OK:
+				push_error("DMWindow: failed to re-pack .sav ZIP '%s' (err %d)" % [sav_zip_path, pack_err])
 			_set_status("Game saved: %s" % save_name)
 		else:
 			_set_status("Error: failed to save game.")
@@ -11400,13 +11439,15 @@ func _on_load_game_pressed() -> void:
 
 func _on_load_game_path_selected(path: String) -> void:
 	## Called when the user picks a .sav bundle from the Load Game dialog.
+	## Handles both ZIP archives and legacy directory bundles.
 	var bundle_path := path
-	# Walk up to the nearest .sav directory if needed.
-	while not bundle_path.is_empty() and not bundle_path.ends_with(".sav"):
-		var parent := bundle_path.get_base_dir()
-		if parent == bundle_path:
-			break
-		bundle_path = parent
+	# For legacy directory bundles, walk up to the nearest .sav if needed.
+	if not bundle_path.ends_with(".sav"):
+		while not bundle_path.is_empty() and not bundle_path.ends_with(".sav"):
+			var parent := bundle_path.get_base_dir()
+			if parent == bundle_path:
+				break
+			bundle_path = parent
 	if not bundle_path.ends_with(".sav"):
 		_set_status("Invalid save bundle: %s" % path.get_file())
 		return
@@ -11415,6 +11456,10 @@ func _on_load_game_path_selected(path: String) -> void:
 	if gs == null:
 		_set_status("Error: game state service unavailable.")
 		return
+
+	# Track ZIP path for re-packing on future saves.
+	var is_zip: bool = BundleIOScript.is_zip(bundle_path)
+	_active_save_zip_path = bundle_path if is_zip else ""
 
 	var bundle: Dictionary = gs.load_session(bundle_path)
 	if bundle.is_empty():
@@ -11459,15 +11504,30 @@ func _on_load_game_path_selected(path: String) -> void:
 			# path if it is NOT inside the saves dir  3) embedded copy.
 			var maps_candidate: String = _bundle_dir_abs(map.map_name) if not map.map_name.is_empty() else ""
 			var saves_dir: String = _saves_dir_abs()
-			if not maps_candidate.is_empty() and DirAccess.dir_exists_absolute(maps_candidate):
-				_active_map_bundle_path = maps_candidate
+			if not maps_candidate.is_empty() and BundleIOScript.bundle_exists(maps_candidate):
+				# Open the ZIP-backed map for working
+				var work_dir: String = BundleIOScript.open_bundle(maps_candidate)
+				if not work_dir.is_empty():
+					_active_map_bundle_path = work_dir
+					_active_map_zip_path = maps_candidate if (work_dir != maps_candidate) else ""
+				else:
+					_active_map_bundle_path = maps_candidate
+					_active_map_zip_path = ""
 			else:
 				var recorded_path: String = "" if state_val == null else str(state_val.map_bundle_path)
 				var resolved_path: String = ProjectSettings.globalize_path(recorded_path) if not recorded_path.is_empty() else ""
-				if not resolved_path.is_empty() and DirAccess.dir_exists_absolute(resolved_path) and not resolved_path.begins_with(saves_dir):
-					_active_map_bundle_path = recorded_path
+				if not resolved_path.is_empty() and BundleIOScript.bundle_exists(resolved_path) and not resolved_path.begins_with(saves_dir):
+					var work_dir2: String = BundleIOScript.open_bundle(resolved_path)
+					if not work_dir2.is_empty():
+						_active_map_bundle_path = work_dir2
+						_active_map_zip_path = resolved_path if (work_dir2 != resolved_path) else ""
+					else:
+						_active_map_bundle_path = recorded_path
+						_active_map_zip_path = ""
 				else:
 					_active_map_bundle_path = map_bundle
+					_active_map_zip_path = ""
+			_active_save_bundle_path = BundleIOScript.open_bundle(bundle_path) if is_zip else bundle_path
 			_apply_map(map, true)
 
 	# Restore fog from the saved image
@@ -11489,7 +11549,14 @@ func _on_load_game_path_selected(path: String) -> void:
 	if _map_view != null and _backend != null:
 		_map_view.set_draggable_tokens(_backend.get_dm_token_nodes())
 
-	_active_save_bundle_path = bundle_path
+	# Ensure the save work dir is tracked (may already have been set inside the
+	# map-loading block above; this covers the case where map_bundle was empty).
+	if _active_save_bundle_path.is_empty():
+		if is_zip:
+			var sav_wdir: String = BundleIOScript.open_bundle(bundle_path)
+			_active_save_bundle_path = sav_wdir if not sav_wdir.is_empty() else bundle_path
+		else:
+			_active_save_bundle_path = bundle_path
 
 	# Broadcast everything to connected displays.
 	# _broadcast_token_state is called last so player displays receive the
@@ -11505,12 +11572,15 @@ func _on_load_game_path_selected(path: String) -> void:
 
 func _save_map_as_path(bundle_path: String) -> void:
 	## Copy the current map into a new .map bundle and switch to it.
+	## _active_map_bundle_path (work dir) and _active_map_zip_path are already
+	## set by _on_save_as_path_selected.
 	var map: MapData = _map()
 	if map == null:
 		return
-	_ensure_bundle_dir(bundle_path)
+	var work_dir: String = _active_map_bundle_path
+	_ensure_bundle_dir(work_dir)
 	var ext: String = map.image_path.get_extension().to_lower()
-	var new_img_abs: String = _image_dest_path_abs(bundle_path, ext)
+	var new_img_abs: String = _image_dest_path_abs(work_dir, ext)
 
 	# Only copy image if destination is different from source.
 	if new_img_abs != map.image_path:
@@ -11526,13 +11596,12 @@ func _save_map_as_path(bundle_path: String) -> void:
 	_map_view.save_camera_to_map()
 	map.map_name = bundle_path.get_file().get_basename()
 	map.image_path = new_img_abs
-	_active_map_bundle_path = bundle_path
 	_save_map_data(map)
 	var ms := _map_service()
 	if ms != null:
 		ms.update(map)
 	_nm_broadcast_map_update(map)
-	_generate_thumbnail(bundle_path, new_img_abs)
+	_generate_thumbnail(work_dir, new_img_abs)
 	_set_status("Saved as: %s" % map.map_name)
 
 
@@ -11999,13 +12068,19 @@ func _ensure_maps_dir() -> void:
 
 func _ensure_bundle_dir(bundle_path: String) -> void:
 	var abs_dir := bundle_path
-	# Native save panels can leave behind a placeholder file at the selected path.
-	# If that happened, remove it so the .map path can become a directory bundle.
+	# Native save panels may leave behind a placeholder file at the selected path.
+	# ZIP bundles are real files — only remove 0-byte placeholders.
 	if FileAccess.file_exists(abs_dir) and not DirAccess.dir_exists_absolute(abs_dir):
-		var remove_err := DirAccess.remove_absolute(abs_dir)
-		if remove_err != OK:
-			push_error("DMWindow: could not replace placeholder file '%s' with bundle dir (err %d)" % [abs_dir, remove_err])
-			return
+		# Check if this is a real ZIP bundle (non-zero size) vs placeholder.
+		var fa := FileAccess.open(abs_dir, FileAccess.READ)
+		var is_placeholder: bool = (fa == null or fa.get_length() == 0)
+		if fa != null:
+			fa.close()
+		if is_placeholder:
+			var remove_err := DirAccess.remove_absolute(abs_dir)
+			if remove_err != OK:
+				push_error("DMWindow: could not replace placeholder file '%s' with bundle dir (err %d)" % [abs_dir, remove_err])
+				return
 	if not DirAccess.dir_exists_absolute(abs_dir):
 		DirAccess.make_dir_recursive_absolute(abs_dir)
 
@@ -12018,13 +12093,18 @@ func _normalise_bundle_path(path: String) -> String:
 
 func _resolve_bundle_path(path: String) -> String:
 	## Resolves a native-dialog return path to the nearest .map bundle.
+	## Handles both ZIP files and legacy directory bundles.
 	if path.is_empty():
 		return ""
 
 	var raw := path
+	# Direct match: path ends in .map and is a file (ZIP) or directory.
 	if raw.to_lower().ends_with(".map"):
-		return raw
+		if BundleIOScript.bundle_exists(raw):
+			return raw
+		return raw # might be a Save As target that doesn't exist yet
 
+	# Walk up to find the nearest .map parent (legacy directory bundles).
 	var current := raw if DirAccess.dir_exists_absolute(raw) else raw.get_base_dir()
 	while not current.is_empty():
 		if current.to_lower().ends_with(".map"):
@@ -12038,10 +12118,13 @@ func _resolve_bundle_path(path: String) -> String:
 
 
 func _save_map_data(map: MapData) -> void:
-	## Serialise MapData to map.json inside the active .map bundle directory.
+	## Serialise MapData to map.json inside the active .map bundle working directory.
 	## image_path is stored as a relative filename so the bundle is self-contained.
+	## If the map is backed by a ZIP, the working dir is packed back to ZIP after writing.
 	if _active_map_bundle_path.is_empty():
-		_active_map_bundle_path = _bundle_dir_abs(map.map_name)
+		var default_dir: String = _bundle_dir_abs(map.map_name)
+		_active_map_bundle_path = default_dir
+		_active_map_zip_path = default_dir # new bundles are always ZIP
 	_ensure_bundle_dir(_active_map_bundle_path)
 	var path := _bundle_json_path_abs(_active_map_bundle_path)
 	var d := map.to_dict()
@@ -12054,6 +12137,7 @@ func _save_map_data(map: MapData) -> void:
 		var thumb_img_ms := _find_bundle_media(_active_map_bundle_path)
 		if not thumb_img_ms.is_empty():
 			_generate_thumbnail(_active_map_bundle_path, thumb_img_ms)
+		_pack_active_map_zip()
 		return
 
 	var fa := FileAccess.open(path, FileAccess.WRITE)
@@ -12066,6 +12150,18 @@ func _save_map_data(map: MapData) -> void:
 	var thumb_img := _find_bundle_media(_active_map_bundle_path)
 	if not thumb_img.is_empty():
 		_generate_thumbnail(_active_map_bundle_path, thumb_img)
+	_pack_active_map_zip()
+
+
+func _pack_active_map_zip() -> void:
+	## Pack the working directory back to the ZIP archive if this map is ZIP-backed.
+	if _active_map_zip_path.is_empty():
+		return
+	if _active_map_bundle_path.is_empty():
+		return
+	var err: Error = BundleIOScript.save_bundle(_active_map_bundle_path, _active_map_zip_path)
+	if err != OK:
+		push_error("DMWindow: failed to pack map ZIP '%s' (err %d)" % [_active_map_zip_path, err])
 
 
 func _load_map_from_bundle(bundle_path: String) -> MapData:
@@ -13084,6 +13180,7 @@ func _open_char_sheet_for(sb: StatblockData) -> void:
 		add_child(_char_sheet)
 		_char_sheet.character_saved.connect(_on_char_sheet_saved)
 		_char_sheet.level_up_requested.connect(_on_char_sheet_level_up)
+		_char_sheet.visibility_changed.connect(_on_char_sheet_visibility_changed)
 	# Prompt to save/discard if the sheet already has unsaved edits for a
 	# different character.
 	if _char_sheet.is_dirty():
@@ -13108,6 +13205,15 @@ func _on_char_sheet_saved(statblock: StatblockData) -> void:
 	_refresh_chars_list()
 	if _campaign_panel != null:
 		_campaign_panel.refresh_chars()
+
+
+func _on_char_sheet_visibility_changed() -> void:
+	if _char_sheet != null and not _char_sheet.visible:
+		# When the character sheet closes on Windows, the OS gives focus to
+		# the main window instead of the still-visible campaign hub.  Refocus
+		# it so it stays in front.
+		if _campaign_panel != null and _campaign_panel.visible:
+			_campaign_panel.grab_focus()
 
 
 func _on_char_sheet_level_up(statblock: StatblockData) -> void:
