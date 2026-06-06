@@ -45,7 +45,8 @@ func toggle_select(_id: String, _layer: int) -> void:
 
 ## Select all entities whose world position falls inside `rect`.
 ## `hits` is an Array of {id: String, layer: int} pre-gathered by the caller.
-func box_select(_hits: Array) -> void:
+## When additive is true, keep the existing selection and merge in the hits.
+func box_select(_hits: Array, _additive: bool = false) -> void:
 	push_error("ISelectionService.box_select: not implemented")
 
 

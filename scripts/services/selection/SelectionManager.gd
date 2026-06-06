@@ -26,9 +26,9 @@ func toggle_select(id: String, layer: int) -> void:
 		service.toggle_select(id, layer)
 
 
-func box_select(hits: Array) -> void:
+func box_select(hits: Array, additive: bool = false) -> void:
 	if service != null:
-		service.box_select(hits)
+		service.box_select(hits, additive)
 
 
 func select_many(ids: Array[String], layer: int) -> void:

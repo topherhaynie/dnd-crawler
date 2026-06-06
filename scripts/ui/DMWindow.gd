@@ -932,6 +932,7 @@ func _build_ui() -> void:
 	_map_view.spawn_point_selected.connect(_on_spawn_point_selected)
 	_map_view.token_drag_started.connect(_on_token_drag_started)
 	_map_view.token_drag_completed.connect(_on_token_drag_completed)
+	_map_view.token_group_drag_completed.connect(_on_token_group_drag_completed)
 	_map_view.token_resize_completed.connect(_on_token_resize_completed)
 	_map_view.token_rotation_completed.connect(_on_token_rotation_completed)
 	_map_view.token_trigger_radius_changed.connect(_on_token_trigger_radius_changed)
@@ -4960,35 +4961,33 @@ func _on_token_drag_started(token_id: Variant) -> void:
 	# Snapshot pre-drag position so drag-complete can compute a correct delta
 	# even if a roam tick mutated world_pos in-between.
 	var registry_ds := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry_ds != null and registry_ds.token != null:
-		var data: TokenData = registry_ds.token.get_token_by_id(str(token_id))
+	if registry_ds != null:
+		var data: TokenData = registry_ds.token.get_token_by_id(str(token_id)) if registry_ds.token != null else null
 		if data != null:
 			_drag_start_positions[str(token_id)] = data.world_pos
+		elif registry_ds.game_state != null and registry_ds.game_state.player_positions.has(token_id):
+			_drag_start_positions[str(token_id)] = registry_ds.game_state.get_position(token_id)
 
 
-func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
-	var id: String = str(token_id)
-	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+func _apply_token_drag_completion(id: String, old_pos: Vector2, new_world_pos: Vector2,
+			registry_drag: ServiceRegistry, push_history: bool = true) -> void:
 	# Capture pre-drag position for opportunity attack checking.
-	var oa_old_pos: Vector2 = _drag_start_positions.get(id, new_world_pos) as Vector2
+	var oa_old_pos: Vector2 = old_pos
 	# Capture old player-character position before end_token_drag updates it.
 	var old_char_pos: Vector2 = Vector2.ZERO
 	var is_player_char: bool = false
 	if registry_drag != null and registry_drag.game_state != null:
-		is_player_char = registry_drag.game_state.player_positions.has(token_id)
+		is_player_char = registry_drag.game_state.player_positions.has(id)
 		if is_player_char:
-			old_char_pos = registry_drag.game_state.get_position(token_id)
+			old_char_pos = registry_drag.game_state.get_position(id)
 	if _backend != null:
-		_backend.end_token_drag(token_id, new_world_pos)
+		_backend.end_token_drag(id, new_world_pos)
 	_mark_token_save_dirty(id)
 	# Persist the new position and refresh door/passthrough state.
 	var data: TokenData = null
 	if registry_drag != null and registry_drag.token != null:
 		data = registry_drag.token.get_token_by_id(id)
 		if data != null:
-			# Use the pre-drag snapshot (immune to roam-tick mutations mid-drag).
-			var old_pos: Vector2 = _drag_start_positions.get(id, data.world_pos) as Vector2
-			_drag_start_positions.erase(id)
 			data.world_pos = new_world_pos
 			# Offset roam path by the drag delta so the path follows the token.
 			var drag_delta: Vector2 = new_world_pos - old_pos
@@ -5007,8 +5006,7 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 			if _roaming_tokens.has(id) and data.roam_path.size() >= 2:
 				var rs: Dictionary = _roaming_tokens[id] as Dictionary
 				rs["progress"] = _roam_snap_progress(data.roam_path, new_world_pos, data.roam_loop)
-			# Push undo command capturing before/after world positions + roam path.
-			if registry_drag.history != null and old_pos != new_world_pos:
+			if push_history and registry_drag.history != null and old_pos != new_world_pos:
 				var mv := _map_view
 				var new_roam: PackedVector2Array = data.roam_path.duplicate()
 				registry_drag.history.push_command(HistoryCommand.create("Token moved",
@@ -5032,18 +5030,18 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 							mv.update_token_sprite(td)
 							mv.apply_token_passthrough_state(td)
 						_broadcast_token_change(td, false)))
-		elif is_player_char and registry_drag.history != null and old_char_pos.distance_to(new_world_pos) > 1.0:
+		elif is_player_char and push_history and registry_drag.history != null and old_char_pos.distance_to(new_world_pos) > 1.0:
 			# Player character drag — not in TokenService, undo via BackendRuntime.
 			var backend_ref := _backend
 			registry_drag.history.push_command(HistoryCommand.create("Character moved",
 				func():
 					if backend_ref != null:
-						backend_ref.end_token_drag(token_id, old_char_pos)
+						backend_ref.end_token_drag(id, old_char_pos)
 					_nm_broadcast_to_displays({"msg": "token_moved", "token_id": id,
 						"world_pos": {"x": old_char_pos.x, "y": old_char_pos.y}}),
 				func():
 					if backend_ref != null:
-						backend_ref.end_token_drag(token_id, new_world_pos)
+						backend_ref.end_token_drag(id, new_world_pos)
 					_nm_broadcast_to_displays({"msg": "token_moved", "token_id": id,
 						"world_pos": {"x": new_world_pos.x, "y": new_world_pos.y}})))
 	# Broadcast updated token position to player displays.
@@ -5062,6 +5060,55 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 			and registry_drag.combat.is_in_combat():
 		if oa_old_pos.distance_to(new_world_pos) > 1.0:
 			_check_opportunity_attacks(id, oa_old_pos, new_world_pos, registry_drag)
+
+
+func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void:
+	var id: String = str(token_id)
+	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	var old_pos: Vector2 = _drag_start_positions.get(id, new_world_pos) as Vector2
+	if _drag_start_positions.has(id):
+		_drag_start_positions.erase(id)
+	_apply_token_drag_completion(id, old_pos, new_world_pos, registry_drag, true)
+
+
+func _on_token_group_drag_completed(token_ids: Array, new_world_positions: Array) -> void:
+	var registry_drag := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry_drag == null or registry_drag.token == null or registry_drag.history == null:
+		return
+	var ids: Array[String] = []
+	var old_positions: Array[Vector2] = []
+	var new_positions: Array[Vector2] = []
+	var count: int = mini(token_ids.size(), new_world_positions.size())
+	for i: int in range(count):
+		var id: String = str(token_ids[i])
+		var new_pos_variant: Variant = new_world_positions[i]
+		if id.is_empty() or not (new_pos_variant is Vector2):
+			continue
+		var new_pos: Vector2 = new_pos_variant as Vector2
+		var old_pos: Vector2 = _drag_start_positions.get(id, new_pos) as Vector2
+		if _drag_start_positions.has(id):
+			_drag_start_positions.erase(id)
+		var has_token: bool = registry_drag.token.get_token_by_id(id) != null if registry_drag.token != null else false
+		var has_player_char: bool = registry_drag.game_state != null and registry_drag.game_state.player_positions.has(id)
+		if not has_token and not has_player_char:
+			continue
+		ids.append(id)
+		old_positions.append(old_pos)
+		new_positions.append(new_pos)
+	if ids.is_empty():
+		return
+	for i: int in range(ids.size()):
+		_apply_token_drag_completion(ids[i], old_positions[i], new_positions[i], registry_drag, false)
+	var ids_copy: Array[String] = ids.duplicate()
+	var old_copy: Array[Vector2] = old_positions.duplicate()
+	var new_copy: Array[Vector2] = new_positions.duplicate()
+	registry_drag.history.push_command(HistoryCommand.create("Tokens moved",
+		func():
+			for i: int in range(ids_copy.size()):
+				_apply_token_drag_completion(ids_copy[i], new_copy[i], old_copy[i], registry_drag, false),
+		func():
+			for i: int in range(ids_copy.size()):
+				_apply_token_drag_completion(ids_copy[i], old_copy[i], new_copy[i], registry_drag, false)))
 
 
 func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:

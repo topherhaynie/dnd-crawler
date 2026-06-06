@@ -247,6 +247,7 @@ signal measurement_move_completed(id: String, new_start: Vector2, new_end: Vecto
 signal measurement_edit_completed(data: MeasurementData, old_start: Vector2, old_end: Vector2)
 signal token_drag_started(token_id: Variant)
 signal token_drag_completed(token_id: Variant, new_world_pos: Vector2)
+signal token_group_drag_completed(token_ids: Array, new_world_positions: Array)
 signal token_resize_completed(token_id: String, new_width_px: float, new_height_px: float)
 signal token_rotation_completed(token_id: String, rotation_deg: float)
 signal token_place_requested(world_pos: Vector2)
@@ -291,6 +292,8 @@ var _resize_start_rect: Rect2 = Rect2()
 var _dragging_token_id: Variant = null
 var _dragging_token_node: Node2D = null
 var _dragging_token_offset: Vector2 = Vector2.ZERO
+var _dragging_token_group_ids: Array[String] = []
+var _dragging_token_group_start_positions: Dictionary = {}
 var _draggable_tokens: Dictionary = {}
 var _token_drag_order: Array = []
 var _current_cursor_shape: int = DisplayServer.CURSOR_ARROW
@@ -313,6 +316,7 @@ var _trigger_radius_drag_node: Node2D = null
 var _box_selecting: bool = false
 var _box_select_start: Vector2 = Vector2.ZERO ## world-space start corner
 var _box_select_end: Vector2 = Vector2.ZERO ## world-space current corner
+var _box_select_additive: bool = false ## true when the current box drag should merge with the selection
 var _box_select_overlay: Node2D = null ## overlay that draws the selection rect
 
 ## Effect selection / drag / resize state (DM-view only)
@@ -2253,11 +2257,13 @@ func _active_tool_supports_selection() -> bool:
 	return registry.selection.tool_supports_selection(_active_tool_key())
 
 
-func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
+func _pick_selectable_at(world_pos: Vector2, tokens_only: bool = false) -> SelectableHit:
 	## Unified hit-tester.  Tests all selectable layers in priority order
 	## (highest → lowest) and returns the first non-empty hit.
 	## Token hit-test calls are cached as locals so each runs exactly once,
 	## with the result reused for both PLAYER_TOKEN and TOKEN layer checks.
+	## When tokens_only is true, non-token layers are skipped so modifier-held
+	## selection drags can pass through the viewport indicator and walls.
 	# Cache — each hit-test called at most once.
 	var handle_result: Dictionary = _hit_test_token_handle(world_pos)
 	var token_hit: Variant = _hit_test_tokens(world_pos)
@@ -2274,22 +2280,23 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 		if tnode is PlayerSprite:
 			return SelectableHit.make(ISelectionService.SelectionLayer.PLAYER_TOKEN, token_hit)
 
-	# --- MEASUREMENT ---
-	if measurement_overlay != null and is_dm_view:
-		var ep: Array = measurement_overlay.pick_endpoint(world_pos, 20.0)
-		var ep_which: String = ep[0] as String
-		var ep_id: String = ep[1] as String
-		if ep_which != "":
-			return SelectableHit.make(
-					ISelectionService.SelectionLayer.MEASUREMENT, ep_id, -1, ep_which)
-		var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
-		if picked_id != "":
-			return SelectableHit.make(ISelectionService.SelectionLayer.MEASUREMENT, picked_id)
+	if not tokens_only:
+		# --- MEASUREMENT ---
+		if measurement_overlay != null and is_dm_view:
+			var ep: Array = measurement_overlay.pick_endpoint(world_pos, 20.0)
+			var ep_which: String = ep[0] as String
+			var ep_id: String = ep[1] as String
+			if ep_which != "":
+				return SelectableHit.make(
+						ISelectionService.SelectionLayer.MEASUREMENT, ep_id, -1, ep_which)
+			var picked_id: String = measurement_overlay.pick_nearest(world_pos, 16.0)
+			if picked_id != "":
+				return SelectableHit.make(ISelectionService.SelectionLayer.MEASUREMENT, picked_id)
 
-	# --- EFFECT ---
-	var eff_id: String = hit_test_effect(world_pos)
-	if not eff_id.is_empty():
-		return SelectableHit.make(ISelectionService.SelectionLayer.EFFECT, eff_id)
+		# --- EFFECT ---
+		var eff_id: String = hit_test_effect(world_pos)
+		if not eff_id.is_empty():
+			return SelectableHit.make(ISelectionService.SelectionLayer.EFFECT, eff_id)
 
 	# --- TOKEN (non-player handles first, then body) ---
 	if not handle_result.is_empty():
@@ -2303,31 +2310,32 @@ func _pick_selectable_at(world_pos: Vector2) -> SelectableHit:
 		if not (tnode is PlayerSprite):
 			return SelectableHit.make(ISelectionService.SelectionLayer.TOKEN, token_hit)
 
-	# --- SPAWN ---
-	var sp_idx: int = _hit_test_spawn_point(world_pos)
-	if sp_idx >= 0:
-		return SelectableHit.make(ISelectionService.SelectionLayer.SPAWN, sp_idx)
+	if not tokens_only:
+		# --- SPAWN ---
+		var sp_idx: int = _hit_test_spawn_point(world_pos)
+		if sp_idx >= 0:
+			return SelectableHit.make(ISelectionService.SelectionLayer.SPAWN, sp_idx)
 
-	# --- INDICATOR (handles first, then body — both above walls) ---
-	if _viewport_indicator != Rect2() and _indicator_overlay != null:
-		var ind_handle: int = _indicator_overlay.get_handle_at(world_pos)
-		if ind_handle >= 0:
-			return SelectableHit.make(
-					ISelectionService.SelectionLayer.INDICATOR, null, ind_handle)
-		if _indicator_has_point(world_pos):
-			return SelectableHit.make(
-					ISelectionService.SelectionLayer.INDICATOR, null, -1)
+		# --- INDICATOR (handles first, then body — both above walls) ---
+		if _viewport_indicator != Rect2() and _indicator_overlay != null:
+			var ind_handle: int = _indicator_overlay.get_handle_at(world_pos)
+			if ind_handle >= 0:
+				return SelectableHit.make(
+						ISelectionService.SelectionLayer.INDICATOR, null, ind_handle)
+			if _indicator_has_point(world_pos):
+				return SelectableHit.make(
+						ISelectionService.SelectionLayer.INDICATOR, null, -1)
 
-	# --- WALL (lowest priority) ---
-	# Check already-selected wall handle before looking for a new wall.
-	if _selected_wall_index >= 0:
-		var wh_idx: int = _hit_test_selected_wall_handle(world_pos)
-		if wh_idx >= 0:
-			return SelectableHit.make(
-					ISelectionService.SelectionLayer.WALL, _selected_wall_index, wh_idx)
-	var wall_idx: int = _find_wall_at_point(world_pos)
-	if wall_idx >= 0:
-		return SelectableHit.make(ISelectionService.SelectionLayer.WALL, wall_idx)
+		# --- WALL (lowest priority) ---
+		# Check already-selected wall handle before looking for a new wall.
+		if _selected_wall_index >= 0:
+			var wh_idx: int = _hit_test_selected_wall_handle(world_pos)
+			if wh_idx >= 0:
+				return SelectableHit.make(
+						ISelectionService.SelectionLayer.WALL, _selected_wall_index, wh_idx)
+		var wall_idx: int = _find_wall_at_point(world_pos)
+		if wall_idx >= 0:
+			return SelectableHit.make(ISelectionService.SelectionLayer.WALL, wall_idx)
 
 	return SelectableHit.new() ## empty — no hit at this position
 
@@ -2397,12 +2405,24 @@ func _cancel_token_drag() -> void:
 		if Input.is_key_pressed(KEY_SHIFT) and _map != null:
 			final_pos = GridSnap.snap_to_grid(final_pos, _map)
 			_dragging_token_node.global_position = final_pos
-		token_drag_completed.emit(_dragging_token_id, final_pos)
+		if _dragging_token_group_ids.size() > 1:
+			var group_ids: Array = []
+			var group_positions: Array = []
+			for tid: String in _dragging_token_group_ids:
+				var group_node: Node2D = _draggable_tokens.get(tid, null) as Node2D
+				if group_node != null and is_instance_valid(group_node):
+					group_ids.append(tid)
+					group_positions.append(group_node.global_position)
+			token_group_drag_completed.emit(group_ids, group_positions)
+		else:
+			token_drag_completed.emit(_dragging_token_id, final_pos)
 		_token_drag_order.erase(_dragging_token_id)
 		_token_drag_order.push_front(_dragging_token_id)
 	_dragging_token_id = null
 	_dragging_token_node = null
 	_dragging_token_offset = Vector2.ZERO
+	_dragging_token_group_ids.clear()
+	_dragging_token_group_start_positions.clear()
 
 
 func _cancel_token_resize() -> void:
@@ -2713,7 +2733,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				if btn_event.pressed:
 					if _active_tool_supports_selection():
 						var world_pos := get_global_mouse_position()
-						var hit := _pick_selectable_at(world_pos)
+						var box_select_modifier: bool = btn_event.shift_pressed or btn_event.ctrl_pressed or btn_event.meta_pressed
+						var hit := _pick_selectable_at(world_pos, box_select_modifier)
 						# Placement tools only interact with their own entity type;
 						# mask hits from other layers so they fall through to placement.
 						var eff_hit := hit
@@ -2762,15 +2783,35 @@ func _unhandled_input(event: InputEvent) -> void:
 										var sel_layer: int = eff_hit.layer
 										var smgr: SelectionManager = _selection_mgr()
 										var additive: bool = btn_event.ctrl_pressed or btn_event.shift_pressed or btn_event.meta_pressed
-										if additive and smgr != null:
-											smgr.toggle_select(sel_id, sel_layer)
-										elif smgr != null:
-											smgr.select(sel_id, sel_layer)
-										token_selected.emit(sel_id)
-										_dragging_token_id = htid
-										_dragging_token_node = hit_node
-										_dragging_token_offset = hit_node.global_position - world_pos
-										token_drag_started.emit(htid)
+										var selected_ids: Array[String] = []
+										if smgr != null:
+											for selected_id: String in smgr.get_selected_ids():
+												var selected_node: Node2D = _draggable_tokens.get(selected_id, null) as Node2D
+												if selected_node != null and is_instance_valid(selected_node):
+													selected_ids.append(selected_id)
+										var is_group_drag: bool = active_tool == Tool.SELECT and not additive and selected_ids.size() > 1 and selected_ids.has(sel_id)
+										if is_group_drag:
+											_dragging_token_id = htid
+											_dragging_token_node = hit_node
+											_dragging_token_offset = hit_node.global_position - world_pos
+											_dragging_token_group_ids = selected_ids.duplicate()
+											_dragging_token_group_start_positions.clear()
+											for group_id: String in _dragging_token_group_ids:
+												var group_node: Node2D = _draggable_tokens.get(group_id, null) as Node2D
+												if group_node != null and is_instance_valid(group_node):
+													_dragging_token_group_start_positions[group_id] = group_node.global_position
+											for group_id_start: String in _dragging_token_group_ids:
+												token_drag_started.emit(group_id_start)
+										else:
+											if additive and smgr != null:
+												smgr.toggle_select(sel_id, sel_layer)
+											elif smgr != null:
+												smgr.select(sel_id, sel_layer)
+											token_selected.emit(sel_id)
+											_dragging_token_id = htid
+											_dragging_token_node = hit_node
+											_dragging_token_offset = hit_node.global_position - world_pos
+											token_drag_started.emit(htid)
 									_update_cursor(world_pos)
 									get_viewport().set_input_as_handled()
 									return
@@ -2865,10 +2906,10 @@ func _unhandled_input(event: InputEvent) -> void:
 										_selected_meas_id = ""
 										if measurement_overlay != null:
 											measurement_overlay.set_selected("")
-									# Shift+click on empty space starts box selection;
+									# Modifier-drag on empty space starts box selection;
 									# otherwise clear multi-selection.
-									if btn_event.shift_pressed:
-										_start_box_select(world_pos)
+									if box_select_modifier:
+										_start_box_select(world_pos, btn_event.shift_pressed)
 										get_viewport().set_input_as_handled()
 										return
 									var smgr_c: SelectionManager = _selection_mgr()
@@ -2947,12 +2988,24 @@ func _unhandled_input(event: InputEvent) -> void:
 						_update_cursor(get_global_mouse_position())
 						get_viewport().set_input_as_handled()
 					elif _dragging_token_node != null:
-						token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
+						if _dragging_token_group_ids.size() > 1:
+							var group_ids: Array = []
+							var group_positions: Array = []
+							for group_id: String in _dragging_token_group_ids:
+								var group_node: Node2D = _draggable_tokens.get(group_id, null) as Node2D
+								if group_node != null and is_instance_valid(group_node):
+									group_ids.append(group_id)
+									group_positions.append(group_node.global_position)
+							token_group_drag_completed.emit(group_ids, group_positions)
+						else:
+							token_drag_completed.emit(_dragging_token_id, _dragging_token_node.global_position)
 						_token_drag_order.erase(_dragging_token_id)
 						_token_drag_order.push_front(_dragging_token_id)
 						_dragging_token_id = null
 						_dragging_token_node = null
 						_dragging_token_offset = Vector2.ZERO
+						_dragging_token_group_ids.clear()
+						_dragging_token_group_start_positions.clear()
 						_update_cursor(get_global_mouse_position())
 						get_viewport().set_input_as_handled()
 					elif _dragging_effect_node != null:
@@ -3056,7 +3109,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			var drag_pos: Vector2 = motion_world_pos + _dragging_token_offset
 			if Input.is_key_pressed(KEY_SHIFT) and _map != null:
 				drag_pos = GridSnap.snap_to_grid(drag_pos, _map)
-			_dragging_token_node.global_position = drag_pos
+			if _dragging_token_group_ids.size() > 1:
+				var lead_start_pos: Vector2 = _dragging_token_group_start_positions.get(str(_dragging_token_id), _dragging_token_node.global_position) as Vector2
+				var group_delta: Vector2 = drag_pos - lead_start_pos
+				for group_id: String in _dragging_token_group_ids:
+					var group_start_pos: Vector2 = _dragging_token_group_start_positions.get(group_id, _dragging_token_node.global_position) as Vector2
+					var group_node: Node2D = _draggable_tokens.get(group_id, null) as Node2D
+					if group_node != null and is_instance_valid(group_node):
+						group_node.global_position = group_start_pos + group_delta
+			else:
+				_dragging_token_node.global_position = drag_pos
 			_update_cursor(motion_world_pos)
 			get_viewport().set_input_as_handled()
 			return
@@ -4693,8 +4755,9 @@ func _tokens_in_rect(rect: Rect2) -> Array:
 	return hits
 
 
-func _start_box_select(world_pos: Vector2) -> void:
+func _start_box_select(world_pos: Vector2, additive: bool = false) -> void:
 	_box_selecting = true
+	_box_select_additive = additive
 	_box_select_start = world_pos
 	_box_select_end = world_pos
 	_update_box_select_overlay()
@@ -4713,12 +4776,14 @@ func _finish_box_select() -> void:
 	var hits: Array = _tokens_in_rect(rect)
 	var mgr: SelectionManager = _selection_mgr()
 	if mgr != null:
-		mgr.box_select(hits)
+		mgr.box_select(hits, _box_select_additive)
+	_box_select_additive = false
 	_update_box_select_overlay()
 
 
 func _cancel_box_select() -> void:
 	_box_selecting = false
+	_box_select_additive = false
 	_update_box_select_overlay()
 
 

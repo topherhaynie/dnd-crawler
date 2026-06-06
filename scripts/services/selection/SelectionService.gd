@@ -38,16 +38,22 @@ func toggle_select(id: String, layer: int) -> void:
 	selection_changed.emit(_selected_ids.duplicate())
 
 
-func box_select(hits: Array) -> void:
-	_selected_ids.clear()
-	_selected_layers.clear()
+func box_select(hits: Array, additive: bool = false) -> void:
+	var changed: bool = false
+	if not additive:
+		if not _selected_ids.is_empty() or not _selected_layers.is_empty():
+			changed = true
+		_selected_ids.clear()
+		_selected_layers.clear()
 	for hit: Dictionary in hits:
 		var id: String = str(hit.get("id", ""))
 		var layer: int = int(hit.get("layer", 0))
 		if not id.is_empty() and not _selected_ids.has(id):
 			_selected_ids.append(id)
 			_selected_layers[id] = layer
-	selection_changed.emit(_selected_ids.duplicate())
+			changed = true
+	if changed:
+		selection_changed.emit(_selected_ids.duplicate())
 
 
 func select_many(ids: Array[String], layer: int) -> void:
