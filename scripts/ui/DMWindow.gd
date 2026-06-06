@@ -13273,8 +13273,6 @@ func _first_control_child(win: Window) -> Control:
 	return null
 
 
-
-
 func _ui_scale() -> float:
 	## Delegates to UIScaleManager so scale logic lives in one place.
 	var mgr: UIScaleManager = _get_ui_scale_mgr()

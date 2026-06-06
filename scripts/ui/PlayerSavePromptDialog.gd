@@ -52,9 +52,9 @@ func apply_scale(s: float) -> void:
 		return
 	var si := func(base: float) -> int: return roundi(base * s)
 	_root.offset_left = si.call(12.0)
-	_root.offset_right = -si.call(12.0)
+	_root.offset_right = - si.call(12.0)
 	_root.offset_top = si.call(12.0)
-	_root.offset_bottom = -si.call(12.0)
+	_root.offset_bottom = - si.call(12.0)
 	_root.add_theme_constant_override("separation", si.call(8.0))
 	if _name_label != null:
 		_name_label.add_theme_font_size_override("font_size", si.call(16.0))
