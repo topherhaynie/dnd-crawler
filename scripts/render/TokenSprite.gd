@@ -82,6 +82,8 @@ var _icon_image_path: String = ""
 var _hp_current: int = -1 ## -1 = no HP bar
 var _hp_max: int = 0
 var _hp_temp: int = 0
+var _show_hp_bar: bool = true
+var _show_bloodied: bool = true
 
 ## Active conditions — Array of condition name strings for badge drawing.
 var _conditions: Array = []
@@ -378,10 +380,10 @@ func _draw() -> void:
 		)
 
 	# HP bar — drawn below token when statblock is attached.
-	if _hp_current >= 0 and _hp_max > 0:
+	if _show_hp_bar and _hp_current >= 0 and _hp_max > 0:
 		_draw_hp_bar()
-		# Bloodied indicator — red tint when at ≤ 50% HP.
-		if _hp_current > 0 and float(_hp_current) <= float(_hp_max) * 0.5:
+	# Bloodied indicator — red tint when at ≤ 50% HP.
+	if _show_bloodied and _hp_current > 0 and _hp_max > 0 and float(_hp_current) <= float(_hp_max) * 0.5:
 			_draw_bloodied_indicator()
 
 	# Condition badges — drawn below HP bar when conditions are active.
@@ -403,6 +405,15 @@ func set_hp_bar(current_hp: int, max_hp: int, temp_hp: int = 0) -> void:
 	_hp_current = current_hp
 	_hp_max = max_hp
 	_hp_temp = temp_hp
+	queue_redraw()
+
+
+## Control whether the HP bar and bloodied indicator are drawn.
+func set_hp_visibility(show_hp_bar: bool, show_bloodied: bool) -> void:
+	if _show_hp_bar == show_hp_bar and _show_bloodied == show_bloodied:
+		return
+	_show_hp_bar = show_hp_bar
+	_show_bloodied = show_bloodied
 	queue_redraw()
 
 
@@ -644,7 +655,7 @@ func _draw_condition_badges() -> void:
 	## Positioned below the HP bar if present, otherwise directly below the token.
 	var bar_h: float = clampf(_height_px * 0.08, 3.0, 6.0)
 	var hp_bar_total: float = 0.0
-	if _hp_current >= 0 and _hp_max > 0:
+	if _show_hp_bar and _hp_current >= 0 and _hp_max > 0:
 		# HP bar sits at _height_px * 0.5 + 3.0; include its height + gap.
 		hp_bar_total = bar_h + 3.0
 	var pill_h: float = clampf(_height_px * 0.14, 8.0, 12.0)

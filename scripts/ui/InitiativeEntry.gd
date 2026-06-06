@@ -10,6 +10,7 @@ signal damage_requested(token_id: String)
 signal heal_requested(token_id: String)
 signal delay_requested(token_id: String)
 signal remove_requested(token_id: String)
+signal statblock_requested(token_id: String)
 
 var _token_id: String = ""
 var _is_current_turn: bool = false
@@ -99,6 +100,8 @@ func _build_ui() -> void:
 	_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_name_label.clip_text = true
 	_name_label.text = "—"
+	_name_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	_name_label.gui_input.connect(_on_name_gui_input)
 	_row.add_child(_name_label)
 
 	# HP bar + label stacked.
@@ -300,6 +303,17 @@ func _scroll_into_view(scroll: ScrollContainer) -> void:
 		scroll.scroll_vertical = int(entry_top)
 	elif entry_bot > view_bot:
 		scroll.scroll_vertical = int(entry_bot - scroll.size.y)
+
+
+func _on_name_gui_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb: InputEventMouseButton = event as InputEventMouseButton
+	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.double_click:
+		return
+	if _token_id.is_empty():
+		return
+	statblock_requested.emit(_token_id)
 
 
 func _on_init_changed(value: float) -> void:

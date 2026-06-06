@@ -847,7 +847,8 @@ func set_camera_state(pos: Vector2, zoom: float, rotation_deg: int = 0) -> void:
 
 ## Replace the entire token_layer contents from an array of serialised dicts.
 ## is_dm controls visibility / alpha for hidden tokens.
-func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
+func load_token_sprites(token_dicts: Array, is_dm: bool,
+		show_hp_bar: bool = true, show_bloodied: bool = true) -> void:
 	_cancel_token_resize()
 	_hovered_token_id = null # nodes are being freed; skip set_show_handles
 	# Only clear DM-placed TokenSprite children; preserve PlayerSprite nodes.
@@ -865,14 +866,15 @@ func load_token_sprites(token_dicts: Array, is_dm: bool) -> void:
 	for raw in token_dicts:
 		if raw is Dictionary:
 			var data: TokenData = TokenData.from_dict(raw as Dictionary)
-			_add_token_sprite_node(data, is_dm)
+			_add_token_sprite_node(data, is_dm, show_hp_bar, show_bloodied)
 
 
 ## Add a single token sprite for a freshly created/revealed token.
-func add_token_sprite(data: TokenData, is_dm: bool) -> void:
+func add_token_sprite(data: TokenData, is_dm: bool,
+		show_hp_bar: bool = true, show_bloodied: bool = true) -> void:
 	# Remove existing node for this id if present (e.g. a re-reveal).
 	remove_token_sprite(data.id)
-	_add_token_sprite_node(data, is_dm)
+	_add_token_sprite_node(data, is_dm, show_hp_bar, show_bloodied)
 
 
 ## Return the TokenSprite Node2D for the given token id, or null.
@@ -892,9 +894,76 @@ func get_tokens_in_measurement(meas: MeasurementData) -> Array[String]:
 		var node: Node2D = _draggable_tokens[tid] as Node2D
 		if node == null:
 			continue
-		if _point_in_measurement(node.position, meas):
+		if _token_overlaps_measurement(node, meas):
 			result.append(tid)
 	return result
+
+
+func _token_overlaps_measurement(node: Node2D, meas: MeasurementData) -> bool:
+	if node == null or meas == null:
+		return false
+	var token_center: Vector2 = node.global_position
+	var token_size: Vector2 = _token_world_size(node)
+	var token_rect: Rect2 = Rect2(token_center - token_size * 0.5, token_size)
+	if _rect_overlaps_measurement(token_rect, meas):
+		return true
+	return _point_in_measurement(token_center, meas)
+
+
+func _token_world_size(node: Node2D) -> Vector2:
+	var size_px: float = 48.0
+	if node is TokenSprite:
+		var ts: TokenSprite = node as TokenSprite
+		size_px = maxf(ts.get_token_width_px(), ts.get_token_height_px())
+	elif node is PlayerSprite:
+		var ps: PlayerSprite = node as PlayerSprite
+		size_px = ps.get_token_diameter_px()
+	return Vector2(size_px, size_px)
+
+
+func _rect_overlaps_measurement(rect: Rect2, m: MeasurementData) -> bool:
+	var corners: Array[Vector2] = [
+		rect.position,
+		rect.position + Vector2(rect.size.x, 0.0),
+		rect.position + rect.size,
+		rect.position + Vector2(0.0, rect.size.y),
+	]
+	var center: Vector2 = rect.get_center()
+	match m.shape_type:
+		MeasurementData.ShapeType.CIRCLE:
+			var radius: float = m.world_start.distance_to(m.world_end)
+			var closest: Vector2 = Vector2(
+				clampf(center.x, minf(m.world_start.x, m.world_start.x + radius), maxf(m.world_start.x, m.world_start.x + radius)),
+				clampf(center.y, minf(m.world_start.y, m.world_start.y + radius), maxf(m.world_start.y, m.world_start.y + radius)))
+			# Use the token's broad radius as an overlap allowance so border
+			# tokens still count for save selection.
+			var token_radius: float = rect.size.x * 0.5
+			return center.distance_to(m.world_start) <= radius + token_radius or closest.distance_to(m.world_start) <= radius
+		MeasurementData.ShapeType.CONE:
+			if _point_in_cone(center, m.world_start, m.world_end):
+				return true
+			for corner: Vector2 in corners:
+				if _point_in_cone(corner, m.world_start, m.world_end):
+					return true
+			return false
+		MeasurementData.ShapeType.SQUARE:
+			if _point_in_rotated_square(center, m.world_start, m.world_end):
+				return true
+			for corner: Vector2 in corners:
+				if _point_in_rotated_square(corner, m.world_start, m.world_end):
+					return true
+			return false
+		MeasurementData.ShapeType.RECTANGLE:
+			if _point_in_rotated_rect(center, m.world_start, m.world_end, m.extra_value):
+				return true
+			for corner: Vector2 in corners:
+				if _point_in_rotated_rect(corner, m.world_start, m.world_end, m.extra_value):
+					return true
+			return false
+		MeasurementData.ShapeType.LINE:
+			var half_w: float = _map_cell_px() * 0.5
+			return _point_near_line(center, m.world_start, m.world_end, half_w + rect.size.x * 0.5)
+	return false
 
 
 ## Point-in-shape test for the five measurement shape types.
@@ -2094,10 +2163,12 @@ static func _make_circle_poly(center: Vector2, radius: float, segments: int) -> 
 
 
 # Internal helper — instantiate and register one TokenSprite.
-func _add_token_sprite_node(data: TokenData, is_dm: bool) -> void:
+func _add_token_sprite_node(data: TokenData, is_dm: bool,
+		show_hp_bar: bool, show_bloodied: bool) -> void:
 	var ts := TokenSprite.new()
 	ts.name = "Token_%s" % data.id
 	token_layer.add_child(ts)
+	ts.set_hp_visibility(show_hp_bar, show_bloodied)
 	ts.apply_from_data(data, is_dm)
 	_draggable_tokens[data.id] = ts
 	if not _token_drag_order.has(data.id):
@@ -2665,10 +2736,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			if delete_selected_wall():
 				get_viewport().set_input_as_handled()
 				return
-			# Delete selected measurement in SELECT mode
-			if active_tool == Tool.SELECT and _selected_meas_id != "":
+			# Delete selected measurement whenever a measurement is selected.
+			if _selected_meas_id != "":
 				measurement_delete_requested.emit(_selected_meas_id)
 				_selected_meas_id = ""
+				if measurement_overlay != null:
+					measurement_overlay.set_selected("")
 				get_viewport().set_input_as_handled()
 				return
 			# Delete selected effect in SELECT or PLACE_EFFECT mode

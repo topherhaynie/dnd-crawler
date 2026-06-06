@@ -40,7 +40,8 @@ var _combat_strip_panel: PanelContainer = null
 var _combat_current_label: Label = null
 var _combat_next_label: Label = null
 var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
-var _combat_hp_visible_to_players: bool = true
+var _combat_hp_bar_visible_to_players: bool = false
+var _combat_bloodied_visible_to_players: bool = true
 var _combat_hp_state: Dictionary = {} ## token_id -> {current_hp, max_hp, temp_hp}
 
 # Dice roll toast overlay
@@ -488,9 +489,11 @@ func _handle_token_state(packet: Dictionary) -> void:
 	var token_dicts_var: Variant = packet.get("tokens", [])
 	if not token_dicts_var is Array:
 		return
-	_combat_hp_visible_to_players = bool(packet.get("combat_hp_visible_to_players", _combat_hp_visible_to_players))
+	_combat_hp_bar_visible_to_players = bool(packet.get("combat_hp_bar_visible", _combat_hp_bar_visible_to_players))
+	_combat_bloodied_visible_to_players = bool(packet.get("combat_bloodied_visible", _combat_bloodied_visible_to_players))
 	var token_dicts: Array = token_dicts_var as Array
-	_map_view.load_token_sprites(token_dicts, false)
+	_map_view.load_token_sprites(token_dicts, false,
+		_combat_hp_bar_visible_to_players, _combat_bloodied_visible_to_players)
 	# Seed passthrough rects for any doors/portals already open in the snapshot.
 	for raw in token_dicts:
 		if raw is Dictionary:
@@ -512,7 +515,8 @@ func _handle_token_added(token_dict: Dictionary) -> void:
 		return
 	var data: TokenData = TokenData.from_dict(token_dict)
 	_cache_combat_hp_state(token_dict)
-	_map_view.add_token_sprite(data, false)
+	_map_view.add_token_sprite(data, false,
+		_combat_hp_bar_visible_to_players, _combat_bloodied_visible_to_players)
 	_map_view.apply_token_passthrough_state(data)
 	# Apply inline icon image from the network payload.
 	var icon_b64: String = str(token_dict.get("icon_image_b64", ""))
@@ -616,9 +620,8 @@ func _apply_combat_hp_visibility_for_token(token_id: String) -> void:
 	var sprite: Node2D = _map_view.get_token_sprite(token_id)
 	if sprite == null or not sprite.has_method("set_hp_bar"):
 		return
-	if not _combat_hp_visible_to_players:
-		sprite.set_hp_bar(-1, 0, 0)
-		return
+	if sprite.has_method("set_hp_visibility"):
+		sprite.set_hp_visibility(_combat_hp_bar_visible_to_players, _combat_bloodied_visible_to_players)
 	var hp_state: Variant = _combat_hp_state.get(token_id, null)
 	if hp_state is Dictionary:
 		var state: Dictionary = hp_state as Dictionary
@@ -634,6 +637,7 @@ func _apply_all_combat_hp_visibility() -> void:
 	for child: Node in token_layer.get_children():
 		var ts: TokenSprite = child as TokenSprite
 		if ts != null:
+			ts.set_hp_visibility(_combat_hp_bar_visible_to_players, _combat_bloodied_visible_to_players)
 			_apply_combat_hp_visibility_for_token(ts.token_id)
 
 
@@ -975,7 +979,8 @@ func _handle_combat_hp_update(data: Dictionary) -> void:
 
 
 func _handle_combat_hp_visibility_toggle(data: Dictionary) -> void:
-	_combat_hp_visible_to_players = bool(data.get("enabled", true))
+	_combat_hp_bar_visible_to_players = bool(data.get("player_hp_bar_visible", _combat_hp_bar_visible_to_players))
+	_combat_bloodied_visible_to_players = bool(data.get("player_bloodied_visible", _combat_bloodied_visible_to_players))
 	_apply_all_combat_hp_visibility()
 
 

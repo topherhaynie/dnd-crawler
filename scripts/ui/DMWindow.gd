@@ -6,15 +6,11 @@ extends Node
 # Provides:
 #   • MenuBar with File / Edit / View menus
 #   • Collapsible toolbar with Select / Pan tool toggle + Zoom controls +
-#	 Grid-type selector + status label
-#   • Map loading via native FileDialog
-#   • Calibration workflow via Edit > Calibrate Grid...
+#     Grid-type selector + status label
 #   • Manual scale entry via Edit > Set Scale Manually...
 #   • Grid overlay visibility toggle via View menu
 #   • Save / load JSON map data (user://data/maps/)
 #   • Broadcasts map data to connected Player clients via NetworkManager
-#
-# Phase stubs (wired but not functional yet):
 #   • FogOfWarLayer references (Phase 6)
 #   • Token placement (Phase 4)
 # ---------------------------------------------------------------------------
@@ -30,6 +26,8 @@ const CampaignBrowserScript = preload("res://scripts/ui/CampaignBrowser.gd")
 const NetworkUtilsScript = preload("res://scripts/utils/NetworkUtils.gd")
 const QRCodeScript = preload("res://scripts/utils/QRCode.gd")
 const EffectPanelScript = preload("res://scripts/ui/EffectPanel.gd")
+const GroupDamageDialogScript = preload("res://scripts/ui/GroupDamageDialog.gd")
+const PlayerSavePromptDialogScript = preload("res://scripts/ui/PlayerSavePromptDialog.gd")
 const OverrideEditorScript = preload("res://scripts/ui/StatblockOverrideEditor.gd")
 const DiceTrayScript = preload("res://scripts/ui/DiceTray.gd")
 const CombatLogPanelScript = preload("res://scripts/ui/CombatLogPanel.gd")
@@ -49,59 +47,36 @@ var _cal_tool: Node = null ## CalibrationTool instance
 
 var _file_dialog: FileDialog = null
 var _cal_dialog: ConfirmationDialog = null
-var _manual_scale_dialog: ConfirmationDialog = null
-## Content-root VBoxContainers for each small dialog — scaled in _apply_ui_scale().
-var _cal_dialog_root: Control = null
+var _cal_dialog_root: VBoxContainer = null
+var _feet_spin: SpinBox = null
+var _offset_x_spin: SpinBox = null
+var _offset_y_spin: SpinBox = null
 var _manual_scale_dialog_root: Control = null
-var _offset_dialog_root: Control = null
-var _token_editor_dialog_root: Control = null
-
-var _feet_spin: SpinBox = null ## calibration: feet input
-var _offset_x_spin: SpinBox = null ## calibration: grid offset X
-var _offset_y_spin: SpinBox = null ## calibration: grid offset Y
-var _scale_px_spin: SpinBox = null ## manual scale: pixels
-var _scale_ft_spin: SpinBox = null ## manual scale: feet
-
-## Standalone offset dialog (Edit > Set Grid Offset)
-var _offset_dialog: ConfirmationDialog = null
-var _solo_offset_x_spin: SpinBox = null
-var _solo_offset_y_spin: SpinBox = null
-
-## New Map / Open Map workflow
+var _manual_scale_dialog: ConfirmationDialog = null
+var _scale_px_spin: SpinBox = null
+var _scale_ft_spin: SpinBox = null
 var _open_map_dialog: FileDialog = null
-var _save_as_dialog: FileDialog = null ## native Save panel for naming/renaming maps
-var _save_game_dialog: FileDialog = null ## Save Game As dialog
-var _load_game_dialog: FileDialog = null ## Load Game dialog
-var _pending_image_path: String = "" ## holds image path while native save dialog is open
-var _map_name_mode: String = "new" ## "new" or "save_as"
-var _active_map_bundle_path: String = "" ## absolute path to the current .map working directory
-var _active_save_bundle_path: String = "" ## absolute path to the current .sav working directory
-var _active_map_zip_path: String = "" ## ZIP path when working from a ZIP bundle (empty for legacy dirs)
-var _active_save_zip_path: String = "" ## ZIP path for .sav bundles
-
-## Bundle browser window (lazy-created, shared for maps and saves)
-var _bundle_browser: Node = null
-
-## Video conversion progress dialog
-var _progress_dialog: AcceptDialog = null
-var _progress_label: Label = null
-var _progress_bar: ProgressBar = null
-var _convert_thread: Thread = null
-var _convert_result: int = -1
-var _convert_pending_bundle: String = ""
-var _convert_pending_dest: String = ""
-var _convert_pending_src: String = ""
-var _convert_progress_file: String = ""
-var _convert_duration_us: float = 0.0
-var _convert_progress_timer: Timer = null
-
-## Video conversion settings dialog
-var _convert_settings_dialog: ConfirmationDialog = null
+var _save_as_dialog: FileDialog = null
+var _save_game_dialog: FileDialog = null
+var _load_game_dialog: FileDialog = null
+var _offset_dialog: ConfirmationDialog = null
+var _offset_dialog_root: Control = null
+var _solo_offset_x_spin: SpinBox = null
+var _active_map_bundle_path: String = ""
+var _active_map_zip_path: String = ""
+var _active_save_bundle_path: String = ""
+var _active_save_zip_path: String = ""
 var _convert_res_option: OptionButton = null
 var _convert_fps_option: OptionButton = null
 var _convert_vq_option: OptionButton = null
-
-## Background audio volume window (View menu)
+var _convert_duration_us: float = 0.0
+var _convert_progress_file: String = ""
+var _convert_thread: Thread = null
+var _convert_result: int = 0
+var _convert_progress_timer: Timer = null
+var _progress_label: Label = null
+var _progress_bar: ProgressBar = null
+var _solo_offset_y_spin: SpinBox = null
 var _volume_window: Window = null
 var _volume_slider: HSlider = null
 var _volume_mute_btn: CheckButton = null
@@ -112,6 +87,15 @@ var _status_label: Label = null
 var _status_bar: PanelContainer = null
 var _ui_root: VBoxContainer = null
 var _map_spacer: Control = null ## map-area catchall; forwards gui_input to MapView
+var _bundle_browser: Window = null
+var _progress_dialog: Window = null
+var _convert_settings_dialog: Window = null
+var _token_editor_dialog_root: Control = null
+var _pending_image_path: String = ""
+var _map_name_mode: String = ""
+var _convert_pending_bundle: String = ""
+var _convert_pending_dest: String = ""
+var _convert_pending_src: String = ""
 
 # Player profile form fields
 var _profile_orientation_spin: SpinBox = null
@@ -224,9 +208,6 @@ var _background_right_click_pos: Vector2 = Vector2.ZERO
 ## Background context menu (right-click on empty map space).
 var _background_context_menu: PopupMenu = null
 var _background_right_click_effect_id: String = ""
-## Measurement right-click context menu.
-var _measurement_context_menu: PopupMenu = null
-var _measurement_context_id: String = ""
 
 # ── Passage paint panel ────────────────────────────────────────────────────
 var _passage_panel: PanelContainer = null
@@ -354,10 +335,14 @@ var _measure_panel_floating: bool = false
 var _measure_undock_btn: Button = null
 var _measure_panel_title: Label = null
 var _measure_vbox: VBoxContainer = null
+var _measure_tool_row: HBoxContainer = null
+var _measure_action_row: HBoxContainer = null
+var _measure_exit_btn: Button = null
 ## ButtonGroup shared by all 5 measure-tool buttons.
 var _measure_tool_group: ButtonGroup = null
 ## ItemList showing all active measurement shapes (label + × delete button).
 var _measure_shape_list: ItemList = null
+var _measure_active_tool_key: String = "measure_line"
 
 # ── Player freeze panel ─────────────────────────────────────────────────────
 var _freeze_panel: Control = null
@@ -394,13 +379,25 @@ var _initiative_panel_window: Window = null
 var _initiative_panel_floating: bool = false
 var _quick_damage_dialog: QuickDamageDialog = null
 var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
-var _combat_hp_visible_to_players: bool = true
+var _combat_dm_hp_bar_visible: bool = true
+var _combat_dm_bloodied_visible: bool = true
+var _combat_player_hp_bar_visible: bool = false
+var _combat_player_bloodied_visible: bool = true
 
 # ── Save / AoE panel ────────────────────────────────────────────────────────
 var _save_results_panel: SaveResultsPanel = null
 var _save_config_dialog: Window = null
+var _group_damage_dialog: Window = null
+var _player_save_prompt_dialog: Window = null
 ## Temporarily stores measurement ID while save config dialog is open.
 var _pending_save_measurement_id: String = ""
+var _pending_save_token_ids: Array[String] = []
+var _pending_save_player_ids: Array[String] = []
+var _pending_save_creature_ids: Array[String] = []
+var _pending_save_results: Array = []
+var _pending_save_ability: String = ""
+var _pending_save_dc: int = 0
+var _pending_save_player_index: int = 0
 
 # ── Condition dialog ─────────────────────────────────────────────────────────
 var _condition_dialog: ConditionDialog = null
@@ -418,6 +415,8 @@ var _share_url_label: Label = null
 var _multi_select_bar: PanelContainer = null
 var _multi_select_combat_btn: Button = null
 var _multi_select_label: Label = null
+var _multi_select_save_btn: Button = null
+var _multi_select_damage_btn: Button = null
 
 # ── Player viewport control ─────────────────────────────────────────────────
 # The green box on the DM map shows what players currently see.
@@ -1198,11 +1197,9 @@ func _build_ui() -> void:
 		_tm_ref = _sr.ui_theme
 	_palette.setup(_get_ui_scale_mgr(), _tm_ref)
 	_ui_content_area.add_child(_palette)
-	_apply_palette_size()
-
-	# Wire palette signals
 	_palette.tool_activated.connect(_on_palette_tool_activated)
 	_palette.action_fired.connect(_on_palette_action_fired)
+	_palette.measurement_mode_toggled.connect(_on_palette_measurement_mode_toggled)
 	_palette.fog_mode_changed.connect(_on_palette_fog_mode_changed)
 	_palette.wall_mode_changed.connect(_on_wall_tool_selected)
 	_palette.spawn_profile_selected.connect(_on_spawn_profile_selected)
@@ -1214,15 +1211,12 @@ func _build_ui() -> void:
 	_palette.darkvision_disabled_toggled.connect(_on_darkvision_disabled_toggled)
 	_palette.effect_tool_activated.connect(_on_palette_effect_tool_activated)
 	_palette.undock_btn.pressed.connect(_on_undock_btn_pressed)
+	if _palette.get_flyout() != null:
+		_ui_content_area.add_child(_palette.get_flyout())
 
-	# Add flyout panel to content area (not ui_root) for HiDPI stability
-	_ui_content_area.add_child(_palette.get_flyout())
-
-	# ── Map area spacer (catches mouse events and forwards to MapView) ────────
-	# STOP intercepts pointer events in the map region; the gui_input
-	# callback transforms them back to viewport coordinates and calls
-	# MapView._unhandled_input directly.  This avoids the normal
-	# _unhandled_input pipeline which interferes with sub-window dragging.
+	# ── Map area spacer (catches mouse events and forwards to MapView) ─────
+	# STOP intercepts pointer events in the map region; the gui_input callback
+	# transforms them back to viewport coordinates and calls MapView directly.
 	_map_spacer = Control.new()
 	_map_spacer.name = "MapSpacer"
 	_map_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3155,7 +3149,6 @@ func _do_close_save() -> void:
 	if reg2 != null and reg2.campaign != null and reg2.campaign.get_active_campaign() != null:
 		_open_campaign_hub()
 
-
 func _on_campaign_settings() -> void:
 	_open_campaign_hub()
 
@@ -3425,12 +3418,11 @@ func _on_view_menu_id(id: int) -> void:
 			_nm_broadcast_to_displays({"msg": "fog_overlay_toggle", "enabled": on})
 		26: # Toggle measurement tools panel
 			if _measure_panel != null:
-				_measure_panel.visible = !_measure_panel.visible
-				_set_view_checked(26, _measure_panel.visible)
 				if _measure_panel.visible:
-					_apply_measure_panel_size()
-				if not _measure_panel.visible and _map_view != null:
-					_map_view._set_active_tool(_map_view.Tool.SELECT)
+					_deactivate_measurement_tools()
+					_set_measurement_tools_visible(false)
+				else:
+					_set_measurement_tools_visible(true)
 		31: # Open background audio volume window
 			_open_volume_window()
 		32: # Open statblock library
@@ -5373,7 +5365,8 @@ func _build_initiative_panel() -> void:
 	_initiative_panel.damage_requested.connect(_on_initiative_damage_requested)
 	_initiative_panel.heal_requested.connect(_on_initiative_heal_requested)
 	_initiative_panel.combat_start_requested.connect(_ensure_initiative_panel_visible)
-	_initiative_panel.combat_hp_visibility_toggled.connect(_on_combat_hp_visibility_toggled)
+	_initiative_panel.statblock_requested.connect(_on_initiative_statblock_requested)
+	_initiative_panel.combat_hp_visibility_changed.connect(_on_combat_hp_visibility_changed)
 	if _initiative_panel._undock_btn != null:
 		_initiative_panel._undock_btn.pressed.connect(_on_initiative_panel_undock)
 	# Connect combat service signals for live refresh.
@@ -5408,10 +5401,14 @@ func _apply_initiative_panel_size() -> void:
 	var s: float = _ui_scale()
 	var panel_w: int = roundi(320.0 * s)
 	var menu_h: float = _menu_bar.size.y if _menu_bar != null else 0.0
-	# Offset from right edge — stack left of freeze panel if visible.
+	# Offset from right edge — stack left of freeze/effect/measure panels if visible.
 	var right_offset: int = 0
 	if _freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating:
 		right_offset = roundi((_freeze_panel.offset_right - _freeze_panel.offset_left))
+	if _effect_panel != null and _effect_panel.visible and not _effect_panel_floating:
+		right_offset += roundi((_effect_panel.offset_right - _effect_panel.offset_left))
+	if _measure_panel != null and _measure_panel.visible and not _measure_panel_floating:
+		right_offset += roundi((_measure_panel.offset_right - _measure_panel.offset_left))
 	_initiative_panel.offset_left = float(-panel_w - right_offset)
 	_initiative_panel.offset_right = float(-right_offset)
 	_initiative_panel.offset_top = menu_h
@@ -5762,16 +5759,46 @@ func _on_combat_hp_changed(token_id: String, current_hp: int, max_hp: int, _delt
 	# Broadcast HP update to player displays.
 	_nm_broadcast_to_displays({"msg": "combat_hp_update",
 		"token_id": token_id, "current_hp": current_hp, "max_hp": max_hp,
-		"temp_hp": temp_hp, "hp_visible_to_players": _combat_hp_visible_to_players})
+		"temp_hp": temp_hp})
 	_broadcast_player_state()
 
 
-func _on_combat_hp_visibility_toggled(enabled: bool) -> void:
-	if _combat_hp_visible_to_players == enabled:
+func _on_combat_hp_visibility_changed(dm_hp_bar_visible: bool, dm_bloodied_visible: bool,
+		player_hp_bar_visible: bool, player_bloodied_visible: bool) -> void:
+	var changed := dm_hp_bar_visible != _combat_dm_hp_bar_visible \
+		or dm_bloodied_visible != _combat_dm_bloodied_visible \
+		or player_hp_bar_visible != _combat_player_hp_bar_visible \
+		or player_bloodied_visible != _combat_player_bloodied_visible
+	if not changed:
 		return
-	_combat_hp_visible_to_players = enabled
+	_combat_dm_hp_bar_visible = dm_hp_bar_visible
+	_combat_dm_bloodied_visible = dm_bloodied_visible
+	_combat_player_hp_bar_visible = player_hp_bar_visible
+	_combat_player_bloodied_visible = player_bloodied_visible
+	_apply_combat_hp_visibility_to_map()
 	_nm_broadcast_to_displays({"msg": "combat_hp_visibility_toggle",
-		"enabled": enabled})
+		"dm_hp_bar_visible": dm_hp_bar_visible,
+		"dm_bloodied_visible": dm_bloodied_visible,
+		"player_hp_bar_visible": player_hp_bar_visible,
+		"player_bloodied_visible": player_bloodied_visible})
+
+
+func _apply_combat_hp_visibility_to_map() -> void:
+	if _map_view == null:
+		return
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	for child: Node in _map_view.get_token_layer().get_children():
+		var sprite := child as Node
+		if sprite == null or not sprite.has_method("set_hp_visibility"):
+			continue
+		var ts := sprite as TokenSprite
+		if ts != null:
+			ts.set_hp_visibility(_combat_dm_hp_bar_visible, _combat_dm_bloodied_visible)
+			var status: Dictionary = reg.combat.get_hp_status(ts.token_id)
+			if not status.is_empty():
+				ts.set_hp_bar(int(status.get("current", 0)), int(status.get("max", 0)), int(status.get("temp", 0)))
 
 
 func _on_combat_token_killed(token_id: String) -> void:
@@ -5922,6 +5949,29 @@ func _on_initiative_damage_requested(token_id: String) -> void:
 
 func _on_initiative_heal_requested(token_id: String) -> void:
 	_open_quick_damage_dialog(token_id, true)
+
+
+func _on_initiative_statblock_requested(token_id: String) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null:
+		return
+	if reg.token != null:
+		var td: TokenData = reg.token.get_token_by_id(token_id)
+		if td != null and not td.statblock_refs.is_empty() and reg.statblock != null:
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
+			if not sb_id.is_empty():
+				var sb: StatblockData = reg.statblock.get_statblock(sb_id)
+				if sb != null:
+					_show_token_statblock_card(td, sb_id)
+					return
+	if reg.profile != null and reg.character != null:
+		var prof: Variant = reg.profile.get_profile_by_id(token_id)
+		if prof is PlayerProfile:
+			var profile: PlayerProfile = prof as PlayerProfile
+			if not profile.statblock_id.is_empty():
+				var char_sb: StatblockData = reg.character.get_character_by_id(profile.statblock_id)
+				if char_sb != null:
+					_open_char_sheet_for(char_sb)
 
 
 func _open_quick_damage_dialog(token_id: String, is_healing: bool) -> void:
@@ -6206,6 +6256,20 @@ func _build_multi_select_bar() -> void:
 	row.add_child(combat_btn)
 	_multi_select_combat_btn = combat_btn
 
+	var save_btn := Button.new()
+	save_btn.text = "Call for Save"
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.pressed.connect(_on_multi_select_call_for_save)
+	row.add_child(save_btn)
+	_multi_select_save_btn = save_btn
+
+	var damage_btn := Button.new()
+	damage_btn.text = "Damage All"
+	damage_btn.focus_mode = Control.FOCUS_NONE
+	damage_btn.pressed.connect(_on_multi_select_damage_all)
+	row.add_child(damage_btn)
+	_multi_select_damage_btn = damage_btn
+
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear"
 	clear_btn.focus_mode = Control.FOCUS_NONE
@@ -6220,15 +6284,19 @@ func _update_multi_select_bar(selected_ids: Array) -> void:
 	if _multi_select_bar == null:
 		return
 	var count: int = selected_ids.size()
-	if count < 2:
+	if count == 0:
 		_multi_select_bar.visible = false
 		return
-	_multi_select_label.text = "%d tokens selected" % count
+	_multi_select_label.text = "%d token%s selected" % [count, "" if count == 1 else "s"]
 	# Update combat button label based on whether combat is already active.
 	if _multi_select_combat_btn != null:
 		var reg_msb := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 		var in_combat: bool = reg_msb != null and reg_msb.combat != null and reg_msb.combat.is_in_combat()
 		_multi_select_combat_btn.text = "Add to Combat" if in_combat else "Start Combat"
+		if _multi_select_save_btn != null:
+			_multi_select_save_btn.visible = in_combat and count > 0
+		if _multi_select_damage_btn != null:
+			_multi_select_damage_btn.visible = in_combat and count > 0
 	_multi_select_bar.visible = true
 
 
@@ -6255,6 +6323,152 @@ func _on_multi_select_clear() -> void:
 	if reg == null or reg.selection == null:
 		return
 	reg.selection.clear_selection()
+
+
+func _on_multi_select_call_for_save() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.selection == null:
+		return
+	if reg.combat == null or not reg.combat.is_in_combat():
+		return
+	var token_ids: Array[String] = reg.selection.get_selected_ids()
+	if token_ids.is_empty():
+		_set_status("Select one or more tokens first.")
+		return
+	_open_save_config_dialog(token_ids)
+
+
+func _on_multi_select_damage_all() -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.selection == null or reg.combat == null or not reg.combat.is_in_combat():
+		return
+	var token_ids: Array[String] = reg.selection.get_selected_ids()
+	if token_ids.is_empty():
+		_set_status("Select one or more tokens first.")
+		return
+	if _group_damage_dialog == null or not is_instance_valid(_group_damage_dialog):
+		_group_damage_dialog = GroupDamageDialogScript.new()
+		_group_damage_dialog.apply_requested.connect(_on_group_damage_requested)
+		add_child(_group_damage_dialog)
+		var _gd_reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+		if _gd_reg != null and _gd_reg.ui_theme != null:
+			_gd_reg.ui_theme.theme_control_tree(_group_damage_dialog, _ui_scale())
+		_group_damage_dialog.apply_scale(_ui_scale())
+	_group_damage_dialog.open(token_ids)
+
+
+func _on_group_damage_requested(token_ids: Array, damage_rows: Array, condition_rows: Array) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	var selected_tokens: Array[String] = []
+	for tid: Variant in token_ids:
+		selected_tokens.append(str(tid))
+	var player_count: int = 0
+	var immune_count: int = 0
+	for tid: String in selected_tokens:
+		if _is_player_target(tid, reg):
+			player_count += 1
+		if _target_has_damage_immunity(tid, reg, damage_rows):
+			immune_count += 1
+	if player_count > 0 or immune_count > 0:
+		var warn := ConfirmationDialog.new()
+		warn.title = "Confirm Damage"
+		warn.ok_button_text = "Apply"
+		warn.cancel_button_text = "Cancel"
+		var parts: Array[String] = []
+		if player_count > 0:
+			parts.append("%d player target%s require confirmation" % [player_count, "" if player_count == 1 else "s"])
+		if immune_count > 0:
+			parts.append("%d target%s are immune to one or more chosen damage types" % [immune_count, "" if immune_count == 1 else "s"])
+		warn.dialog_text = "\n".join(parts)
+		warn.confirmed.connect(func() -> void:
+			warn.queue_free()
+			_apply_group_damage(selected_tokens, damage_rows, condition_rows))
+		warn.canceled.connect(warn.queue_free)
+		add_child(warn)
+		if reg.ui_theme != null:
+			reg.ui_theme.theme_control_tree(warn, _ui_scale())
+		warn.reset_size()
+		warn.popup_centered()
+		return
+	_apply_group_damage(selected_tokens, damage_rows, condition_rows)
+
+
+func _apply_group_damage(token_ids: Array[String], damage_rows: Array, condition_rows: Array) -> void:
+	var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if reg == null or reg.combat == null:
+		return
+	var total_applied: int = 0
+	var affected: int = 0
+	for tid: String in token_ids:
+		for row: Variant in damage_rows:
+			if not row is Dictionary:
+				continue
+			var amount: int = int((row as Dictionary).get("amount", 0))
+			var damage_type: String = str((row as Dictionary).get("damage_type", ""))
+			if amount <= 0:
+				continue
+			var result: Dictionary = reg.combat.apply_damage(tid, amount, damage_type)
+			total_applied += int(result.get("actual_damage", 0))
+			if int(result.get("actual_damage", 0)) > 0:
+				affected += 1
+		for cond_row: Dictionary in condition_rows:
+			var condition_name: String = str(cond_row.get("condition_name", ""))
+			if condition_name.is_empty():
+				continue
+			reg.combat.apply_condition(tid, condition_name, "Group Damage", -1)
+	var status_parts: Array[String] = []
+	if not damage_rows.is_empty():
+		status_parts.append("Applied damage across %d hit instance(s), total %d HP" % [affected, total_applied])
+	if not condition_rows.is_empty():
+		status_parts.append("applied %d condition packet%s" % [condition_rows.size(), "" if condition_rows.size() == 1 else "s"])
+	_set_status("; ".join(status_parts))
+
+
+func _is_player_target(token_id: String, reg: ServiceRegistry) -> bool:
+	if reg == null or reg.profile == null:
+		return false
+	return reg.profile.get_profile_by_id(token_id) is PlayerProfile
+
+
+func _get_effective_statblock_for_target(token_id: String, reg: ServiceRegistry) -> StatblockData:
+	if reg == null:
+		return null
+	var tm: TokenManager = reg.token if reg.token != null else null
+	if tm != null:
+		var td: TokenData = tm.get_token_by_id(token_id)
+		if td != null and not td.statblock_refs.is_empty():
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
+			return _resolve_statblock(sb_id, reg)
+	if reg.profile != null:
+		var prof: Variant = reg.profile.get_profile_by_id(token_id)
+		if prof is PlayerProfile:
+			var sb_id_p: String = (prof as PlayerProfile).statblock_id
+			if not sb_id_p.is_empty():
+				return _resolve_statblock(sb_id_p, reg)
+	return null
+
+
+func _target_has_damage_immunity(token_id: String, reg: ServiceRegistry, damage_rows: Array) -> bool:
+	var sb: StatblockData = _get_effective_statblock_for_target(token_id, reg)
+	if sb == null:
+		return false
+	for row: Variant in damage_rows:
+		if not row is Dictionary:
+			continue
+		var damage_type: String = str((row as Dictionary).get("damage_type", ""))
+		if not damage_type.is_empty() and _has_damage_type(sb.damage_immunities, damage_type):
+			return true
+	return false
+
+
+func _has_damage_type(type_list: Array, damage_type: String) -> bool:
+	var dt_lower: String = damage_type.to_lower()
+	for raw: Variant in type_list:
+		if str(raw).to_lower() == dt_lower:
+			return true
+	return false
 
 
 func _on_token_selected(token_id: String) -> void:
@@ -6901,7 +7115,7 @@ func _paste_token(world_pos: Vector2) -> void:
 	tm.add_token(data)
 	var mv := _map_view
 	if mv != null:
-		mv.add_token_sprite(data, true)
+		mv.add_token_sprite(data, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible)
 		mv.apply_token_passthrough_state(data)
 	_broadcast_token_change(data, true)
 	_broadcast_puzzle_notes_state()
@@ -6919,7 +7133,7 @@ func _paste_token(world_pos: Vector2) -> void:
 			func():
 				var readd := TokenData.from_dict(new_snapshot.to_dict())
 				tm.add_token(readd)
-				if mv != null: mv.add_token_sprite(readd, true); mv.apply_token_passthrough_state(readd)
+				if mv != null: mv.add_token_sprite(readd, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible); mv.apply_token_passthrough_state(readd)
 				_broadcast_token_change(readd, true)
 				_broadcast_puzzle_notes_state()))
 	_set_status("Pasted: %s" % data.label if not data.label.is_empty() else "Pasted token")
@@ -6991,7 +7205,7 @@ func _delete_token(token_id: String) -> void:
 			func():
 				var restored := TokenData.from_dict(del_snapshot.to_dict())
 				registry.token.add_token(restored)
-				if mv != null: mv.add_token_sprite(restored, true); mv.apply_token_passthrough_state(restored)
+				if mv != null: mv.add_token_sprite(restored, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible); mv.apply_token_passthrough_state(restored)
 				_broadcast_token_change(restored, true)
 				_broadcast_puzzle_notes_state()
 				if was_combatant and registry.combat != null and registry.combat.is_in_combat():
@@ -7194,45 +7408,8 @@ func _on_effect_burst_ended() -> void:
 	_nm_broadcast_to_displays({"msg": "effect_remove", "effect_id": "__burst__"})
 
 
-func _on_measurement_right_clicked(meas_id: String, screen_pos: Vector2) -> void:
-	_measurement_context_id = meas_id
-	if _measurement_context_menu == null or not is_instance_valid(_measurement_context_menu):
-		_measurement_context_menu = PopupMenu.new()
-		_measurement_context_menu.id_pressed.connect(_on_measurement_context_menu_id)
-		add_child(_measurement_context_menu)
-	_apply_token_context_menu_theme_to(_measurement_context_menu)
-	_measurement_context_menu.clear()
-	_measurement_context_menu.add_item("Call for Saving Throw…", 0)
-	_measurement_context_menu.popup(Rect2i(int(screen_pos.x), int(screen_pos.y), 0, 0))
-
-
-func _on_measurement_context_menu_id(id: int) -> void:
-	match id:
-		0: # Call for Saving Throw
-			var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-			if registry == null or registry.measurement == null:
-				return
-			var md: MeasurementData = registry.measurement.get_by_id(_measurement_context_id)
-			if md == null:
-				_set_status("Measurement shape not found.")
-				return
-			if _map_view == null:
-				return
-			var token_ids: Array[String] = _map_view.get_tokens_in_measurement(md)
-			# Filter to creature tokens only.
-			var tm := _token_manager()
-			if tm != null:
-				var filtered: Array[String] = []
-				for tid: String in token_ids:
-					var td: TokenData = tm.get_token_by_id(tid)
-					if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC or td.category == TokenData.TokenCategory.GENERIC):
-						filtered.append(tid)
-				token_ids = filtered
-			if token_ids.is_empty():
-				_set_status("No creature tokens inside the measurement shape.")
-				return
-			_pending_save_measurement_id = md.id
-			_open_save_config_dialog(token_ids)
+func _on_measurement_right_clicked(_meas_id: String, _screen_pos: Vector2) -> void:
+	return
 
 
 func _on_token_right_clicked(id: String, screen_pos: Vector2) -> void:
@@ -9196,7 +9373,7 @@ func _on_token_editor_confirmed() -> void:
 	else:
 		tm.add_token(data)
 		if _map_view != null:
-			_map_view.add_token_sprite(data, true)
+			_map_view.add_token_sprite(data, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible)
 
 	if _map_view != null:
 		_map_view.apply_token_passthrough_state(data)
@@ -9239,7 +9416,7 @@ func _on_token_editor_confirmed() -> void:
 				func():
 					var readd := TokenData.from_dict(new_snapshot.to_dict())
 					tm.add_token(readd)
-					if mv != null: mv.add_token_sprite(readd, true); mv.apply_token_passthrough_state(readd)
+					if mv != null: mv.add_token_sprite(readd, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible); mv.apply_token_passthrough_state(readd)
 					_broadcast_token_change(readd, true)
 					_broadcast_puzzle_notes_state()))
 
@@ -9409,7 +9586,7 @@ func _snap_all_tokens_to_grid() -> void:
 
 	# ── Snap spawn points ─────────────────────────────────────────────────
 	var spawn_moved: int = 0
-	var old_spawn_points: Array = map_data.spawn_points.duplicate(true)
+	var _old_spawn_points: Array = map_data.spawn_points.duplicate(true)
 	for sp: Variant in map_data.spawn_points:
 		if not sp is Dictionary:
 			continue
@@ -9428,47 +9605,6 @@ func _snap_all_tokens_to_grid() -> void:
 	if total_moved == 0:
 		_set_status("All tokens already on grid")
 		return
-
-	# Extend the compound undo command with player + spawn state.
-	if registry.history != null:
-		var old_pp: Dictionary = old_player_positions.duplicate()
-		var old_sp: Array = old_spawn_points.duplicate(true)
-		var new_sp: Array = map_data.spawn_points.duplicate(true)
-		var gs_ref: GameStateManager = registry.game_state
-		var mv2 := _map_view
-		var map_ref: MapData = map_data
-		var backend_ref: BackendRuntime = _backend
-		if player_moved > 0 or spawn_moved > 0:
-			registry.history.push_command(HistoryCommand.create(
-				"Snap players/spawns to grid",
-				func():
-					if gs_ref != null:
-						var dtoks: Dictionary = backend_ref.get_dm_token_nodes() if backend_ref != null else {}
-						for pid2: Variant in old_pp.keys():
-							var restore_pos: Vector2 = old_pp[pid2] as Vector2
-							gs_ref.set_position(pid2, restore_pos)
-							var spr: Node2D = dtoks.get(pid2, null) as Node2D
-							if spr != null and is_instance_valid(spr):
-								spr.global_position = restore_pos
-						_broadcast_player_state()
-					if map_ref != null:
-						map_ref.spawn_points = old_sp.duplicate(true)
-						if mv2 != null:
-							mv2._rebuild_spawn_markers(map_ref),
-				func():
-					if gs_ref != null:
-						var dtoks: Dictionary = backend_ref.get_dm_token_nodes() if backend_ref != null else {}
-						for pid2: Variant in old_pp.keys():
-							var new_pos: Vector2 = GridSnap.snap_to_grid(old_pp[pid2] as Vector2, map_ref)
-							gs_ref.set_position(pid2, new_pos)
-							var spr: Node2D = dtoks.get(pid2, null) as Node2D
-							if spr != null and is_instance_valid(spr):
-								spr.global_position = new_pos
-						_broadcast_player_state()
-					if map_ref != null:
-						map_ref.spawn_points = new_sp.duplicate(true)
-						if mv2 != null:
-							mv2._rebuild_spawn_markers(map_ref)))
 
 	var parts: PackedStringArray = PackedStringArray()
 	if moved_entries.size() > 0:
@@ -10131,9 +10267,10 @@ func _build_measure_panel() -> void:
 	_measure_vbox.add_child(title_lbl)
 
 	_measure_tool_group = ButtonGroup.new()
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", roundi(4.0 * scale))
-	_measure_vbox.add_child(btn_row)
+	_measure_tool_group.allow_unpress = true
+	_measure_tool_row = HBoxContainer.new()
+	_measure_tool_row.add_theme_constant_override("separation", roundi(4.0 * scale))
+	_measure_vbox.add_child(_measure_tool_row)
 
 	const TOOL_DEFS: Array = [
 		["╌", "Line", "measure_line"],
@@ -10156,7 +10293,7 @@ func _build_measure_panel() -> void:
 		btn.add_theme_font_size_override("font_size", roundi(18.0 * scale))
 		var k := key # capture
 		btn.pressed.connect(func(): _on_measure_tool_btn_pressed(k))
-		btn_row.add_child(btn)
+		_measure_tool_row.add_child(btn)
 
 	_measure_vbox.add_child(HSeparator.new())
 
@@ -10174,33 +10311,30 @@ func _build_measure_panel() -> void:
 	_refresh_measure_shape_list()
 
 	# Action buttons row
-	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", roundi(6.0 * scale))
-	_measure_vbox.add_child(action_row)
+	_measure_action_row = HBoxContainer.new()
+	_measure_action_row.add_theme_constant_override("separation", roundi(6.0 * scale))
+	_measure_vbox.add_child(_measure_action_row)
+
+	_measure_exit_btn = Button.new()
+	_measure_exit_btn.text = "Select Tokens"
+	_measure_exit_btn.focus_mode = Control.FOCUS_NONE
+	_measure_exit_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
+	_measure_exit_btn.pressed.connect(_on_measure_select_tool_pressed)
+	_measure_action_row.add_child(_measure_exit_btn)
 
 	var del_btn := Button.new()
 	del_btn.text = "Delete"
 	del_btn.focus_mode = Control.FOCUS_NONE
 	del_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
 	del_btn.pressed.connect(_on_measure_delete_selected_pressed)
-	action_row.add_child(del_btn)
+	_measure_action_row.add_child(del_btn)
 
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear All"
 	clear_btn.focus_mode = Control.FOCUS_NONE
 	clear_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
 	clear_btn.pressed.connect(_on_measure_clear_all_pressed)
-	action_row.add_child(clear_btn)
-
-	# AoE / Save section
-	_measure_vbox.add_child(HSeparator.new())
-
-	var save_btn := Button.new()
-	save_btn.text = "Call for Save"
-	save_btn.focus_mode = Control.FOCUS_NONE
-	save_btn.custom_minimum_size = Vector2(0, roundi(28.0 * scale))
-	save_btn.pressed.connect(_on_measure_call_for_save_pressed)
-	_measure_vbox.add_child(save_btn)
+	_measure_action_row.add_child(clear_btn)
 
 	_apply_measure_panel_size()
 
@@ -10209,7 +10343,7 @@ func _apply_measure_panel_size() -> void:
 	if _measure_panel == null:
 		return
 	var scale := _ui_scale()
-	var panel_w := roundi(200.0 * scale)
+	var panel_w := roundi(184.0 * scale)
 	var freeze_w := roundi(200.0 * scale) if (_freeze_panel != null and _freeze_panel.visible and not _freeze_panel_floating) else 0
 	# Derive effect width from the offsets already set by _apply_effect_panel_size
 	# so we always match the effect panel's actual rendered width regardless of content.
@@ -10221,6 +10355,7 @@ func _apply_measure_panel_size() -> void:
 	_measure_panel.offset_right = float(-right_offset)
 	_measure_panel.offset_top = _menu_bar_screen_height()
 	_measure_panel.offset_bottom = 0.0
+	_apply_initiative_panel_size()
 
 
 func _on_measure_undock_btn_pressed() -> void:
@@ -10306,6 +10441,7 @@ func _dock_measure_panel() -> void:
 
 func _close_floating_measure_panel() -> void:
 	_dock_measure_panel()
+	_deactivate_measurement_tools()
 	if _measure_panel != null:
 		_measure_panel.visible = false
 	_set_view_checked(26, false)
@@ -10335,6 +10471,59 @@ func _wire_measure_signals() -> void:
 func _on_measure_tool_btn_pressed(key: String) -> void:
 	if _map_view == null:
 		return
+	_activate_measurement_tool(key)
+
+
+func _on_measure_select_tool_pressed() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.measurement == null or registry.selection == null:
+		_clear_measurement_draw_mode()
+		return
+	if _measure_shape_list == null:
+		_clear_measurement_draw_mode()
+		return
+	var selected_items: PackedInt32Array = _measure_shape_list.get_selected_items()
+	if selected_items.is_empty():
+		_set_status("Select a measurement shape first.")
+		return
+	var shape_id: String = str(_measure_shape_list.get_item_metadata(selected_items[0]))
+	if shape_id.is_empty():
+		return
+	var md: MeasurementData = registry.measurement.get_by_id(shape_id)
+	if md == null:
+		_set_status("Measurement shape not found.")
+		return
+	if _map_view == null:
+		return
+	var token_ids: Array[String] = _map_view.get_tokens_in_measurement(md)
+	var tm := _token_manager()
+	if tm != null:
+		var filtered: Array[String] = []
+		for tid: String in token_ids:
+			var td: TokenData = tm.get_token_by_id(tid)
+			if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC or td.category == TokenData.TokenCategory.GENERIC):
+				filtered.append(tid)
+		token_ids = filtered
+	if token_ids.is_empty():
+		_set_status("No creature tokens inside the selected shape.")
+		return
+	registry.selection.select_many(token_ids, ISelectionService.SelectionLayer.TOKEN)
+	_set_status("Selected %d creature token%s" % [token_ids.size(), "" if token_ids.size() == 1 else "s"])
+	_clear_measurement_draw_mode()
+
+
+func _on_palette_measurement_mode_toggled(active: bool) -> void:
+	if active:
+		_activate_measurement_tool(_measure_active_tool_key)
+	else:
+		_deactivate_measurement_tools()
+
+
+func _activate_measurement_tool(key: String) -> void:
+	if _map_view == null:
+		return
+	_measure_active_tool_key = key
+	_set_measurement_tools_visible(true)
 	_map_view.set_fog_tool(0, 64.0)
 	match key:
 		"measure_line":
@@ -10352,6 +10541,49 @@ func _on_measure_tool_btn_pressed(key: String) -> void:
 		"measure_rect":
 			_map_view._set_active_tool(_map_view.Tool.MEASURE_RECT)
 			_set_status("Measure: Rectangle — drag to set length, width = half length")
+	_set_measurement_tool_buttons(key)
+	if _palette != null:
+		_palette.set_measurement_mode_active(true)
+
+
+func _deactivate_measurement_tools() -> void:
+	_clear_measurement_draw_mode()
+	if _palette != null:
+		_palette.set_measurement_mode_active(false)
+	_set_measurement_tools_visible(false)
+
+
+func _clear_measurement_draw_mode() -> void:
+	_set_measurement_tool_buttons("")
+	_measure_active_tool_key = "measure_line"
+	if _map_view != null:
+		_map_view.set_fog_tool(0, 64.0)
+		_map_view._set_active_tool(_map_view.Tool.SELECT)
+	if _map_view != null and _map_view.measurement_overlay != null:
+		_map_view.measurement_overlay.set_selected("")
+	_set_status("Tool: Select")
+
+
+func _set_measurement_tools_visible(visible: bool) -> void:
+	if _measure_panel != null:
+		_measure_panel.visible = visible
+		_set_view_checked(26, visible)
+		if _palette != null:
+			_palette.set_measurement_mode_active(visible)
+		if visible:
+			_apply_measure_panel_size()
+		else:
+			_apply_initiative_panel_size()
+
+
+func _set_measurement_tool_buttons(active_key: String) -> void:
+	if _measure_tool_group == null:
+		return
+	var buttons: Array[BaseButton] = _measure_tool_group.get_buttons()
+	var keys: Array[String] = ["measure_line", "measure_circle", "measure_cone", "measure_square", "measure_rect"]
+	for i: int in range(buttons.size()):
+		var is_active: bool = active_key != "" and i < keys.size() and keys[i] == active_key
+		buttons[i].set_pressed_no_signal(is_active)
 
 
 func _on_measure_clear_all_pressed() -> void:
@@ -10438,46 +10670,8 @@ func _refresh_measure_shape_list() -> void:
 
 
 # ---------------------------------------------------------------------------
-# AoE / Saving throw workflow
+# Saving throw workflow
 # ---------------------------------------------------------------------------
-
-## "Call for Save" button on the measurement panel — uses the selected shape.
-func _on_measure_call_for_save_pressed() -> void:
-	if _measure_shape_list == null:
-		return
-	var selected_items: PackedInt32Array = _measure_shape_list.get_selected_items()
-	if selected_items.is_empty():
-		_set_status("Select a measurement shape first.")
-		return
-	var shape_id: String = str(_measure_shape_list.get_item_metadata(selected_items[0]))
-	if shape_id.is_empty():
-		return
-	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-	if registry == null or registry.measurement == null:
-		return
-	var md: MeasurementData = registry.measurement.get_by_id(shape_id)
-	if md == null:
-		return
-	# Find tokens inside the shape.
-	if _map_view == null:
-		return
-	var token_ids: Array[String] = _map_view.get_tokens_in_measurement(md)
-	# Filter to creature tokens only (monsters, NPCs, and player tokens).
-	var tm := _token_manager()
-	if tm != null:
-		var filtered: Array[String] = []
-		for tid: String in token_ids:
-			var td: TokenData = tm.get_token_by_id(tid)
-			if td != null and (td.category == TokenData.TokenCategory.MONSTER or td.category == TokenData.TokenCategory.NPC or td.category == TokenData.TokenCategory.GENERIC):
-				filtered.append(tid)
-		token_ids = filtered
-	if token_ids.is_empty():
-		_set_status("No creature tokens inside the selected shape.")
-		return
-	# Store the measurement id and open the save config dialog.
-	_pending_save_measurement_id = md.id
-	_open_save_config_dialog(token_ids)
-
 
 ## Opens a small popup to choose save ability + DC before rolling.
 func _open_save_config_dialog(token_ids: Array[String]) -> void:
@@ -10557,7 +10751,7 @@ func _open_save_config_dialog(token_ids: Array[String]) -> void:
 		var ability: String = abilities[idx] if idx >= 0 and idx < abilities.size() else "dex"
 		var dc: int = int(dc_sp.value)
 		_save_config_dialog.hide()
-		_execute_save_for_tokens(ability, dc, tids))
+		_execute_group_save_resolution(ability, dc, tids))
 	cancel_btn.pressed.connect(func() -> void:
 		_save_config_dialog.hide()
 		_pending_save_measurement_id = "")
@@ -10576,17 +10770,88 @@ func _open_save_config_dialog(token_ids: Array[String]) -> void:
 		_save_config_dialog.grab_focus()
 
 
-## Rolls saves for the given tokens and opens the results panel.
-func _execute_save_for_tokens(ability: String, dc: int,
+## Resolve a save for a mixed group of creatures and players.
+func _execute_group_save_resolution(ability: String, dc: int,
 		token_ids: Array[String]) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.combat == null:
 		return
-	var results: Array = registry.combat.call_for_save(ability, dc, token_ids)
-	if results.is_empty():
-		_set_status("No save results (tokens may lack statblocks).")
+	_pending_save_token_ids = token_ids.duplicate()
+	_pending_save_ability = ability
+	_pending_save_dc = dc
+	_pending_save_results.clear()
+	_pending_save_player_index = 0
+	_pending_save_player_ids = _sort_players_by_initiative(token_ids, registry)
+	_pending_save_creature_ids = []
+	for tid: String in token_ids:
+		if not _pending_save_player_ids.has(tid):
+			_pending_save_creature_ids.append(tid)
+	_prompt_next_player_save()
+
+
+func _prompt_next_player_save() -> void:
+	if _pending_save_player_index >= _pending_save_player_ids.size():
+		_finish_group_save_resolution()
 		return
-	_open_save_results_panel(ability, dc, results)
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null:
+		return
+	var token_id: String = _pending_save_player_ids[_pending_save_player_index]
+	if _player_save_prompt_dialog == null or not is_instance_valid(_player_save_prompt_dialog):
+		_player_save_prompt_dialog = PlayerSavePromptDialogScript.new()
+		_player_save_prompt_dialog.choice_selected.connect(_on_player_save_choice_selected)
+		add_child(_player_save_prompt_dialog)
+		if registry.ui_theme != null:
+			registry.ui_theme.theme_control_tree(_player_save_prompt_dialog, _ui_scale())
+		_player_save_prompt_dialog.call("apply_scale", _ui_scale())
+	var prof: Variant = _get_profile_record_for_target(token_id, registry)
+	var player_name: String = _resolve_player_display_name(token_id, registry)
+	var has_linked: bool = _player_profile_statblock_id(prof) != ""
+	_player_save_prompt_dialog.call("open", token_id, player_name, _pending_save_ability, _pending_save_dc, has_linked)
+
+
+func _on_player_save_choice_selected(token_id: String, choice: String) -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.combat == null:
+		return
+	match choice:
+		"saved":
+			_pending_save_results.append({"token_id": token_id, "name": _resolve_player_display_name(token_id, registry), "roll": 0, "modifier": 0, "total": 0, "passed": true, "nat20": false, "nat1": false, "advantage": false, "disadvantage": false, "auto_fail": false, "manual_resolution": "saved"})
+		"failed":
+			_pending_save_results.append({"token_id": token_id, "name": _resolve_player_display_name(token_id, registry), "roll": 0, "modifier": 0, "total": 0, "passed": false, "nat20": false, "nat1": false, "advantage": false, "disadvantage": false, "auto_fail": false, "manual_resolution": "failed"})
+		"roll":
+			var single: Array[String] = [token_id]
+			var rolled: Array = registry.combat.call_for_save(_pending_save_ability, _pending_save_dc, single)
+			if rolled.is_empty():
+				_pending_save_results.append({"token_id": token_id, "name": _resolve_player_display_name(token_id, registry), "roll": 0, "modifier": 0, "total": 0, "passed": false, "nat20": false, "nat1": false, "advantage": false, "disadvantage": false, "auto_fail": false, "manual_resolution": "roll_failed"})
+			else:
+				for r: Variant in rolled:
+					_pending_save_results.append(r)
+		_:
+			_pending_save_results.append({"token_id": token_id, "name": _resolve_player_display_name(token_id, registry), "roll": 0, "modifier": 0, "total": 0, "passed": false, "nat20": false, "nat1": false, "advantage": false, "disadvantage": false, "auto_fail": false, "manual_resolution": "skipped"})
+	_pending_save_player_index += 1
+	_prompt_next_player_save()
+
+
+func _finish_group_save_resolution() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.combat == null:
+		return
+	if not _pending_save_creature_ids.is_empty():
+		var creature_results: Array = registry.combat.call_for_save(_pending_save_ability, _pending_save_dc, _pending_save_creature_ids)
+		for r: Variant in creature_results:
+			_pending_save_results.append(r)
+	if _pending_save_results.is_empty():
+		_set_status("No save results.")
+		return
+	_open_save_results_panel(_pending_save_ability, _pending_save_dc, _pending_save_results)
+	_pending_save_token_ids.clear()
+	_pending_save_player_ids.clear()
+	_pending_save_creature_ids.clear()
+	_pending_save_results.clear()
+	_pending_save_ability = ""
+	_pending_save_dc = 0
+	_pending_save_player_index = 0
 
 
 ## Creates / shows the save results panel.
@@ -10608,10 +10873,21 @@ func _open_save_results_panel(ability: String, dc: int, results: Array) -> void:
 
 
 ## Applies damage from the save results panel to affected tokens.
-func _on_save_results_apply_damage(results: Array, damage_amount: int,
-		damage_type: String, half_on_pass: bool) -> void:
+func _on_save_results_apply_damage(results: Array, damage_rows: Array, condition_rows: Array) -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.combat == null:
+		return
+	var packets: Array = []
+	var packet_total: int = 0
+	for row: Dictionary in damage_rows:
+		var amount: int = int(row.get("amount", 0))
+		var damage_type: String = str(row.get("damage_type", "none"))
+		if amount <= 0:
+			continue
+		packets.append({"amount": amount, "damage_type": damage_type})
+		packet_total += amount
+	if packets.is_empty() and condition_rows.is_empty():
+		_set_status("No damage packets to apply.")
 		return
 	var total_applied: int = 0
 	var count: int = 0
@@ -10619,23 +10895,84 @@ func _on_save_results_apply_damage(results: Array, damage_amount: int,
 		var tid: String = str(r.get("token_id", ""))
 		if tid.is_empty():
 			continue
-		var passed: bool = bool(r.get("passed", false))
-		var amount: int = 0
-		if passed and half_on_pass:
-			amount = int(floor(damage_amount / 2.0))
-		elif not passed:
-			amount = damage_amount
-		else:
-			continue # passed and not half_on_pass — no damage
-		if amount <= 0:
-			continue
-		var result: Dictionary = registry.combat.apply_damage(tid, amount, damage_type)
-		total_applied += int(result.get("actual_damage", 0))
+		var target_total: int = int(r.get("damage_amount", 0))
+		if target_total > 0 and not packets.is_empty():
+			var remaining: int = target_total
+			for i: int in range(packets.size()):
+				var packet: Dictionary = packets[i]
+				var amount: int = 0
+				if i == packets.size() - 1:
+					amount = remaining
+				else:
+					var base_amount: int = int(packet.get("amount", 0))
+					amount = int(round(float(base_amount) * float(target_total) / float(packet_total)))
+					amount = min(amount, remaining)
+					remaining -= amount
+				if amount <= 0:
+					continue
+				var damage_type: String = str(packet.get("damage_type", "none"))
+				var result: Dictionary = registry.combat.apply_damage(tid, amount, damage_type)
+				total_applied += int(result.get("actual_damage", 0))
+		for cond_row: Dictionary in condition_rows:
+			var condition_name: String = str(cond_row.get("condition_name", ""))
+			if condition_name.is_empty():
+				continue
+			registry.combat.apply_condition(tid, condition_name, "Save Result", -1)
 		count += 1
-	_set_status("Applied damage to %d token(s), total: %d HP" % [count, total_applied])
+	if count == 0 and condition_rows.is_empty():
+		_set_status("No damage applied.")
+		return
+	var status_parts: Array[String] = []
+	if count > 0 and not packets.is_empty():
+		status_parts.append("Applied damage to %d token(s), total: %d HP" % [count, total_applied])
+	if not condition_rows.is_empty():
+		status_parts.append("applied %d condition packet%s" % [condition_rows.size(), "" if condition_rows.size() == 1 else "s"])
+	_set_status("; ".join(status_parts))
 	# Optionally create an AoE record linking to the measurement.
 	if not _pending_save_measurement_id.is_empty():
 		_pending_save_measurement_id = ""
+
+
+func _sort_players_by_initiative(token_ids: Array[String], reg: ServiceRegistry) -> Array[String]:
+	var selected: Dictionary = {}
+	for tid: String in token_ids:
+		if _is_player_target(tid, reg):
+			selected[tid] = true
+	var ordered: Array[String] = []
+	if reg != null and reg.combat != null:
+		for entry: Dictionary in reg.combat.get_initiative_order():
+			var tid: String = str(entry.get("token_id", ""))
+			if selected.has(tid):
+				ordered.append(tid)
+	for tid: String in token_ids:
+		if selected.has(tid) and not ordered.has(tid):
+			ordered.append(tid)
+	return ordered
+
+
+func _get_profile_record_for_target(token_id: String, reg: ServiceRegistry) -> Variant:
+	if reg == null or reg.profile == null:
+		return null
+	return reg.profile.get_profile_by_id(token_id)
+
+
+func _player_profile_statblock_id(profile_record: Variant) -> String:
+	if profile_record is PlayerProfile:
+		return str((profile_record as PlayerProfile).statblock_id)
+	if profile_record is Dictionary:
+		return str((profile_record as Dictionary).get("statblock_id", ""))
+	return ""
+
+
+func _resolve_player_display_name(token_id: String, reg: ServiceRegistry) -> String:
+	var prof: Variant = _get_profile_record_for_target(token_id, reg)
+	if prof is PlayerProfile and not (prof as PlayerProfile).player_name.is_empty():
+		return (prof as PlayerProfile).player_name
+	if prof is Dictionary:
+		var player_name: String = str((prof as Dictionary).get("player_name", ""))
+		if not player_name.is_empty():
+			return player_name
+	return token_id
 
 
 func _broadcast_token_state() -> void:
@@ -10662,7 +10999,8 @@ func _broadcast_token_state() -> void:
 			dicts.append(d)
 	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts,
 		"puzzle_notes": _collect_revealed_puzzle_notes(),
-		"combat_hp_visible_to_players": _combat_hp_visible_to_players})
+		"combat_hp_bar_visible": _combat_player_hp_bar_visible,
+		"combat_bloodied_visible": _combat_player_bloodied_visible})
 
 
 # ---------------------------------------------------------------------------
@@ -11904,7 +12242,7 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 				var td: TokenData = raw as TokenData
 				if td != null:
 					dicts.append(td.to_dict())
-			_map_view.load_token_sprites(dicts, true)
+			_map_view.load_token_sprites(dicts, true, _combat_dm_hp_bar_visible, _combat_dm_bloodied_visible)
 	if _backend != null:
 		_backend.reset_for_new_map()
 	if _map_view != null and _backend != null:
@@ -12734,6 +13072,30 @@ func _apply_ui_scale() -> void:
 		_measure_undock_btn.add_theme_font_size_override("font_size", roundi(14.0 * scale))
 	if _measure_panel_title:
 		_measure_panel_title.add_theme_font_size_override("font_size", roundi(15.0 * scale))
+	if _measure_vbox != null:
+		_measure_vbox.add_theme_constant_override("separation", roundi(2.0 * scale))
+		if _measure_tool_row != null:
+			_measure_tool_row.add_theme_constant_override("separation", roundi(4.0 * scale))
+		if _measure_action_row != null:
+			_measure_action_row.add_theme_constant_override("separation", roundi(6.0 * scale))
+		mgr.scale_control_fonts(_measure_vbox)
+		if _measure_undock_btn != null:
+			_measure_undock_btn.custom_minimum_size = Vector2(0, mgr.scaled(22.0))
+			_measure_undock_btn.add_theme_font_size_override("font_size", mgr.scaled(14.0))
+		if _measure_tool_row != null:
+			for child: Node in _measure_tool_row.get_children():
+				if child is Button:
+					var tool_btn: Button = child as Button
+					tool_btn.custom_minimum_size = Vector2(mgr.scaled(32.0), mgr.scaled(32.0))
+					tool_btn.add_theme_font_size_override("font_size", mgr.scaled(20.0))
+		if _measure_action_row != null:
+			for child_action: Node in _measure_action_row.get_children():
+				if child_action is Button:
+					var action_btn: Button = child_action as Button
+					action_btn.custom_minimum_size = Vector2(0, mgr.scaled(28.0))
+					action_btn.add_theme_font_size_override("font_size", mgr.scaled(13.0))
+	if _measure_shape_list != null:
+		_measure_shape_list.custom_minimum_size = Vector2(0, mgr.scaled(140.0))
 	# Only reposition freeze panel when docked — floating window manages its own layout.
 	if _freeze_panel and _freeze_panel.get_parent() == _ui_content_area:
 		_apply_freeze_panel_size()
@@ -12909,6 +13271,8 @@ func _first_control_child(win: Window) -> Control:
 		if child is Control:
 			return child as Control
 	return null
+
+
 
 
 func _ui_scale() -> float:

@@ -25,6 +25,7 @@ signal dm_fog_visible_toggled(enabled: bool)
 signal flashlights_only_toggled(enabled: bool)
 signal darkvision_disabled_toggled(disabled: bool)
 signal effect_tool_activated(effect_type: int)
+signal measurement_mode_toggled(active: bool)
 
 # ── Public references (DMWindow reads these for state queries) ───────────────
 var select_btn: Button = null
@@ -41,6 +42,7 @@ var move_to_spawns_btn: Button = null
 var token_btn: Button = null
 var darkvision_check: CheckBox = null
 var undock_btn: Button = null
+var measurement_btn: Button = null
 
 # ── Internal ─────────────────────────────────────────────────────────────────
 var _flyout: PanelContainer = null
@@ -115,7 +117,7 @@ func refresh_theme() -> void:
 	_ui_theme_mgr.theme_control_tree(self , s)
 	# Re-apply pressed stylebox to toggle buttons (theme_control_tree sets
 	# the standard pressed style, but toggles need the shared indicator)
-	for btn: Variant in [select_btn, pan_btn, fog_btn, _wall_stack_btn, token_btn, _effect_stack_btn]:
+	for btn: Variant in [select_btn, pan_btn, fog_btn, measurement_btn, _wall_stack_btn, token_btn, _effect_stack_btn]:
 		if btn is Button:
 			(btn as Button).add_theme_stylebox_override("pressed", _pressed_stylebox)
 	# Section header label tints
@@ -362,6 +364,12 @@ func _build() -> void:
 	var fog_reset_btn := _make_action_btn("↺", "Reset fog to fully hidden (covers entire map)")
 	fog_reset_btn.pressed.connect(func() -> void: action_fired.emit("fog_reset"))
 	palette_vbox.add_child(fog_reset_btn)
+
+	measurement_btn = _make_toggle_btn("📏", "Measurement tools — draw and edit measurement shapes", null)
+	measurement_btn.button_pressed = false
+	measurement_btn.toggled.connect(func(active: bool) -> void: measurement_mode_toggled.emit(active))
+	measurement_btn.add_theme_stylebox_override("pressed", _pressed_stylebox)
+	palette_vbox.add_child(measurement_btn)
 
 	# Wall (stacked — right-click/hold selects Rect or Poly)
 	_wall_stack_btn = _make_toggle_btn("▭", "Wall tool — Rectangle", _tool_group)
@@ -654,6 +662,12 @@ func _get_anchor_for_tool(tool_key: String) -> Control:
 
 func get_active_tool() -> String:
 	return _active_tool_key
+
+
+func set_measurement_mode_active(active: bool) -> void:
+	if measurement_btn == null:
+		return
+	measurement_btn.set_pressed_no_signal(active)
 
 
 # ---------------------------------------------------------------------------

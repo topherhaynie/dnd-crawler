@@ -11,8 +11,9 @@ signal heal_requested(token_id: String)
 ## Emitted when the panel itself initiates a combat start (so DMWindow can show
 ## the panel if it was hidden).
 signal combat_start_requested
-## Emitted when player-display HP bars are toggled for combatants.
-signal combat_hp_visibility_toggled(enabled: bool)
+signal statblock_requested(token_id: String)
+## Emitted when combat HP visibility settings change.
+signal combat_hp_visibility_changed(dm_hp_bar_visible: bool, dm_bloodied_visible: bool, player_hp_bar_visible: bool, player_bloodied_visible: bool)
 ## Emitted when an action macro button is pressed for the active combatant.
 signal action_macro_pressed(token_id: String, action: String)
 
@@ -41,12 +42,17 @@ var _macro_buttons: Array[Button] = []
 var _timer_bar: HBoxContainer = null
 var _timer_label: Label = null
 var _timer_toggle_btn: Button = null
-var _hp_visibility_btn: Button = null
+var _hp_visibility_btn: MenuButton = null
+var _hp_visibility_popup: PopupMenu = null
 var _timer_spin: SpinBox = null
 var _turn_timer: Timer = null
 var _timer_seconds_remaining: int = 0
 var _timer_enabled: bool = false
 var _timer_duration: int = 120 ## Default 2 minutes per turn.
+var _dm_hp_bar_visible: bool = true
+var _dm_bloodied_visible: bool = true
+var _player_hp_bar_visible: bool = false
+var _player_bloodied_visible: bool = true
 
 
 func _ready() -> void:
@@ -105,7 +111,7 @@ func apply_scale(s: float) -> void:
 		_timer_toggle_btn.custom_minimum_size = Vector2(si.call(28.0), si.call(22.0))
 		_timer_toggle_btn.add_theme_font_size_override("font_size", si.call(12.0))
 	if _hp_visibility_btn != null:
-		_hp_visibility_btn.custom_minimum_size = Vector2(si.call(34.0), si.call(22.0))
+		_hp_visibility_btn.custom_minimum_size = Vector2(si.call(46.0), si.call(22.0))
 		_hp_visibility_btn.add_theme_font_size_override("font_size", si.call(11.0))
 	if _timer_label != null:
 		_timer_label.add_theme_font_size_override("font_size", si.call(12.0))
@@ -215,13 +221,18 @@ func _build_ui() -> void:
 	_timer_toggle_btn.toggled.connect(_on_timer_toggled)
 	_timer_bar.add_child(_timer_toggle_btn)
 
-	_hp_visibility_btn = Button.new()
+	_hp_visibility_btn = MenuButton.new()
 	_hp_visibility_btn.text = "HP"
-	_hp_visibility_btn.tooltip_text = "Toggle combat HP bars on the player display"
-	_hp_visibility_btn.toggle_mode = true
-	_hp_visibility_btn.button_pressed = true
-	_hp_visibility_btn.toggled.connect(_on_hp_visibility_toggled)
+	_hp_visibility_btn.tooltip_text = "Combat HP visibility settings"
+	_hp_visibility_btn.custom_minimum_size = Vector2(46.0, 22.0)
+	_hp_visibility_popup = _hp_visibility_btn.get_popup()
+	_hp_visibility_popup.add_check_item("DM HP", 0)
+	_hp_visibility_popup.add_check_item("DM Bloodied", 1)
+	_hp_visibility_popup.add_check_item("Player HP", 2)
+	_hp_visibility_popup.add_check_item("Player Bloodied", 3)
+	_hp_visibility_popup.id_pressed.connect(_on_hp_visibility_item_pressed)
 	_timer_bar.add_child(_hp_visibility_btn)
+	_sync_hp_visibility_popup()
 
 	var timer_lbl := Label.new()
 	timer_lbl.text = "Timer:"
@@ -350,6 +361,7 @@ func refresh(combat_mgr: CombatManager, token_mgr: TokenManager,
 			heal_requested.emit(id))
 		row.delay_requested.connect(_on_entry_delay)
 		row.remove_requested.connect(_on_entry_remove)
+		row.statblock_requested.connect(_on_entry_statblock_requested)
 		_entries[tid] = row
 
 	# Restore map-selection highlight after rebuild.
@@ -493,6 +505,10 @@ func _on_entry_remove(token_id: String) -> void:
 	reg.combat.remove_combatant(token_id)
 
 
+func _on_entry_statblock_requested(token_id: String) -> void:
+	statblock_requested.emit(token_id)
+
+
 func _gather_combat_tokens(reg: ServiceRegistry) -> Array[String]:
 	var ids: Array[String] = []
 	var id_set: Dictionary = {} ## For deduplication.
@@ -570,8 +586,35 @@ func _on_timer_toggled(pressed: bool) -> void:
 		_stop_timer()
 
 
-func _on_hp_visibility_toggled(enabled: bool) -> void:
-	combat_hp_visibility_toggled.emit(enabled)
+func _on_hp_visibility_item_pressed(id: int) -> void:
+	match id:
+		0:
+			_dm_hp_bar_visible = not _dm_hp_bar_visible
+		1:
+			_dm_bloodied_visible = not _dm_bloodied_visible
+		2:
+			_player_hp_bar_visible = not _player_hp_bar_visible
+		3:
+			_player_bloodied_visible = not _player_bloodied_visible
+	_sync_hp_visibility_popup()
+	combat_hp_visibility_changed.emit(
+		_dm_hp_bar_visible, _dm_bloodied_visible, _player_hp_bar_visible, _player_bloodied_visible)
+
+
+func _sync_hp_visibility_popup() -> void:
+	if _hp_visibility_popup == null:
+		return
+	_hp_visibility_popup.set_item_checked(0, _dm_hp_bar_visible)
+	_hp_visibility_popup.set_item_checked(1, _dm_bloodied_visible)
+	_hp_visibility_popup.set_item_checked(2, _player_hp_bar_visible)
+	_hp_visibility_popup.set_item_checked(3, _player_bloodied_visible)
+	if _hp_visibility_btn != null:
+		_hp_visibility_btn.tooltip_text = "DM: %s HP, %s bloodied\nPlayer: %s HP, %s bloodied" % [
+			"show" if _dm_hp_bar_visible else "hide",
+			"show" if _dm_bloodied_visible else "hide",
+			"show" if _player_hp_bar_visible else "hide",
+			"show" if _player_bloodied_visible else "hide",
+		]
 
 
 func _restart_timer() -> void:

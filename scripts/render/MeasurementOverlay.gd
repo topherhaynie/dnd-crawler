@@ -19,7 +19,7 @@ class_name MeasurementOverlay
 # ---------------------------------------------------------------------------
 
 const STROKE_WIDTH: float = 2.0
-const ENDPOINT_RADIUS: float = 4.0
+const ENDPOINT_RADIUS: float = 8.0
 const LABEL_FONT_SIZE: int = 16
 const SELECTION_GLOW_COLOR: Color = Color(1.0, 0.85, 0.15, 0.9)
 ## D&D 5e cone half-angle: width = length → tan(half) = 0.5
@@ -85,6 +85,9 @@ func _get_registry() -> Variant:
 
 func _process(_delta: float) -> void:
 	if _measurements.is_empty():
+		if _labels_dirty:
+			_hide_all_labels()
+			_labels_dirty = false
 		return
 	var ct: Transform2D = get_viewport_transform() * get_canvas_transform()
 	var z: float = ct.get_scale().x
@@ -147,7 +150,7 @@ func set_selected(id: String) -> void:
 ## screen-pixels, or empty string if none found.
 func pick_nearest(world_pos: Vector2, snap_px: float) -> String:
 	var best_id: String = ""
-	var snap_world: float = snap_px * _inv_zoom
+	var snap_world: float = snap_px * _ui_scale * _inv_zoom
 	var best_dist: float = snap_world
 	for raw in _measurements.values():
 		var m: MeasurementData = raw as MeasurementData
@@ -163,7 +166,7 @@ func pick_nearest(world_pos: Vector2, snap_px: float) -> String:
 ## Returns ["start"|"end"|"corner0"-"corner3", id] if world_pos is
 ## within snap_px of an endpoint or corner handle, or ["", ""] if none.
 func pick_endpoint(world_pos: Vector2, snap_px: float) -> Array:
-	var snap_world: float = snap_px * _inv_zoom
+	var snap_world: float = snap_px * _ui_scale * _inv_zoom
 	var best_which: String = ""
 	var best_id: String = ""
 	var best_dist: float = snap_world
@@ -324,6 +327,11 @@ func _update_label_positions() -> void:
 	for i in range(idx, _label_pool.size()):
 		_label_pool[i].visible = false
 	_labels_dirty = false
+
+
+func _hide_all_labels() -> void:
+	for lbl: Label in _label_pool:
+		lbl.visible = false
 
 
 # ---------------------------------------------------------------------------
