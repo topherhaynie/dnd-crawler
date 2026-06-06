@@ -40,6 +40,8 @@ var _combat_strip_panel: PanelContainer = null
 var _combat_current_label: Label = null
 var _combat_next_label: Label = null
 var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
+var _combat_hp_visible_to_players: bool = true
+var _combat_hp_state: Dictionary = {} ## token_id -> {current_hp, max_hp, temp_hp}
 
 # Dice roll toast overlay
 var _dice_toast_layer: CanvasLayer = null
@@ -105,7 +107,7 @@ func on_state(data: Dictionary) -> void:
 		"state", "delta":
 			_handle_player_state(data)
 		"token_state":
-			_handle_token_state(data.get("tokens", []) as Array)
+			_handle_token_state(data)
 		"token_added":
 			_handle_token_added(data.get("token", {}) as Dictionary)
 		"token_removed":
@@ -114,6 +116,8 @@ func on_state(data: Dictionary) -> void:
 			_handle_token_moved(str(data.get("token_id", "")), data.get("world_pos", {}) as Dictionary, data)
 		"token_updated":
 			_handle_token_added(data.get("token", {}) as Dictionary)
+		"combat_hp_visibility_toggle":
+			_handle_combat_hp_visibility_toggle(data)
 		"player_icon":
 			_handle_player_icon(data)
 		"token_icon":
@@ -477,15 +481,21 @@ func _apply_pending_fog_packets() -> void:
 # Token message handlers (player receive side)
 # ---------------------------------------------------------------------------
 
-func _handle_token_state(token_dicts: Array) -> void:
+func _handle_token_state(packet: Dictionary) -> void:
 	## Replace all DM-placed tokens in MapView with the current visible snapshot.
 	if _map_view == null:
 		return
+	var token_dicts_var: Variant = packet.get("tokens", [])
+	if not token_dicts_var is Array:
+		return
+	_combat_hp_visible_to_players = bool(packet.get("combat_hp_visible_to_players", _combat_hp_visible_to_players))
+	var token_dicts: Array = token_dicts_var as Array
 	_map_view.load_token_sprites(token_dicts, false)
 	# Seed passthrough rects for any doors/portals already open in the snapshot.
 	for raw in token_dicts:
 		if raw is Dictionary:
 			var td_dict := raw as Dictionary
+			_cache_combat_hp_state(td_dict)
 			var td: TokenData = TokenData.from_dict(td_dict)
 			_map_view.apply_token_passthrough_state(td)
 			# Apply inline icon image from network payload.
@@ -494,12 +504,14 @@ func _handle_token_state(token_dicts: Array) -> void:
 				var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
 				if tex != null:
 					_map_view.set_token_icon_texture(td.id, tex)
+	_apply_all_combat_hp_visibility()
 
 
 func _handle_token_added(token_dict: Dictionary) -> void:
 	if _map_view == null or token_dict.is_empty():
 		return
 	var data: TokenData = TokenData.from_dict(token_dict)
+	_cache_combat_hp_state(token_dict)
 	_map_view.add_token_sprite(data, false)
 	_map_view.apply_token_passthrough_state(data)
 	# Apply inline icon image from the network payload.
@@ -508,6 +520,7 @@ func _handle_token_added(token_dict: Dictionary) -> void:
 		var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
 		if tex != null:
 			_map_view.set_token_icon_texture(data.id, tex)
+	_apply_combat_hp_visibility_for_token(data.id)
 
 
 func _handle_token_removed(id: String) -> void:
@@ -571,6 +584,57 @@ func _handle_token_icon(data: Dictionary) -> void:
 	var tex: ImageTexture = TokenIconUtils.get_or_decode_network_texture(icon_b64)
 	if tex != null:
 		_map_view.set_token_icon_texture(token_id, tex)
+
+
+func _cache_combat_hp_state(token_dict: Dictionary) -> void:
+	var token_id: String = str(token_dict.get("id", ""))
+	if token_id.is_empty():
+		return
+	var data: TokenData = TokenData.from_dict(token_dict)
+	if data == null or data.statblock_refs.is_empty():
+		_combat_hp_state.erase(token_id)
+		return
+	var first_ref: String = str(data.statblock_refs[0])
+	var raw_override: Variant = data.statblock_overrides.get(first_ref, null)
+	if not raw_override is Dictionary:
+		_combat_hp_state.erase(token_id)
+		return
+	var so: StatblockOverride = StatblockOverride.from_dict(raw_override as Dictionary)
+	if so.max_hp <= 0:
+		_combat_hp_state.erase(token_id)
+		return
+	_combat_hp_state[token_id] = {
+		"current_hp": so.current_hp,
+		"max_hp": so.max_hp,
+		"temp_hp": so.temp_hp,
+	}
+
+
+func _apply_combat_hp_visibility_for_token(token_id: String) -> void:
+	if _map_view == null or token_id.is_empty():
+		return
+	var sprite: Node2D = _map_view.get_token_sprite(token_id)
+	if sprite == null or not sprite.has_method("set_hp_bar"):
+		return
+	if not _combat_hp_visible_to_players:
+		sprite.set_hp_bar(-1, 0, 0)
+		return
+	var hp_state: Variant = _combat_hp_state.get(token_id, null)
+	if hp_state is Dictionary:
+		var state: Dictionary = hp_state as Dictionary
+		sprite.set_hp_bar(int(state.get("current_hp", 0)), int(state.get("max_hp", 0)), int(state.get("temp_hp", 0)))
+
+
+func _apply_all_combat_hp_visibility() -> void:
+	if _map_view == null:
+		return
+	var token_layer: Node2D = _map_view.get_token_layer()
+	if token_layer == null:
+		return
+	for child: Node in token_layer.get_children():
+		var ts: TokenSprite = child as TokenSprite
+		if ts != null:
+			_apply_combat_hp_visibility_for_token(ts.token_id)
 
 
 # ---------------------------------------------------------------------------
@@ -901,9 +965,18 @@ func _handle_combat_hp_update(data: Dictionary) -> void:
 		return
 	var current_hp: int = int(data.get("current_hp", 0))
 	var max_hp: int = int(data.get("max_hp", 0))
-	var sprite: Node2D = _map_view.get_token_sprite(token_id)
-	if sprite != null and sprite.has_method("set_hp_bar"):
-		sprite.set_hp_bar(current_hp, max_hp, 0)
+	var temp_hp: int = int(data.get("temp_hp", 0))
+	_combat_hp_state[token_id] = {
+		"current_hp": current_hp,
+		"max_hp": max_hp,
+		"temp_hp": temp_hp,
+	}
+	_apply_combat_hp_visibility_for_token(token_id)
+
+
+func _handle_combat_hp_visibility_toggle(data: Dictionary) -> void:
+	_combat_hp_visible_to_players = bool(data.get("enabled", true))
+	_apply_all_combat_hp_visibility()
 
 
 func _handle_save_called(data: Dictionary) -> void:

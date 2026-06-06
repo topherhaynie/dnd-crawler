@@ -36,6 +36,10 @@ var _saved_light_energy: float = 1.4
 var _lock_label: Label = null
 var _is_selected: bool = false
 var _is_active_turn: bool = false
+var _hp_current: int = 0
+var _hp_max: int = 0
+var _hp_temp: int = 0
+var _hp_visible: bool = false
 
 static var _token_texture: Texture2D = null
 static var _radial_light_texture: Texture2D = null
@@ -99,6 +103,10 @@ func apply_from_state(data: Dictionary) -> void:
 	var prev_vision_scale := vision_scale
 	var prev_vision_radius_px := vision_radius_px
 	var prev_token_diameter := _token_diameter_px
+	var prev_hp_current := _hp_current
+	var prev_hp_max := _hp_max
+	var prev_hp_temp := _hp_temp
+	var prev_hp_visible := _hp_visible
 
 	player_id = str(data.get("id", ""))
 	player_name = str(data.get("name", ""))
@@ -110,6 +118,10 @@ func apply_from_state(data: Dictionary) -> void:
 	is_locked = bool(data.get("is_locked", false))
 	set_light_suppressed(bool(data.get("light_off", false)))
 	indicator_color_str = str(data.get("indicator_color", ""))
+	_hp_visible = bool(data.get("combat_active", false))
+	_hp_current = int(data.get("current_hp", _hp_current))
+	_hp_max = int(data.get("max_hp", _hp_max))
+	_hp_temp = int(data.get("temp_hp", _hp_temp))
 	vision_scale = clampf(float(data.get("vision_scale", 1.0)), 0.1, 4.0)
 	var default_radius_px := darkvision_range if vision_type == VisionType.DARKVISION else 60.0
 	vision_radius_px = maxf(float(data.get("vision_radius_px", default_radius_px)), 8.0)
@@ -139,6 +151,10 @@ func apply_from_state(data: Dictionary) -> void:
 		or is_locked != prev_is_locked
 		or absf(vision_scale - prev_vision_scale) > 0.001
 		or absf(vision_radius_px - prev_vision_radius_px) > 0.01
+		or _hp_current != prev_hp_current
+		or _hp_max != prev_hp_max
+		or _hp_temp != prev_hp_temp
+		or _hp_visible != prev_hp_visible
 	)
 	# Custom icon image from network (base64-encoded PNG).
 	if data.has("icon_image_b64"):
@@ -239,6 +255,8 @@ func _draw() -> void:
 			var a: float = TAU * float(i) / float(seg)
 			act_pts.append(Vector2(cos(a) * act_r, sin(a) * act_r))
 		draw_polyline(act_pts + PackedVector2Array([act_pts[0]]), Color(1.0, 0.85, 0.1, 0.95), 4.0)
+	if _hp_visible and _hp_max > 0:
+		_draw_hp_bar()
 
 
 func set_token_diameter_px(diameter_px: float) -> void:
@@ -288,6 +306,7 @@ func _update_visuals() -> void:
 			sprite.modulate = Color.html(indicator_color_str)
 		else:
 			sprite.modulate = _color_from_id(player_id)
+	queue_redraw()
 	if vision_type == VisionType.DARKVISION:
 		vision_light.texture = _get_or_create_radial_light_texture()
 	else:
@@ -301,6 +320,27 @@ func _update_visuals() -> void:
 		_lock_label.visible = is_locked
 		# Counter-rotate so the label stays upright regardless of sprite rotation.
 		_lock_label.rotation = - rotation
+	queue_redraw()
+
+
+func _draw_hp_bar() -> void:
+	var bar_w: float = _token_diameter_px * 0.9
+	var bar_h: float = clampf(_token_diameter_px * 0.12, 4.0, 7.0)
+	var bar_x: float = - bar_w * 0.5
+	var bar_y: float = _token_diameter_px * 0.5 + 4.0
+	draw_rect(Rect2(bar_x - 1.0, bar_y - 1.0, bar_w + 2.0, bar_h + 2.0), Color(0.0, 0.0, 0.0, 0.65))
+	var total_hp: int = maxi(_hp_max, 1)
+	var current_ratio: float = clampf(float(maxi(_hp_current, 0)) / float(total_hp), 0.0, 1.0)
+	var temp_ratio: float = clampf(float(maxi(_hp_temp, 0)) / float(total_hp), 0.0, 1.0 - current_ratio)
+	var fill_color: Color = Color(0.2, 0.8, 0.2, 0.95)
+	if current_ratio <= 0.5:
+		fill_color = Color(0.9, 0.75, 0.1, 0.95).lerp(Color(0.9, 0.15, 0.1, 0.95), 1.0 - current_ratio * 2.0)
+	else:
+		fill_color = Color(0.2, 0.8, 0.2, 0.95).lerp(Color(0.9, 0.75, 0.1, 0.95), 1.0 - (current_ratio - 0.5) * 2.0)
+	if current_ratio > 0.0:
+		draw_rect(Rect2(bar_x, bar_y, bar_w * current_ratio, bar_h), fill_color)
+	if temp_ratio > 0.0:
+		draw_rect(Rect2(bar_x + bar_w * current_ratio, bar_y, bar_w * temp_ratio, bar_h), Color(0.3, 0.6, 1.0, 0.95))
 
 
 func set_vision_radius_px(radius_px: float) -> void:

@@ -394,6 +394,7 @@ var _initiative_panel_window: Window = null
 var _initiative_panel_floating: bool = false
 var _quick_damage_dialog: QuickDamageDialog = null
 var _combat_turn_token_id: String = "" ## Token ID currently showing the active-turn ring.
+var _combat_hp_visible_to_players: bool = true
 
 # ── Save / AoE panel ────────────────────────────────────────────────────────
 var _save_results_panel: SaveResultsPanel = null
@@ -5278,6 +5279,7 @@ func _build_initiative_panel() -> void:
 	_initiative_panel.damage_requested.connect(_on_initiative_damage_requested)
 	_initiative_panel.heal_requested.connect(_on_initiative_heal_requested)
 	_initiative_panel.combat_start_requested.connect(_ensure_initiative_panel_visible)
+	_initiative_panel.combat_hp_visibility_toggled.connect(_on_combat_hp_visibility_toggled)
 	if _initiative_panel._undock_btn != null:
 		_initiative_panel._undock_btn.pressed.connect(_on_initiative_panel_undock)
 	# Connect combat service signals for live refresh.
@@ -5593,6 +5595,7 @@ func _check_opportunity_attacks(moved_id: String, old_pos: Vector2,
 func _on_combat_started() -> void:
 	_refresh_initiative_panel()
 	_ensure_initiative_panel_visible()
+	_broadcast_player_state()
 
 
 func _on_combat_ended() -> void:
@@ -5602,6 +5605,7 @@ func _on_combat_ended() -> void:
 		if prev != null:
 			prev.set_active_turn(false)
 	_combat_turn_token_id = ""
+	_broadcast_player_state()
 	_set_status("Combat ended")
 
 
@@ -5638,7 +5642,8 @@ func _on_combat_turn_changed(token_id: String, round_number: int) -> void:
 			if prof is PlayerProfile and not (prof as PlayerProfile).player_name.is_empty():
 				name_str = (prof as PlayerProfile).player_name
 		if name_str == token_id and td != null and not td.statblock_refs.is_empty() and reg.statblock != null:
-			var sb: StatblockData = reg.statblock.get_statblock(str(td.statblock_refs[0]))
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
+			var sb: StatblockData = reg.statblock.get_statblock(sb_id) if not sb_id.is_empty() else null
 			if sb != null and not sb.name.is_empty():
 				name_str = sb.name
 	_set_status("Round %d — %s's turn" % [round_number, name_str])
@@ -5651,18 +5656,28 @@ func _on_combat_turn_changed(token_id: String, round_number: int) -> void:
 func _on_combat_hp_changed(token_id: String, current_hp: int, max_hp: int, _delta: int) -> void:
 	_refresh_initiative_panel()
 	# Update the token sprite HP bar.
+	var temp_hp: int = 0
 	if _map_view != null:
 		var sprite: Node = _map_view.get_token_sprite(token_id)
 		if sprite != null and sprite.has_method("set_hp_bar"):
 			var reg := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
-			var temp_hp: int = 0
 			if reg != null and reg.combat != null:
 				var status: Dictionary = reg.combat.get_hp_status(token_id)
 				temp_hp = int(status.get("temp", 0))
 			sprite.set_hp_bar(current_hp, max_hp, temp_hp)
 	# Broadcast HP update to player displays.
 	_nm_broadcast_to_displays({"msg": "combat_hp_update",
-		"token_id": token_id, "current_hp": current_hp, "max_hp": max_hp})
+		"token_id": token_id, "current_hp": current_hp, "max_hp": max_hp,
+		"temp_hp": temp_hp, "hp_visible_to_players": _combat_hp_visible_to_players})
+	_broadcast_player_state()
+
+
+func _on_combat_hp_visibility_toggled(enabled: bool) -> void:
+	if _combat_hp_visible_to_players == enabled:
+		return
+	_combat_hp_visible_to_players = enabled
+	_nm_broadcast_to_displays({"msg": "combat_hp_visibility_toggle",
+		"enabled": enabled})
 
 
 func _on_combat_token_killed(token_id: String) -> void:
@@ -5676,7 +5691,7 @@ func _on_combat_token_killed(token_id: String) -> void:
 			name_str = td.label
 		# Look up monster CR for XP awarding.
 		if td != null and td.category == TokenData.TokenCategory.MONSTER and not td.statblock_refs.is_empty():
-			var sb_id: String = str(td.statblock_refs[0])
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
 			if reg.statblock != null and not sb_id.is_empty():
 				var sb: StatblockData = reg.statblock.get_statblock(sb_id)
 				if sb != null:
@@ -7225,7 +7240,9 @@ func _on_token_context_menu_id(id: int) -> void:
 		20: # View Statblock (primary)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null and data.statblock_refs.size() > 0:
-				_show_token_statblock_card(data, str(data.statblock_refs[0]))
+				var sb_id: String = _get_preferred_token_statblock_id(data, registry)
+				if not sb_id.is_empty():
+					_show_token_statblock_card(data, sb_id)
 		21: # Quick HP adjustment
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null and data.statblock_refs.size() > 0:
@@ -7233,11 +7250,13 @@ func _on_token_context_menu_id(id: int) -> void:
 		22: # Edit Overrides (primary statblock)
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null and data.statblock_refs.size() > 0:
-				_show_override_editor_for_token(data, str(data.statblock_refs[0]))
+				var sb_id: String = _get_preferred_token_statblock_id(data, registry)
+				if not sb_id.is_empty():
+					_show_override_editor_for_token(data, sb_id)
 		23: # Manage Inventory
 			var data: TokenData = tm.get_token_by_id(_token_context_id)
 			if data != null and data.statblock_refs.size() > 0:
-				var sb_id: String = str(data.statblock_refs[0])
+				var sb_id: String = _get_preferred_token_statblock_id(data, registry)
 				var registry_inv := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 				var sb: StatblockData = registry_inv.statblock.get_statblock(sb_id) if (registry_inv != null and registry_inv.statblock != null) else null
 				if sb != null:
@@ -7890,6 +7909,55 @@ func _update_token_statblock_buttons() -> void:
 				_token_statblock_hp_spin.value = so.current_hp
 			if _token_statblock_temphp_spin != null:
 				_token_statblock_temphp_spin.value = so.temp_hp
+
+
+func _get_preferred_token_statblock_id(td: TokenData, registry: ServiceRegistry) -> String:
+	if td == null or td.statblock_refs.is_empty():
+		return ""
+	var first_resolved: String = ""
+	var first_monster_like: String = ""
+	for ref_id: Variant in td.statblock_refs:
+		var sb_id: String = str(ref_id)
+		var sb: StatblockData = _resolve_statblock(sb_id, registry)
+		if sb == null:
+			continue
+		if first_resolved.is_empty():
+			first_resolved = sb_id
+		if _is_monster_like_statblock(sb):
+			return sb_id
+		if first_monster_like.is_empty() and not _is_character_like_statblock(sb):
+			first_monster_like = sb_id
+	if not first_monster_like.is_empty():
+		return first_monster_like
+	return first_resolved if not first_resolved.is_empty() else str(td.statblock_refs[0])
+
+
+func _is_monster_like_statblock(sb: StatblockData) -> bool:
+	if sb == null:
+		return false
+	if not sb.srd_index.is_empty():
+		return true
+	if not sb.creature_type.is_empty():
+		return true
+	if sb.challenge_rating > 0.0 or sb.xp > 0:
+		return true
+	if not sb.special_abilities.is_empty() or not sb.actions.is_empty():
+		return true
+	return false
+
+
+func _is_character_like_statblock(sb: StatblockData) -> bool:
+	if sb == null:
+		return false
+	if not sb.class_name_str.is_empty():
+		return true
+	if sb.level > 0:
+		return true
+	if not sb.classes.is_empty():
+		return true
+	if not sb.inventory.is_empty() or not sb.features.is_empty():
+		return true
+	return false
 
 
 func _on_token_statblock_selected(_index: int) -> void:
@@ -10486,7 +10554,8 @@ func _broadcast_token_state() -> void:
 			var d: Dictionary = td.to_dict()
 			dicts.append(d)
 	_nm_broadcast_to_displays({"msg": "token_state", "tokens": dicts,
-		"puzzle_notes": _collect_revealed_puzzle_notes()})
+		"puzzle_notes": _collect_revealed_puzzle_notes(),
+		"combat_hp_visible_to_players": _combat_hp_visible_to_players})
 
 
 # ---------------------------------------------------------------------------
@@ -12212,7 +12281,14 @@ func _load_map_from_bundle(bundle_path: String) -> MapData:
 		var img_ref: String = d["image_path"]
 		if not img_ref.is_absolute_path() and not img_ref.begins_with("user://"):
 			d["image_path"] = bundle_path.path_join(img_ref)
-	return MapData.from_dict(d)
+	var map := MapData.from_dict(d)
+	# Keep the statblock service in sync when the editor falls back to direct
+	# bundle loading instead of MapService.load_from_bundle().
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry != null and registry.statblock != null and registry.statblock.service != null:
+		registry.statblock.clear_map_statblocks()
+		registry.statblock.load_map_statblocks(map.statblocks)
+	return map
 
 
 func _set_status(msg: String) -> void:

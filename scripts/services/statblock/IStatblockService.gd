@@ -21,6 +21,16 @@ func add_statblock(_data: StatblockData, _scope: String) -> void:
 	push_error("IStatblockService.add_statblock: not implemented")
 
 
+## Replace the transient map-scope cache from an array of serialised dicts.
+func load_map_statblocks(_dicts: Array) -> void:
+	push_error("IStatblockService.load_map_statblocks: not implemented")
+
+
+## Clear all transient map-scope statblocks.
+func clear_map_statblocks() -> void:
+	push_error("IStatblockService.clear_map_statblocks: not implemented")
+
+
 func update_statblock(_data: StatblockData) -> void:
 	push_error("IStatblockService.update_statblock: not implemented")
 

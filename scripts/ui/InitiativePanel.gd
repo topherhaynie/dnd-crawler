@@ -11,6 +11,8 @@ signal heal_requested(token_id: String)
 ## Emitted when the panel itself initiates a combat start (so DMWindow can show
 ## the panel if it was hidden).
 signal combat_start_requested
+## Emitted when player-display HP bars are toggled for combatants.
+signal combat_hp_visibility_toggled(enabled: bool)
 ## Emitted when an action macro button is pressed for the active combatant.
 signal action_macro_pressed(token_id: String, action: String)
 
@@ -39,6 +41,7 @@ var _macro_buttons: Array[Button] = []
 var _timer_bar: HBoxContainer = null
 var _timer_label: Label = null
 var _timer_toggle_btn: Button = null
+var _hp_visibility_btn: Button = null
 var _timer_spin: SpinBox = null
 var _turn_timer: Timer = null
 var _timer_seconds_remaining: int = 0
@@ -101,6 +104,9 @@ func apply_scale(s: float) -> void:
 	if _timer_toggle_btn != null:
 		_timer_toggle_btn.custom_minimum_size = Vector2(si.call(28.0), si.call(22.0))
 		_timer_toggle_btn.add_theme_font_size_override("font_size", si.call(12.0))
+	if _hp_visibility_btn != null:
+		_hp_visibility_btn.custom_minimum_size = Vector2(si.call(34.0), si.call(22.0))
+		_hp_visibility_btn.add_theme_font_size_override("font_size", si.call(11.0))
 	if _timer_label != null:
 		_timer_label.add_theme_font_size_override("font_size", si.call(12.0))
 		_timer_label.custom_minimum_size.x = si.call(50.0)
@@ -208,6 +214,14 @@ func _build_ui() -> void:
 	_timer_toggle_btn.button_pressed = false
 	_timer_toggle_btn.toggled.connect(_on_timer_toggled)
 	_timer_bar.add_child(_timer_toggle_btn)
+
+	_hp_visibility_btn = Button.new()
+	_hp_visibility_btn.text = "HP"
+	_hp_visibility_btn.tooltip_text = "Toggle combat HP bars on the player display"
+	_hp_visibility_btn.toggle_mode = true
+	_hp_visibility_btn.button_pressed = true
+	_hp_visibility_btn.toggled.connect(_on_hp_visibility_toggled)
+	_timer_bar.add_child(_hp_visibility_btn)
 
 	var timer_lbl := Label.new()
 	timer_lbl.text = "Timer:"
@@ -554,6 +568,10 @@ func _on_timer_toggled(pressed: bool) -> void:
 		_restart_timer()
 	else:
 		_stop_timer()
+
+
+func _on_hp_visibility_toggled(enabled: bool) -> void:
+	combat_hp_visibility_toggled.emit(enabled)
 
 
 func _restart_timer() -> void:

@@ -194,7 +194,10 @@ func build_player_state_payload() -> Array:
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	var im: InputManager = registry.input if registry != null and registry.input != null else null
 	var gs_mgr: GameStateManager = _game_state()
+	if gs_mgr == null:
+		return players
 	var dv_disabled: bool = gs_mgr.is_darkvision_disabled() if gs_mgr != null else false
+	var combat_active: bool = registry != null and registry.combat != null and registry.combat.is_in_combat()
 	for profile in _active_profiles():
 		if not profile is PlayerProfile:
 			continue
@@ -208,6 +211,21 @@ func build_player_state_payload() -> Array:
 		var locked: bool = gs_mgr.is_locked(p.id)
 		var light_off: bool = gs_mgr.is_light_off(p.id)
 		var eff_vision_type: int = PlayerProfile.VisionType.NORMAL if dv_disabled else p.get_vision_type()
+		var max_hp: int = 0
+		var current_hp: int = 0
+		var temp_hp: int = 0
+		if registry != null and registry.character != null and not p.statblock_id.is_empty():
+			var sb: StatblockData = registry.character.get_character_by_id(p.statblock_id)
+			if sb != null:
+				max_hp = sb.hit_points
+				current_hp = max_hp
+		if combat_active and registry != null and registry.combat != null:
+			var hp_status: Dictionary = registry.combat.get_hp_status(p.id)
+			max_hp = int(hp_status.get("max", max_hp))
+			current_hp = int(hp_status.get("current", current_hp))
+			temp_hp = int(hp_status.get("temp", 0))
+		if max_hp <= 0:
+			current_hp = 0
 		players.append({
 			"id": p.id,
 			"name": p.player_name,
@@ -224,6 +242,10 @@ func build_player_state_payload() -> Array:
 			"facing": token.rotation if token and is_instance_valid(token) else 0.0,
 			"icon_facing_deg": p.icon_facing_deg,
 			"indicator_color": p.indicator_color.to_html(false),
+			"combat_active": combat_active,
+			"current_hp": current_hp,
+			"max_hp": max_hp,
+			"temp_hp": temp_hp,
 			"position": {"x": pos.x, "y": pos.y},
 		})
 	return players

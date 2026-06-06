@@ -842,7 +842,7 @@ func _get_base_statblock(token_id: String) -> StatblockData:
 	if td != null and not td.statblock_refs.is_empty():
 		var reg: ServiceRegistry = _get_registry()
 		if reg != null and reg.statblock != null:
-			var sb_id: String = str(td.statblock_refs[0])
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
 			return reg.statblock.get_statblock(sb_id)
 	# Fall back to player profile → character statblock.
 	return _resolve_player_statblock(token_id)
@@ -851,7 +851,8 @@ func _get_base_statblock(token_id: String) -> StatblockData:
 func _get_override(token_id: String) -> StatblockOverride:
 	var td: TokenData = _get_token(token_id)
 	if td != null and not td.statblock_refs.is_empty():
-		var sb_id: String = str(td.statblock_refs[0])
+		var reg: ServiceRegistry = _get_registry()
+		var sb_id: String = _get_preferred_token_statblock_id(td, reg)
 		var raw: Variant = td.statblock_overrides.get(sb_id, null)
 		if raw is Dictionary:
 			return StatblockOverride.from_dict(raw as Dictionary)
@@ -870,7 +871,7 @@ func _commit_override(token_id: String, override: StatblockOverride) -> void:
 	if reg != null and reg.token != null:
 		var td: TokenData = reg.token.get_token_by_id(token_id)
 		if td != null and not td.statblock_refs.is_empty():
-			var sb_id: String = str(td.statblock_refs[0])
+			var sb_id: String = _get_preferred_token_statblock_id(td, reg)
 			td.statblock_overrides[sb_id] = override.to_dict()
 			reg.token.update_token(td)
 			return
@@ -890,6 +891,57 @@ func _resolve_player_statblock(token_id: String) -> StatblockData:
 	if sb_id.is_empty():
 		return null
 	return reg.character.get_character_by_id(sb_id)
+
+
+func _get_preferred_token_statblock_id(td: TokenData, reg: ServiceRegistry) -> String:
+	if td == null or td.statblock_refs.is_empty():
+		return ""
+	if reg == null or reg.statblock == null:
+		return str(td.statblock_refs[0])
+	var first_resolved: String = ""
+	var first_monster_like: String = ""
+	for ref_id: Variant in td.statblock_refs:
+		var sb_id: String = str(ref_id)
+		var sb: StatblockData = reg.statblock.get_statblock(sb_id)
+		if sb == null:
+			continue
+		if first_resolved.is_empty():
+			first_resolved = sb_id
+		if _is_monster_like_statblock(sb):
+			return sb_id
+		if first_monster_like.is_empty() and not _is_character_like_statblock(sb):
+			first_monster_like = sb_id
+	if not first_monster_like.is_empty():
+		return first_monster_like
+	return first_resolved if not first_resolved.is_empty() else str(td.statblock_refs[0])
+
+
+func _is_monster_like_statblock(sb: StatblockData) -> bool:
+	if sb == null:
+		return false
+	if not sb.srd_index.is_empty():
+		return true
+	if not sb.creature_type.is_empty():
+		return true
+	if sb.challenge_rating > 0.0 or sb.xp > 0:
+		return true
+	if not sb.special_abilities.is_empty() or not sb.actions.is_empty():
+		return true
+	return false
+
+
+func _is_character_like_statblock(sb: StatblockData) -> bool:
+	if sb == null:
+		return false
+	if not sb.class_name_str.is_empty():
+		return true
+	if sb.level > 0:
+		return true
+	if not sb.classes.is_empty():
+		return true
+	if not sb.inventory.is_empty() or not sb.features.is_empty():
+		return true
+	return false
 
 
 func _ensure_player_override(token_id: String) -> void:

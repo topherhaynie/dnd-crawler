@@ -192,6 +192,9 @@ func _handle_packet(raw: String) -> void:
 		"flashlights_only_toggle":
 			# DM toggled flashlights-only fog mode
 			state_received.emit(data)
+		"combat_hp_visibility_toggle":
+			# DM toggled whether combat HP bars are shown on the player display
+			state_received.emit(data)
 		"window_resize":
 			# DM requests a specific window size — only honour when not fullscreen
 			var w := int(data.get("width", 0))

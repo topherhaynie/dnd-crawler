@@ -48,6 +48,8 @@ func load_map_from_bundle(bundle_path: String) -> Object:
 
 func load_map(map: Object) -> void:
 	_current_map = map
+	# Hydrate map-scoped statblocks before any token/UI lookups run.
+	_sync_statblocks_from_map(map)
 	# Sync token state from the bundle into the TokenService.
 	_sync_tokens_from_map(map)
 	# Sync measurement state from the bundle into the MeasurementService.
@@ -71,6 +73,8 @@ func get_map_dict() -> Dictionary:
 func save_map_to_bundle(bundle_path: String) -> bool:
 	if _current_map == null:
 		return false
+	# Persist transient statblocks back into the map model before serialising.
+	_flush_statblocks_to_map(_current_map)
 	# Flush current token state back into the map model before serialising.
 	_flush_tokens_to_map(_current_map)
 	# Flush current measurement state back into the map model before serialising.
@@ -108,6 +112,36 @@ func get_map_rotation() -> int:
 	if _current_map == null or not (_current_map is MapData):
 		return 0
 	return (_current_map as MapData).camera_rotation
+
+
+# ---------------------------------------------------------------------------
+# Statblock sync helpers
+# ---------------------------------------------------------------------------
+
+## Load map-scoped statblocks from the bundle into the StatblockService.
+func _sync_statblocks_from_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.statblock == null or registry.statblock.service == null:
+		return
+	registry.statblock.clear_map_statblocks()
+	registry.statblock.load_map_statblocks((map as MapData).statblocks)
+
+
+## Serialise transient map-scoped statblocks back into the map model.
+func _flush_statblocks_to_map(map: Object) -> void:
+	if not (map is MapData):
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.statblock == null or registry.statblock.service == null:
+		return
+	var serialised: Array = []
+	for raw in registry.statblock.get_all_by_scope("map"):
+		var sb: StatblockData = raw as StatblockData
+		if sb != null:
+			serialised.append(sb.to_dict())
+	(map as MapData).statblocks = serialised
 
 # ---------------------------------------------------------------------------
 # Token sync helpers

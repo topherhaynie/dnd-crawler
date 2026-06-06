@@ -17,6 +17,18 @@ func add_statblock(data: StatblockData, scope: String) -> void:
 	service.add_statblock(data, scope)
 
 
+func load_map_statblocks(dicts: Array) -> void:
+	if service == null:
+		return
+	service.load_map_statblocks(dicts)
+
+
+func clear_map_statblocks() -> void:
+	if service == null:
+		return
+	service.clear_map_statblocks()
+
+
 func update_statblock(data: StatblockData) -> void:
 	if service == null:
 		return

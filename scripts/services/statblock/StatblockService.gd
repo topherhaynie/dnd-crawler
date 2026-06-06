@@ -50,6 +50,19 @@ func add_statblock(data: StatblockData, scope: String) -> void:
 	statblock_added.emit(data)
 
 
+func load_map_statblocks(dicts: Array) -> void:
+	_map_cache.clear()
+	for raw: Variant in dicts:
+		if raw is Dictionary:
+			var data: StatblockData = StatblockData.from_dict(raw as Dictionary)
+			if not data.id.is_empty():
+				_map_cache[data.id] = data
+
+
+func clear_map_statblocks() -> void:
+	_map_cache.clear()
+
+
 func update_statblock(data: StatblockData) -> void:
 	# Determine scope from where it lives
 	if _global_cache.has(data.id):
@@ -105,7 +118,16 @@ func get_statblock(id: String) -> StatblockData:
 		if campaign != null and campaign.bestiary.has(id):
 			var raw: Variant = campaign.bestiary[id]
 			if raw is Dictionary:
-				return StatblockData.from_dict(raw as Dictionary)
+				var d: Dictionary = raw as Dictionary
+				if str(d.get("type", "")) == "srd_ref":
+					if registry.srd != null:
+						var ruleset: String = str(d.get("ruleset", "2014"))
+						var srd_index: String = str(d.get("srd_index", ""))
+						var monster: StatblockData = registry.srd.get_monster(srd_index, ruleset)
+						if monster != null:
+							return monster
+					return null
+				return StatblockData.from_dict(d)
 
 	# Check SRD (by srd_index)
 	if registry != null and registry.srd != null:
