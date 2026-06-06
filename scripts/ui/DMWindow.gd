@@ -439,12 +439,14 @@ const _PERCEPTION_CHECK_INTERVAL: float = 0.25
 var _perception_timer: float = 0.0
 var _broadcast_dirty: bool = false
 var _broadcast_countdown: float = 0.0
+var _map_dirty: bool = false
 var _player_state_dirty: bool = false
 var _player_state_countdown: float = 0.0
 var _fog_dirty: bool = false
 var _fog_countdown: float = 0.0
 var _fog_snapshot_in_flight: bool = false
 var _fog_snapshot_queued: bool = false
+var _quit_prompt_seq: int = 0
 var _backend: BackendRuntime = null
 var _dm_override_player_id: String = ""
 var _initial_sync_ack_pending: Dictionary = {}
@@ -2973,6 +2975,9 @@ func _on_close_map() -> void:
 	_active_map_zip_path = ""
 	_active_save_bundle_path = ""
 	_active_save_zip_path = ""
+	_map_dirty = false
+	_player_state_dirty = false
+	_fog_dirty = false
 	# Reset map state in services.
 	var ms := _map_service()
 	if ms != null:
@@ -2993,26 +2998,36 @@ func has_unsaved_changes() -> bool:
 	## Returns true when any subsystem has data that would be lost on quit.
 	if _char_sheet != null and _char_sheet.is_dirty():
 		return true
-	if not _active_save_bundle_path.is_empty():
+	if _map_dirty or _player_state_dirty or _fog_dirty:
 		return true
 	return false
 
 
-func prompt_save_before_quit() -> void:
+func prompt_save_before_quit() -> bool:
 	## Show a themed quit-confirmation dialog when unsaved work exists.
 	## Saves campaign, character sheet, and optionally the game save, then quits.
 	## If the user cancels, the quit is aborted.
+	_quit_prompt_seq += 1
+	var prompt_id: int = _quit_prompt_seq
 	var char_dirty: bool = _char_sheet != null and _char_sheet.is_dirty()
-	var save_active: bool = not _active_save_bundle_path.is_empty()
+	var map_dirty: bool = _map_dirty
+	var session_dirty: bool = _player_state_dirty or _fog_dirty
+	Log.debug("DMWindow", "prompt[%d] start char_dirty=%s map_dirty=%s session_dirty=%s active_save=%s active_map=%s" % [prompt_id, str(char_dirty), str(map_dirty), str(session_dirty), str(not _active_save_bundle_path.is_empty()), str(not _active_map_bundle_path.is_empty())])
 
 	# Build description of what is unsaved.
 	var parts: PackedStringArray = PackedStringArray()
 	if char_dirty:
 		var ch_name: String = _char_sheet.get_character_name() if _char_sheet != null else "character"
 		parts.append("character sheet (%s)" % ch_name)
-	if save_active:
-		parts.append("game save")
+	if map_dirty:
+		parts.append("map changes")
+	if session_dirty:
+		parts.append("game/session changes")
 	var detail: String = ", ".join(parts)
+	if detail.is_empty():
+		Log.debug("DMWindow", "prompt[%d] found no unsaved work; quitting immediately" % prompt_id)
+		get_tree().quit()
+		return true
 
 	var s: float = _ui_scale()
 	var dlg := ConfirmationDialog.new()
@@ -3030,31 +3045,60 @@ func prompt_save_before_quit() -> void:
 	dlg.reset_size()
 	dlg.popup_centered()
 
-	var result: Array = []
-	dlg.confirmed.connect(func() -> void: result.append(&"save"))
-	dlg.custom_action.connect(func(action: StringName) -> void:
+	var choice_box: Dictionary = {"value": &""}
+	var set_prompt_choice := func(next_choice: StringName) -> void:
+		if choice_box["value"] != &"":
+			return
+		choice_box["value"] = next_choice
+		dlg.hide()
+	var save_btn: Button = dlg.get_ok_button()
+	if save_btn != null:
+		save_btn.pressed.connect(func() -> void:
+			Log.debug("DMWindow", "prompt[%d] save_button pressed text=%s" % [prompt_id, save_btn.text])
+			set_prompt_choice.call(&"save"))
+	var cancel_btn: Button = dlg.get_cancel_button()
+	if cancel_btn != null:
+		cancel_btn.pressed.connect(func() -> void:
+			Log.debug("DMWindow", "prompt[%d] cancel_button pressed text=%s" % [prompt_id, cancel_btn.text])
+			set_prompt_choice.call(&"cancel"))
+	var custom_action_cb := func(action: StringName) -> void:
+		Log.debug("DMWindow", "prompt[%d] custom_action=%s" % [prompt_id, String(action)])
 		if action == &"nosave":
-			result.append(&"nosave")
-			dlg.hide())
-	dlg.canceled.connect(func() -> void: result.append(&"cancel"))
-	await dlg.visibility_changed
+			set_prompt_choice.call(&"nosave")
+	dlg.custom_action.connect(custom_action_cb)
+	while choice_box["value"] == &"":
+		await get_tree().process_frame
 	dlg.queue_free()
 
-	var choice: StringName = result[0] if result.size() > 0 else &"cancel"
+	var choice: StringName = choice_box["value"] as StringName
+	if choice == &"":
+		choice = &"cancel"
+	Log.debug("DMWindow", "prompt[%d] choice=%s" % [prompt_id, String(choice)])
 	if choice == &"cancel":
-		return # abort quit
+		Log.debug("DMWindow", "prompt[%d] canceled" % prompt_id)
+		return false # abort quit
 
 	if choice == &"save":
+		Log.debug("DMWindow", "prompt[%d] saving char_dirty=%s map_dirty=%s session_dirty=%s" % [prompt_id, str(char_dirty), str(map_dirty), str(session_dirty)])
 		# Save dirty character sheet.
 		if char_dirty and _char_sheet != null:
+			Log.debug("DMWindow", "prompt[%d] saving character sheet" % prompt_id)
 			_char_sheet.save_now()
 		# Save the active game session.
-		if save_active:
-			await _on_save_game_pressed()
+		if map_dirty or session_dirty:
+			Log.debug("DMWindow", "prompt[%d] saving active game session" % prompt_id)
+			var saved: bool = await _save_current_game_session_for_quit()
+			Log.debug("DMWindow", "prompt[%d] active session save result=%s" % [prompt_id, str(saved)])
+			if not saved:
+				_set_status("No active save available — use Save Game As first.")
+				Log.debug("DMWindow", "prompt[%d] aborting because active session save failed" % prompt_id)
+				return false
 		# Save the campaign (always safe to call).
+		Log.debug("DMWindow", "prompt[%d] saving campaign" % prompt_id)
 		_on_save_campaign()
 
-	get_tree().quit()
+	Log.debug("DMWindow", "prompt[%d] completed successfully" % prompt_id)
+	return true
 
 
 func _on_close_save() -> void:
@@ -3091,6 +3135,9 @@ func _do_close_save() -> void:
 	## Unload both the current save session and map, then return to the campaign hub.
 	_active_save_bundle_path = ""
 	_active_save_zip_path = ""
+	_map_dirty = false
+	_player_state_dirty = false
+	_fog_dirty = false
 	var gs := _game_state()
 	if gs != null:
 		gs.reset_session()
@@ -4933,7 +4980,7 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 			old_char_pos = registry_drag.game_state.get_position(token_id)
 	if _backend != null:
 		_backend.end_token_drag(token_id, new_world_pos)
-	_player_state_dirty = true
+	_mark_token_save_dirty(id)
 	# Persist the new position and refresh door/passthrough state.
 	var data: TokenData = null
 	if registry_drag != null and registry_drag.token != null:
@@ -5018,7 +5065,7 @@ func _on_token_drag_completed(token_id: Variant, new_world_pos: Vector2) -> void
 
 
 func _on_token_resize_completed(token_id: String, new_width_px: float, new_height_px: float) -> void:
-	_player_state_dirty = true
+	_mark_token_save_dirty(token_id)
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null:
 		return
@@ -5053,7 +5100,7 @@ func _on_token_resize_completed(token_id: String, new_width_px: float, new_heigh
 
 
 func _on_token_rotation_completed(token_id: String, rotation_deg: float) -> void:
-	_player_state_dirty = true
+	_mark_token_save_dirty(token_id)
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.token == null:
 		return
@@ -6284,7 +6331,7 @@ func _on_passage_clear_pressed() -> void:
 	data.passage_paths = []
 	data.passage_width_px = 0.0
 	tm.update_token(data)
-	_player_state_dirty = true
+	_mark_token_save_dirty(_selected_passage_token_id)
 	if _map_view != null:
 		_map_view.update_token_sprite(data)
 		_map_view.apply_token_passthrough_state(data)
@@ -6293,7 +6340,7 @@ func _on_passage_clear_pressed() -> void:
 
 func _on_passage_paths_committed(token_id: String, paths: Array, width_px: float) -> void:
 	## Mirrors _on_token_resize_completed: update token data and broadcast.
-	_player_state_dirty = true
+	_mark_token_save_dirty(token_id)
 	var tm := _token_manager()
 	if tm == null:
 		return
@@ -6455,7 +6502,7 @@ func _on_roam_clear_pressed() -> void:
 	data.roam_speed = _roam_speed_slider.value if _roam_speed_slider != null else 30.0
 	data.roam_loop = _roam_loop_check.button_pressed if _roam_loop_check != null else true
 	tm.update_token(data)
-	_player_state_dirty = true
+	_mark_token_save_dirty(_selected_roam_token_id)
 	if _map_view != null:
 		_map_view.update_token_sprite(data)
 	_broadcast_token_change(data, false)
@@ -6463,7 +6510,7 @@ func _on_roam_clear_pressed() -> void:
 
 
 func _on_roam_path_committed(token_id: String, path: PackedVector2Array, loop: bool) -> void:
-	_player_state_dirty = true
+	_mark_token_save_dirty(token_id)
 	var tm := _token_manager()
 	if tm == null:
 		return
@@ -6737,7 +6784,7 @@ func _snap_token_to_roam_path(token_id: String) -> void:
 		"token_id": token_id,
 		"world_pos": {"x": snap_pos.x, "y": snap_pos.y},
 	})
-	_player_state_dirty = true
+	_mark_token_save_dirty(token_id)
 
 
 # ---------------------------------------------------------------------------
@@ -9592,6 +9639,7 @@ func _on_measurement_edit_completed(data: MeasurementData, old_start: Vector2, o
 
 func _mark_map_dirty() -> void:
 	## Flush measurements back into MapData so the next save includes them.
+	_map_dirty = true
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.map == null:
 		return
@@ -9799,6 +9847,7 @@ func _effect_apply_remove(id: String) -> void:
 
 func _mark_map_dirty_effects() -> void:
 	## Flush effects into MapData so the next save includes them.
+	_map_dirty = true
 	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
 	if registry == null or registry.map == null:
 		return
@@ -9812,6 +9861,17 @@ func _mark_map_dirty_effects() -> void:
 			if ed != null:
 				all_e.append(ed.to_dict())
 	map.effects = all_e
+
+
+func _mark_token_save_dirty(token_id: String) -> void:
+	_map_dirty = true
+	if token_id.is_empty():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry") as ServiceRegistry
+	if registry == null or registry.game_state == null:
+		return
+	if registry.game_state.player_positions.has(token_id):
+		_player_state_dirty = true
 
 
 # ---------------------------------------------------------------------------
@@ -11443,6 +11503,25 @@ func _on_save_game_pressed() -> void:
 	await _save_game_to_bundle(save_name)
 
 
+func _save_current_game_session() -> bool:
+	if _active_save_bundle_path.is_empty():
+		Log.debug("DMWindow", "_save_current_game_session no active save bundle")
+		return false
+	var save_name: String = _active_save_bundle_path.get_file().get_basename()
+	Log.debug("DMWindow", "_save_current_game_session save_name=%s" % save_name)
+	return await _save_game_to_bundle(save_name)
+
+
+func _save_current_game_session_for_quit() -> bool:
+	Log.debug("DMWindow", "_save_current_game_session_for_quit active_save=%s active_map=%s" % [str(not _active_save_bundle_path.is_empty()), str(not _active_map_bundle_path.is_empty())])
+	if _active_save_bundle_path.is_empty():
+		Log.debug("DMWindow", "_save_current_game_session_for_quit no active save bundle")
+		return false
+	var save_name: String = _active_save_bundle_path.get_file().get_basename()
+	Log.debug("DMWindow", "_save_current_game_session_for_quit save_name=%s" % save_name)
+	return await _save_game_to_bundle(save_name)
+
+
 func _on_save_game_as_pressed() -> void:
 	if _map() == null:
 		_set_status("No map loaded — nothing to save.")
@@ -11461,14 +11540,17 @@ func _on_save_game_path_selected(path: String) -> void:
 	await _save_game_to_bundle(save_name)
 
 
-func _save_game_to_bundle(save_name: String) -> void:
+func _save_game_to_bundle(save_name: String) -> bool:
+	Log.debug("DMWindow", "_save_game_to_bundle start save_name=%s active_save=%s active_map=%s" % [save_name, _active_save_bundle_path, _active_map_bundle_path])
 	var map := _map()
 	if map == null:
 		_set_status("No map loaded — nothing to save.")
-		return
+		Log.debug("DMWindow", "_save_game_to_bundle abort: no map loaded")
+		return false
 	if _active_map_bundle_path.is_empty():
 		_set_status("Save the map first before saving a game session.")
-		return
+		Log.debug("DMWindow", "_save_game_to_bundle abort: active map bundle missing")
+		return false
 
 	# Ensure latest fog is flushed
 	if _map_view != null:
@@ -11485,7 +11567,9 @@ func _save_game_to_bundle(save_name: String) -> void:
 
 	# Sync player camera into model before saving
 	var gs := _game_state()
+	Log.debug("DMWindow", "_save_game_to_bundle game_state_available=%s" % str(gs != null))
 	if gs != null:
+		Log.debug("DMWindow", "_save_game_to_bundle calling save_session")
 		gs.player_camera_position = _player_cam_pos
 		gs.player_camera_zoom = _player_cam_zoom
 		gs.player_camera_rotation = _player_cam_rotation
@@ -11498,6 +11582,7 @@ func _save_game_to_bundle(save_name: String) -> void:
 	var sav_zip_path: String = _saves_dir_abs().path_join(save_name + ".sav")
 	if gs != null:
 		var ok := gs.save_session(save_name, fog_image, _active_map_bundle_path)
+		Log.debug("DMWindow", "_save_game_to_bundle save_session result=%s" % str(ok))
 		if ok:
 			# The .sav ZIP is the canonical path; get its work dir for embedded ops.
 			var sav_work_dir: String = BundleIOScript.open_bundle(sav_zip_path)
@@ -11518,11 +11603,20 @@ func _save_game_to_bundle(save_name: String) -> void:
 			var pack_err: Error = BundleIOScript.save_bundle(sav_work_dir, sav_zip_path)
 			if pack_err != OK:
 				push_error("DMWindow: failed to re-pack .sav ZIP '%s' (err %d)" % [sav_zip_path, pack_err])
+			_map_dirty = false
+			_player_state_dirty = false
+			_fog_dirty = false
 			_set_status("Game saved: %s" % save_name)
+			Log.debug("DMWindow", "_save_game_to_bundle success save_name=%s sav_zip_path=%s sav_work_dir=%s" % [save_name, sav_zip_path, sav_work_dir])
+			return true
 		else:
 			_set_status("Error: failed to save game.")
+			Log.debug("DMWindow", "_save_game_to_bundle failed in save_session")
+			return false
 	else:
 		_set_status("Error: game state service unavailable.")
+		Log.debug("DMWindow", "_save_game_to_bundle abort: game state unavailable")
+		return false
 
 
 func _on_load_game_pressed() -> void:
@@ -11721,6 +11815,7 @@ func _apply_map(map: MapData, from_save: bool = false) -> void:
 	_initial_sync_ack_pending.clear()
 	_initial_sync_attempt_by_peer.clear()
 	_broadcast_dirty = false
+	_map_dirty = false
 	_fog_dirty = false
 	_fog_snapshot_in_flight = false
 	_fog_snapshot_queued = false
@@ -12236,6 +12331,7 @@ func _save_map_data(map: MapData) -> void:
 		if not thumb_img_ms.is_empty():
 			_generate_thumbnail(_active_map_bundle_path, thumb_img_ms)
 		_pack_active_map_zip()
+		_map_dirty = false
 		return
 
 	var fa := FileAccess.open(path, FileAccess.WRITE)
@@ -12249,6 +12345,7 @@ func _save_map_data(map: MapData) -> void:
 	if not thumb_img.is_empty():
 		_generate_thumbnail(_active_map_bundle_path, thumb_img)
 	_pack_active_map_zip()
+	_map_dirty = false
 
 
 func _pack_active_map_zip() -> void:

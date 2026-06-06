@@ -154,29 +154,35 @@ var _ffmpeg_available_cached: int = -1 # -1 = unchecked, 0 = no, 1 = yes
 
 func save_game_bundle(bundle_path: String, state: RefCounted, fog_image: Image, map_bundle_path: String) -> bool:
 	var abs_bundle := _abs(bundle_path)
-	# Work in a cache directory, then pack to ZIP.
-	var work_dir: String = BundleIOScript.open_bundle(abs_bundle) if BundleIOScript.bundle_exists(abs_bundle) else ""
-	if work_dir.is_empty():
-		# New bundle — create a fresh work directory in the cache.
-		work_dir = BundleIOScript._cache_dir_for(abs_bundle)
+	Log.debug("PersistenceService", "save_game_bundle start bundle_path=%s abs_bundle=%s" % [bundle_path, abs_bundle])
+	# Stage in a temporary work directory so a partial failure never mutates the
+	# final save bundle.
+	var work_dir: String = BundleIOScript._cache_dir_for(abs_bundle) + ".stage.%d" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(work_dir)
+	Log.debug("PersistenceService", "save_game_bundle staging work_dir=%s" % work_dir)
 
 	# 1. Copy the entire .map bundle into the work dir as map.map/
 	var embedded_map_dir := work_dir.path_join("map.map")
 	# Resolve the source map — it may itself be a ZIP or cache dir.
 	var src_map_dir: String = BundleIOScript.open_bundle(map_bundle_path)
+	Log.debug("PersistenceService", "save_game_bundle source map bundle=%s resolved=%s" % [map_bundle_path, src_map_dir])
 	if src_map_dir.is_empty():
 		src_map_dir = _abs(map_bundle_path)
+		Log.debug("PersistenceService", "save_game_bundle using absolute map source=%s" % src_map_dir)
 	if not _copy_dir_recursive(src_map_dir, embedded_map_dir):
 		push_error("PersistenceService: failed to embed .map into .sav at '%s'" % embedded_map_dir)
+		Log.debug("PersistenceService", "save_game_bundle failed embedding map into %s" % embedded_map_dir)
+		BundleIOScript.delete_bundle(work_dir)
 		return false
 
 	# 2. Write fog.png (L8 image)
 	if fog_image != null and not fog_image.is_empty():
 		var fog_path := work_dir.path_join("fog.png")
 		var err := fog_image.save_png(fog_path)
+		Log.debug("PersistenceService", "save_game_bundle writing fog=%s err=%d" % [fog_path, err])
 		if err != OK:
 			push_error("PersistenceService: failed to save fog.png (err %d)" % err)
+			BundleIOScript.delete_bundle(work_dir)
 			return false
 
 	# 3. Write state.json
@@ -184,15 +190,23 @@ func save_game_bundle(bundle_path: String, state: RefCounted, fog_image: Image, 
 	var fa := FileAccess.open(state_path, FileAccess.WRITE)
 	if fa == null:
 		push_error("PersistenceService: cannot write state.json at '%s'" % state_path)
+		Log.debug("PersistenceService", "save_game_bundle cannot open state path=%s" % state_path)
+		BundleIOScript.delete_bundle(work_dir)
 		return false
 	fa.store_string(JSON.stringify(state.to_dict(), "\t"))
 	fa.close()
+	Log.debug("PersistenceService", "save_game_bundle wrote state.json=%s" % state_path)
 
-	# 4. Pack work directory to ZIP at the canonical bundle path.
+	# 4. Pack the staged work directory to the canonical bundle path.
+	Log.debug("PersistenceService", "save_game_bundle packing work_dir=%s -> abs_bundle=%s" % [work_dir, abs_bundle])
 	var pack_err: Error = BundleIOScript.save_bundle(work_dir, abs_bundle)
 	if pack_err != OK:
 		push_error("PersistenceService: failed to pack .sav ZIP at '%s' (err %d)" % [abs_bundle, pack_err])
+		Log.debug("PersistenceService", "save_game_bundle pack failed err=%d" % pack_err)
+		BundleIOScript.delete_bundle(work_dir)
 		return false
+	BundleIOScript.delete_bundle(work_dir)
+	Log.debug("PersistenceService", "save_game_bundle success abs_bundle=%s" % abs_bundle)
 
 	emit_signal("persistence_changed", state.save_name)
 	return true

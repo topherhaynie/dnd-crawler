@@ -120,26 +120,46 @@ func _start_player_mode() -> void:
 # ---------------------------------------------------------------------------
 
 var _quit_pending: bool = false
+var _quit_after_prompt: bool = false
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		Log.debug("Main", "close request: quit_after_prompt=%s quit_pending=%s player_mode=%s" % [str(_quit_after_prompt), str(_quit_pending), str(_is_player_mode())])
+		if _quit_after_prompt:
+			_quit_after_prompt = false
+			Log.debug("Main", "close request bypassed after prompt; allowing existing quit to finish")
+			return
 		if _quit_pending:
+			Log.debug("Main", "close request ignored because quit is already pending")
 			return
 		if _is_player_mode():
+			Log.debug("Main", "player mode close request -> quitting immediately")
 			get_tree().quit()
 			return
 		# DM mode — check for unsaved work before quitting.
 		var dm_window: Node = get_node_or_null("DMWindow")
+		Log.debug("Main", "DM close request resolved DMWindow=%s" % str(dm_window != null))
 		if dm_window != null and dm_window.has_method("has_unsaved_changes") and dm_window.has_unsaved_changes():
+			Log.debug("Main", "unsaved changes detected; starting quit prompt")
 			_quit_pending = true
 			# prompt_save_before_quit is async; it either calls quit() when the
 			# user confirms or returns silently on cancel.
 			_begin_quit_prompt(dm_window)
 		else:
+			Log.debug("Main", "no unsaved changes; quitting immediately")
 			get_tree().quit()
 
 
 func _begin_quit_prompt(dm_window: Node) -> void:
-	await dm_window.prompt_save_before_quit()
-	# If we reach here the user canceled — allow future quit attempts.
-	_quit_pending = false
+	Log.debug("Main", "begin quit prompt on %s" % dm_window.name)
+	var handled_quit: bool = await dm_window.prompt_save_before_quit()
+	Log.debug("Main", "quit prompt finished handled_quit=%s" % str(handled_quit))
+	if handled_quit:
+		_quit_after_prompt = true
+		_quit_pending = false
+		Log.debug("Main", "quit prompt handled; issuing final quit")
+		get_tree().quit()
+	else:
+		# If we reach here the user canceled — allow future quit attempts.
+		Log.debug("Main", "quit prompt canceled; clearing pending flag")
+		_quit_pending = false

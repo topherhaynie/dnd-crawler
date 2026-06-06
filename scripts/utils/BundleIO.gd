@@ -3,10 +3,11 @@ class_name BundleIO
 
 ## BundleIO — transparent ZIP / directory bundle I/O utility.
 ##
-## .map and .sav bundles are stored as ZIP archives on disk so they appear as
-## regular files to OS file dialogs on every platform.  When opened at runtime
-## the contents are extracted to a cache directory; all existing code works with
-## the extracted directory.  On save the cache directory is packed back to ZIP.
+## .map and .sav bundles are stored as ZIP archives on Windows/Linux and as
+## directory packages on macOS.  When opened at runtime the contents are
+## extracted to a cache directory; all existing code works with the extracted
+## directory.  On save the cache directory is written back using the platform's
+## bundle format.
 ##
 ## Legacy directory bundles (pre-ZIP era) are read transparently — any
 ## directory with a `.map` or `.sav` extension is treated as a valid bundle.
@@ -33,6 +34,11 @@ static func bundle_exists(path: String) -> bool:
 	## True when a bundle exists at *path* as either a ZIP file or directory.
 	var abs_path: String = _abs(path)
 	return FileAccess.file_exists(abs_path) or DirAccess.dir_exists_absolute(abs_path)
+
+
+static func uses_directory_bundles() -> bool:
+	## macOS stores .map/.sav bundles as package directories.
+	return OS.get_name() == "macOS"
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +89,19 @@ static func open_bundle(bundle_path: String) -> String:
 # ---------------------------------------------------------------------------
 
 static func save_bundle(work_dir: String, zip_path: String) -> Error:
-	## Pack *work_dir* into a ZIP archive at *zip_path*.
-	## An existing file at *zip_path* is overwritten atomically.
+	## Pack *work_dir* into *zip_path* using the platform bundle format.
 	var abs_dir: String = _abs(work_dir)
 	var abs_zip: String = _abs(zip_path)
+	if abs_dir == abs_zip:
+		return OK
+	if uses_directory_bundles():
+		if FileAccess.file_exists(abs_zip):
+			if DirAccess.dir_exists_absolute(abs_zip):
+				if not _remove_dir_recursive(abs_zip):
+					return ERR_CANT_CREATE
+			elif DirAccess.remove_absolute(abs_zip) != OK:
+				return ERR_CANT_CREATE
+		return _copy_dir_recursive(abs_dir, abs_zip)
 
 	# Ensure parent directory exists.
 	var parent: String = abs_zip.get_base_dir()
@@ -129,6 +144,48 @@ static func save_bundle(work_dir: String, zip_path: String) -> Error:
 			marker.store_string(str(FileAccess.get_modified_time(abs_zip)))
 			marker.close()
 
+	return OK
+
+
+static func _copy_dir_recursive(src_dir: String, dest_dir: String) -> Error:
+	var dir := DirAccess.open(src_dir)
+	if dir == null:
+		return ERR_CANT_OPEN
+	if DirAccess.dir_exists_absolute(dest_dir):
+		if not _remove_dir_recursive(dest_dir):
+			return ERR_CANT_CREATE
+	DirAccess.make_dir_recursive_absolute(dest_dir)
+	dir.list_dir_begin()
+	var fname: String = dir.get_next()
+	while fname != "":
+		if fname == "." or fname == "..":
+			fname = dir.get_next()
+			continue
+		var src_path: String = src_dir.path_join(fname)
+		var dest_path: String = dest_dir.path_join(fname)
+		if dir.current_is_dir():
+			var err: Error = _copy_dir_recursive(src_path, dest_path)
+			if err != OK:
+				dir.list_dir_end()
+				return err
+		else:
+			var src_file := FileAccess.open(src_path, FileAccess.READ)
+			if src_file == null:
+				dir.list_dir_end()
+				return ERR_FILE_CANT_OPEN
+			var data: PackedByteArray = src_file.get_buffer(src_file.get_length())
+			src_file.close()
+			var dest_parent: String = dest_path.get_base_dir()
+			if not DirAccess.dir_exists_absolute(dest_parent):
+				DirAccess.make_dir_recursive_absolute(dest_parent)
+			var dest_file := FileAccess.open(dest_path, FileAccess.WRITE)
+			if dest_file == null:
+				dir.list_dir_end()
+				return ERR_CANT_CREATE
+			dest_file.store_buffer(data)
+			dest_file.close()
+		fname = dir.get_next()
+	dir.list_dir_end()
 	return OK
 
 

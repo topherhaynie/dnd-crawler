@@ -73,6 +73,7 @@ func get_map_dict() -> Dictionary:
 func save_map_to_bundle(bundle_path: String) -> bool:
 	if _current_map == null:
 		return false
+	DirAccess.make_dir_recursive_absolute(bundle_path)
 	# Persist transient statblocks back into the map model before serialising.
 	_flush_statblocks_to_map(_current_map)
 	# Flush current token state back into the map model before serialising.
@@ -84,9 +85,10 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 	# bundle_path is expected to be a working directory (cache or legacy dir).
 	# ZIP packing is handled by the caller (DMWindow / PersistenceService).
 	var json_path := bundle_path.path_join("map.json")
-	var fa := FileAccess.open(json_path, FileAccess.WRITE)
+	var tmp_json_path := json_path + ".tmp"
+	var fa := FileAccess.open(tmp_json_path, FileAccess.WRITE)
 	if fa == null:
-		push_error("MapService: cannot write '%s'" % json_path)
+		push_error("MapService: cannot write '%s'" % tmp_json_path)
 		return false
 	var payload := get_map_dict()
 	# Store image filename relative to bundle to match existing behaviour
@@ -106,6 +108,13 @@ func save_map_to_bundle(bundle_path: String) -> bool:
 						td["icon_image_path"] = p.substr(bundle_path.length()).lstrip("/")
 	fa.store_string(JSON.stringify(payload, "\t"))
 	fa.close()
+	if FileAccess.file_exists(json_path):
+		DirAccess.remove_absolute(json_path)
+	var rename_err: Error = DirAccess.rename_absolute(tmp_json_path, json_path)
+	if rename_err != OK:
+		push_error("MapService: failed to replace '%s' (err %d)" % [json_path, rename_err])
+		DirAccess.remove_absolute(tmp_json_path)
+		return false
 	return true
 
 func get_map_rotation() -> int:

@@ -2,6 +2,7 @@ extends IGameStateService
 class_name GameStateService
 
 const _GameSaveDataClass = preload("res://scripts/services/game_state/models/GameSaveData.gd")
+const BundleIOScript = preload("res://scripts/utils/BundleIO.gd")
 
 ## Set by ServiceBootstrap before _ready() runs.
 var _model: GameStateModel = null
@@ -140,6 +141,7 @@ func save_session(save_name: String, fog_image: Image, map_bundle_path: String) 
 	if reg == null or reg.persistence == null or reg.persistence.service == null:
 		push_error("GameStateService.save_session: persistence service unavailable")
 		return false
+	Log.debug("GameStateService", "save_session start save_name=%s map_bundle_path=%s fog_image=%s active_save=%s" % [save_name, map_bundle_path, str(fog_image != null and not fog_image.is_empty()), str(_model.active_save != null)])
 
 	var now := Time.get_datetime_string_from_system(true)
 	var state := _GameSaveDataClass.new()
@@ -182,10 +184,13 @@ func save_session(save_name: String, fog_image: Image, map_bundle_path: String) 
 	state.updated_at = now
 
 	var bundle_path := "user://data/saves/%s.sav" % save_name
+	Log.debug("GameStateService", "save_session calling persistence bundle_path=%s" % bundle_path)
 	var ok := reg.persistence.service.save_game_bundle(bundle_path, state, fog_image, map_bundle_path)
+	Log.debug("GameStateService", "save_session persistence result=%s" % str(ok))
 	if ok:
 		_model.active_save = state
 		emit_signal("session_saved", save_name)
+		Log.debug("GameStateService", "save_session emitted session_saved save_name=%s" % save_name)
 	return ok
 
 
@@ -300,10 +305,27 @@ func _save_session_state_only() -> void:
 	save.updated_at = Time.get_datetime_string_from_system(true)
 	var bundle_path := "user://data/saves/%s.sav" % save.save_name
 	var abs_bundle := ProjectSettings.globalize_path(bundle_path)
-	var state_path := abs_bundle.path_join("state.json")
-	var fa := FileAccess.open(state_path, FileAccess.WRITE)
+	var work_dir: String = BundleIOScript.open_bundle(abs_bundle)
+	if work_dir.is_empty():
+		work_dir = abs_bundle
+	var state_path := work_dir.path_join("state.json")
+	var tmp_state_path := state_path + ".tmp"
+	var fa := FileAccess.open(tmp_state_path, FileAccess.WRITE)
 	if fa == null:
-		push_error("GameStateService._save_session_state_only: cannot write state.json at '%s'" % state_path)
+		push_error("GameStateService._save_session_state_only: cannot write state.json at '%s'" % tmp_state_path)
 		return
 	fa.store_string(JSON.stringify(save.to_dict(), "\t"))
 	fa.close()
+	if FileAccess.file_exists(state_path):
+		DirAccess.remove_absolute(state_path)
+	var rename_err: Error = DirAccess.rename_absolute(tmp_state_path, state_path)
+	if rename_err != OK:
+		push_error("GameStateService._save_session_state_only: failed to replace state.json at '%s' (err %d)" % [state_path, rename_err])
+		DirAccess.remove_absolute(tmp_state_path)
+		return
+	if BundleIOScript.is_zip(abs_bundle):
+		var pack_err: Error = BundleIOScript.save_bundle(work_dir, abs_bundle)
+		if pack_err != OK:
+			push_error("GameStateService._save_session_state_only: failed to repack '%s' (err %d)" % [abs_bundle, pack_err])
+			return
+	emit_signal("session_saved", save.save_name)
